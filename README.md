@@ -1,17 +1,14 @@
-Zebra
-=====
+# Okapi
 
-Othello program created by Gunnar Andersson
+**Okapi** is a modernized and optimized fork of **Zebra**, the renowned Othello engine created by Gunnar Andersson (2014/04/29).
 
-This repository has started by uploading original code, as of 2014/04/29, by Gunnar Andersson
+## History & Lineage
 
-The code in this repository has since been modified (e.g. ported to macOS,
-directory structure reorganized). If you want the original files as uploaded,
-get the source from the `original` tag:
+Development on this modernized fork originally began at [hoshir/zebra](https://github.com/hoshir/zebra). To keep that repository clean and dedicated solely to the original author's codebase, the ongoing modernization and optimization work was migrated here to **Okapi**.
 
-```
-git checkout original
-```
+- **Original Code Archive**: [hoshir/zebra](https://github.com/hoshir/zebra)
+- **Past Pull Requests & History**: [hoshir/zebra Pull Requests](https://github.com/hoshir/zebra/pulls)
+- **Author's Original Page**: http://radagast.se/othello/
 
 ## Parallel endgame search
 
