@@ -538,7 +538,7 @@ tree_search( int level,
 
   /* Use multi-prob-cut to selectively prune the tree */
 
-  if ( USE_MPC && allow_mpc && (remains <= MAX_CUT_DEPTH) ) {
+  if ( USE_MPC && allow_mpc && (beta == alpha + 1) && (remains <= MAX_CUT_DEPTH) ) {
     int alpha_test = TRUE;
     int beta_test = TRUE;
 
@@ -596,27 +596,10 @@ tree_search( int level,
 	       if a one or a two-sided test is to be performed next. */
 	    int mid = (alpha_bound + beta_bound) / 2;
 
-#if 0
-	    if ( abs( shallow_val - alpha_bound ) < abs( shallow_val - mid ) )
-	      beta_test = FALSE;
-	    if ( abs( shallow_val - beta_bound ) < abs( shallow_val - mid ) )
-	      alpha_test = FALSE;
-#elif 1
 	    if ( shallow_val < mid )
 	      beta_test = FALSE;
 	    else
 	      alpha_test = FALSE;
-#else
-	    int low_threshold = (2 * mid + alpha_bound) / 3;
-	    int high_threshold = (2 * mid + beta_bound) / 3;
-
-	    if ( shallow_val <= low_threshold )
-	      beta_test = FALSE;
-	    else if ( shallow_val >= high_threshold )
-	      alpha_test = FALSE;
-	    else
-	      break;  /* Unlikely that there is any selective cutoff. */
-#endif	    
 	  }
 	}
 	else if ( beta_test ) {
