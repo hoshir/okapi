@@ -921,6 +921,301 @@ solve_five_empty( BitBoard my_bits,
 
 
 static int
+solve_six_empty( BitBoard my_bits,
+		 BitBoard opp_bits,
+		 int sq1,
+		 int sq2,
+		 int sq3,
+		 int sq4,
+		 int sq5,
+		 int sq6,
+		 int alpha,
+		 int beta,
+		 int color,
+		 int disc_diff,
+		 int pass_legal ) {
+  BitBoard new_opp_bits;
+  int score = -INFINITE_EVAL;
+  int in_alpha = alpha;
+  int oppcol = OPP( color );
+  int flipped;
+  int new_disc_diff;
+  int ev;
+  int best_sq = 0;
+
+  INCREMENT_COUNTER( nodes );
+
+#if USE_SHALLOW_TT
+  {
+    HashEntry entry;
+    find_shallow_hash( &entry );
+    if ( (entry.draft == 6) && (entry.flags & ENDGAME_SCORE) ) {
+      if ( (entry.flags & EXACT_VALUE) ||
+	   ((entry.flags & LOWER_BOUND) && entry.eval >= beta) ||
+	   ((entry.flags & UPPER_BOUND) && entry.eval <= alpha) ) {
+	end_best_move = entry.move[0];
+	return entry.eval;
+      }
+    }
+  }
+#endif
+
+#if USE_STABILITY
+  int opp_cnt = non_iterative_popcount( opp_bits );
+  if ( alpha >= 0 && (64 - 2 * opp_cnt <= alpha || 64 - 2 * opp_cnt < beta) ) {
+    int stability_bound;
+    EdgeIndices edges;
+    stability_bound = 64 - 2 * count_edge_stable_indexed( oppcol, opp_bits, my_bits, &edges );
+    if ( stability_bound <= alpha )
+      return alpha;
+    if ( edges.bits != 0 ) {
+      stability_bound = 64 - 2 * count_stable_indexed( oppcol, opp_bits, my_bits, &edges );
+      if ( stability_bound < beta )
+        beta = stability_bound + 1;
+      if ( stability_bound <= alpha )
+        return alpha;
+    }
+  }
+#endif
+
+  if ( region_parity != 0 ) {
+    int m_odd[6], m_even[6];
+    int n_odd = 0, n_even = 0;
+    int s[6];
+    int i;
+    s[0] = sq1; s[1] = sq2; s[2] = sq3; s[3] = sq4; s[4] = sq5; s[5] = sq6;
+    for ( i = 0; i < 6; i++ ) {
+      if ( quadrant_mask[s[i]] & region_parity )
+	m_odd[n_odd++] = s[i];
+      else
+	m_even[n_even++] = s[i];
+    }
+    for ( i = 0; i < n_odd; i++ )
+      s[i] = m_odd[i];
+    for ( i = 0; i < n_even; i++ )
+      s[n_odd + i] = m_even[i];
+    sq1 = s[0]; sq2 = s[1]; sq3 = s[2]; sq4 = s[3]; sq5 = s[4]; sq6 = s[5];
+  }
+
+  flipped = TestFlips_wrapper( sq1, my_bits, opp_bits );
+  if ( flipped != 0 ) {
+    FULL_ANDNOT( new_opp_bits, opp_bits, bb_flips );
+    new_disc_diff = -disc_diff - 2 * flipped - 1;
+    region_parity ^= quadrant_mask[sq1];
+#if USE_SHALLOW_TT
+    unsigned int diff1, diff2;
+    end_hash_diff( bb_flips, my_bits, color, sq1, &diff1, &diff2 );
+    hash1 ^= diff1;
+    hash2 ^= diff2;
+#endif
+    score = -solve_five_empty( new_opp_bits, bb_flips, sq2, sq3, sq4, sq5, sq6,
+			       -beta, -alpha, oppcol, new_disc_diff, TRUE );
+#if USE_SHALLOW_TT
+    hash1 ^= diff1;
+    hash2 ^= diff2;
+#endif
+    region_parity ^= quadrant_mask[sq1];
+    if ( score >= beta ) {
+      end_best_move = sq1;
+#if USE_SHALLOW_TT
+      add_shallow_hash( score, sq1, ENDGAME_SCORE | LOWER_BOUND, 6 );
+#endif
+      return score;
+    }
+    else if ( score > alpha )
+      alpha = score;
+    best_sq = sq1;
+  }
+
+  flipped = TestFlips_wrapper( sq2, my_bits, opp_bits );
+  if ( flipped != 0 ) {
+    FULL_ANDNOT( new_opp_bits, opp_bits, bb_flips );
+    new_disc_diff = -disc_diff - 2 * flipped - 1;
+    region_parity ^= quadrant_mask[sq2];
+#if USE_SHALLOW_TT
+    unsigned int diff1, diff2;
+    end_hash_diff( bb_flips, my_bits, color, sq2, &diff1, &diff2 );
+    hash1 ^= diff1;
+    hash2 ^= diff2;
+#endif
+    ev = -solve_five_empty( new_opp_bits, bb_flips, sq1, sq3, sq4, sq5, sq6,
+			    -beta, -alpha, oppcol, new_disc_diff, TRUE );
+#if USE_SHALLOW_TT
+    hash1 ^= diff1;
+    hash2 ^= diff2;
+#endif
+    region_parity ^= quadrant_mask[sq2];
+    if ( ev >= beta ) {
+      end_best_move = sq2;
+#if USE_SHALLOW_TT
+      add_shallow_hash( ev, sq2, ENDGAME_SCORE | LOWER_BOUND, 6 );
+#endif
+      return ev;
+    }
+    else if ( ev > score ) {
+      score = ev;
+      if ( score > alpha )
+	alpha = score;
+      best_sq = sq2;
+    }
+  }
+
+  flipped = TestFlips_wrapper( sq3, my_bits, opp_bits );
+  if ( flipped != 0 ) {
+    FULL_ANDNOT( new_opp_bits, opp_bits, bb_flips );
+    new_disc_diff = -disc_diff - 2 * flipped - 1;
+    region_parity ^= quadrant_mask[sq3];
+#if USE_SHALLOW_TT
+    unsigned int diff1, diff2;
+    end_hash_diff( bb_flips, my_bits, color, sq3, &diff1, &diff2 );
+    hash1 ^= diff1;
+    hash2 ^= diff2;
+#endif
+    ev = -solve_five_empty( new_opp_bits, bb_flips, sq1, sq2, sq4, sq5, sq6,
+			    -beta, -alpha, oppcol, new_disc_diff, TRUE );
+#if USE_SHALLOW_TT
+    hash1 ^= diff1;
+    hash2 ^= diff2;
+#endif
+    region_parity ^= quadrant_mask[sq3];
+    if ( ev >= beta ) {
+      end_best_move = sq3;
+#if USE_SHALLOW_TT
+      add_shallow_hash( ev, sq3, ENDGAME_SCORE | LOWER_BOUND, 6 );
+#endif
+      return ev;
+    }
+    else if ( ev > score ) {
+      score = ev;
+      if ( score > alpha )
+	alpha = score;
+      best_sq = sq3;
+    }
+  }
+
+  flipped = TestFlips_wrapper( sq4, my_bits, opp_bits );
+  if ( flipped != 0 ) {
+    FULL_ANDNOT( new_opp_bits, opp_bits, bb_flips );
+    new_disc_diff = -disc_diff - 2 * flipped - 1;
+    region_parity ^= quadrant_mask[sq4];
+#if USE_SHALLOW_TT
+    unsigned int diff1, diff2;
+    end_hash_diff( bb_flips, my_bits, color, sq4, &diff1, &diff2 );
+    hash1 ^= diff1;
+    hash2 ^= diff2;
+#endif
+    ev = -solve_five_empty( new_opp_bits, bb_flips, sq1, sq2, sq3, sq5, sq6,
+			    -beta, -alpha, oppcol, new_disc_diff, TRUE );
+#if USE_SHALLOW_TT
+    hash1 ^= diff1;
+    hash2 ^= diff2;
+#endif
+    region_parity ^= quadrant_mask[sq4];
+    if ( ev >= beta ) {
+      end_best_move = sq4;
+#if USE_SHALLOW_TT
+      add_shallow_hash( ev, sq4, ENDGAME_SCORE | LOWER_BOUND, 6 );
+#endif
+      return ev;
+    }
+    else if ( ev > score ) {
+      score = ev;
+      if ( score > alpha )
+	alpha = score;
+      best_sq = sq4;
+    }
+  }
+
+  flipped = TestFlips_wrapper( sq5, my_bits, opp_bits );
+  if ( flipped != 0 ) {
+    FULL_ANDNOT( new_opp_bits, opp_bits, bb_flips );
+    new_disc_diff = -disc_diff - 2 * flipped - 1;
+    region_parity ^= quadrant_mask[sq5];
+#if USE_SHALLOW_TT
+    unsigned int diff1, diff2;
+    end_hash_diff( bb_flips, my_bits, color, sq5, &diff1, &diff2 );
+    hash1 ^= diff1;
+    hash2 ^= diff2;
+#endif
+    ev = -solve_five_empty( new_opp_bits, bb_flips, sq1, sq2, sq3, sq4, sq6,
+			    -beta, -alpha, oppcol, new_disc_diff, TRUE );
+#if USE_SHALLOW_TT
+    hash1 ^= diff1;
+    hash2 ^= diff2;
+#endif
+    region_parity ^= quadrant_mask[sq5];
+    if ( ev >= beta ) {
+      end_best_move = sq5;
+#if USE_SHALLOW_TT
+      add_shallow_hash( ev, sq5, ENDGAME_SCORE | LOWER_BOUND, 6 );
+#endif
+      return ev;
+    }
+    else if ( ev > score ) {
+      score = ev;
+      if ( score > alpha )
+	alpha = score;
+      best_sq = sq5;
+    }
+  }
+
+  flipped = TestFlips_wrapper( sq6, my_bits, opp_bits );
+  if ( flipped != 0 ) {
+    FULL_ANDNOT( new_opp_bits, opp_bits, bb_flips );
+    new_disc_diff = -disc_diff - 2 * flipped - 1;
+    region_parity ^= quadrant_mask[sq6];
+#if USE_SHALLOW_TT
+    unsigned int diff1, diff2;
+    end_hash_diff( bb_flips, my_bits, color, sq6, &diff1, &diff2 );
+    hash1 ^= diff1;
+    hash2 ^= diff2;
+#endif
+    ev = -solve_five_empty( new_opp_bits, bb_flips, sq1, sq2, sq3, sq4, sq5,
+			    -beta, -alpha, oppcol, new_disc_diff, TRUE );
+#if USE_SHALLOW_TT
+    hash1 ^= diff1;
+    hash2 ^= diff2;
+#endif
+    region_parity ^= quadrant_mask[sq6];
+    if ( ev >= beta ) {
+      end_best_move = sq6;
+#if USE_SHALLOW_TT
+      add_shallow_hash( ev, sq6, ENDGAME_SCORE | LOWER_BOUND, 6 );
+#endif
+      return ev;
+    }
+    else if ( ev > score ) {
+      score = ev;
+      best_sq = sq6;
+    }
+  }
+
+  if ( score == -INFINITE_EVAL ) {
+    if ( !pass_legal ) {  /* Six empty squares */
+      if ( disc_diff > 0 )
+	return disc_diff + 6;
+      if ( disc_diff < 0 )
+	return disc_diff - 6;
+      return 0;
+    }
+    else
+      return -solve_six_empty( opp_bits, my_bits, sq1, sq2, sq3, sq4, sq5, sq6,
+			       -beta, -alpha, oppcol, -disc_diff, FALSE );
+  }
+
+#if USE_SHALLOW_TT
+  if ( score <= in_alpha )
+    add_shallow_hash( score, best_sq, ENDGAME_SCORE | UPPER_BOUND, 6 );
+  else
+    add_shallow_hash( score, best_sq, ENDGAME_SCORE | EXACT_VALUE, 6 );
+#endif
+
+  return score;
+}
+
+
+
+static int
 solve_parity( BitBoard my_bits,
 	      BitBoard opp_bits,
 	      int alpha,
@@ -939,6 +1234,17 @@ solve_parity( BitBoard my_bits,
   int new_disc_diff;
   int sq, old_sq, best_sq = 0;
   unsigned int parity_mask;
+
+  if ( empties == 6 ) {
+    int sq1 = end_move_list[END_MOVE_LIST_HEAD].succ;
+    int sq2 = end_move_list[sq1].succ;
+    int sq3 = end_move_list[sq2].succ;
+    int sq4 = end_move_list[sq3].succ;
+    int sq5 = end_move_list[sq4].succ;
+    int sq6 = end_move_list[sq5].succ;
+    return solve_six_empty( my_bits, opp_bits, sq1, sq2, sq3, sq4, sq5, sq6,
+			    alpha, beta, color, disc_diff, pass_legal );
+  }
 
   if ( empties == 5 ) {
     int sq1 = end_move_list[END_MOVE_LIST_HEAD].succ;
@@ -1021,14 +1327,15 @@ solve_parity( BitBoard my_bits,
 	  region_parity ^= holepar;
 	  end_move_list[old_sq].succ = end_move_list[sq].succ;
 	  new_disc_diff = -disc_diff - 2 * flipped - 1;
-	  if ( empties == 6 ) {
+	  if ( empties == 7 ) {
 	    int sq1 = end_move_list[END_MOVE_LIST_HEAD].succ;
 	    int sq2 = end_move_list[sq1].succ;
 	    int sq3 = end_move_list[sq2].succ;
 	    int sq4 = end_move_list[sq3].succ;
 	    int sq5 = end_move_list[sq4].succ;
-	    ev = -solve_five_empty( new_opp_bits, bb_flips, sq1, sq2, sq3, sq4, sq5,
-				    -beta, -alpha, oppcol, new_disc_diff, TRUE );
+	    int sq6 = end_move_list[sq5].succ;
+	    ev = -solve_six_empty( new_opp_bits, bb_flips, sq1, sq2, sq3, sq4, sq5, sq6,
+				   -beta, -alpha, oppcol, new_disc_diff, TRUE );
 	  }
 	  else {
 	    if ( level + 1 <= MAX_SEARCH_DEPTH ) {
@@ -1081,14 +1388,15 @@ solve_parity( BitBoard my_bits,
 	region_parity ^= holepar;
 	end_move_list[old_sq].succ = end_move_list[sq].succ;
 	new_disc_diff = -disc_diff - 2 * flipped - 1;
-	if ( empties == 6 ) {
+	if ( empties == 7 ) {
 	  int sq1 = end_move_list[END_MOVE_LIST_HEAD].succ;
 	  int sq2 = end_move_list[sq1].succ;
 	  int sq3 = end_move_list[sq2].succ;
 	  int sq4 = end_move_list[sq3].succ;
 	  int sq5 = end_move_list[sq4].succ;
-	  ev = -solve_five_empty( new_opp_bits, bb_flips, sq1, sq2, sq3, sq4, sq5,
-				  -beta, -alpha, oppcol, new_disc_diff, TRUE );
+	  int sq6 = end_move_list[sq5].succ;
+	  ev = -solve_six_empty( new_opp_bits, bb_flips, sq1, sq2, sq3, sq4, sq5, sq6,
+				 -beta, -alpha, oppcol, new_disc_diff, TRUE );
 	}
 	else {
 	  if ( level + 1 <= MAX_SEARCH_DEPTH ) {
