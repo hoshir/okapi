@@ -2074,8 +2074,14 @@ end_tree_search( int level, int max_depth, BitBoard my_bits,
 
 #define MAX_ROOT_MOVES               64
 
-/* Remaining depth at or above which a node is worth splitting */
-#define PARALLEL_SPLIT_DEPTH         11
+/* Remaining depth at or above which a node is worth splitting.
+   For deep endgames (root empties >= 24), maintaining split depth at 14 prevents
+   massive speculative tree explosions on sibling branches (PAR-010).
+   For shallower endgames, depth 11 distributes work earlier (PAR-001). */
+#define PARALLEL_SPLIT_DEPTH_SHALLOW 11
+#define PARALLEL_SPLIT_DEPTH_DEEP    14
+#define DEEP_ENDGAME_SPLIT_THRESHOLD 24
+#define PARALLEL_SPLIT_DEPTH         PARALLEL_SPLIT_DEPTH_SHALLOW
 
 /* How far the splits may nest, and how much more of the tree a node has
    to have left before it may start a batch at each level of nesting.
@@ -2606,10 +2612,15 @@ end_tree_search( int level,
      bookkeeping, and once it is not, the thread it puts to work is one
      that would otherwise have waited out the longest job of the batch
      doing nothing. */
-  can_split = (remains >= PARALLEL_SPLIT_DEPTH +
-	       SPLIT_NESTING_MARGIN * split_nesting) &&
-    (split_nesting <= MAX_SPLIT_NESTING) && (threads_count() > 1) &&
-    (threads_idle_count() > 0);
+  {
+    int min_split_depth = (max_depth >= DEEP_ENDGAME_SPLIT_THRESHOLD)
+      ? PARALLEL_SPLIT_DEPTH_DEEP
+      : PARALLEL_SPLIT_DEPTH_SHALLOW;
+    can_split = (remains >= min_split_depth +
+		 SPLIT_NESTING_MARGIN * split_nesting) &&
+      (split_nesting <= MAX_SPLIT_NESTING) && (threads_count() > 1) &&
+      (threads_idle_count() > 0);
+  }
   if ( can_split )
     for ( i = 0; i < 100; i++ )
       proven[i] = FALSE;
