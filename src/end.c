@@ -1715,6 +1715,7 @@ solve_parity_hash_high( BitBoard my_bits,
   int i;
   int score;
   int in_alpha = alpha;
+  int orig_alpha = alpha;
   int oppcol = OPP( color );
   int flipped, best_flipped;
   int new_disc_diff;
@@ -1745,6 +1746,14 @@ solve_parity_hash_high( BitBoard my_bits,
       return entry.eval;
     }
   }
+
+  if ( entry.draft == empties && (entry.selectivity == 0) && bb_valid_move( entry.move[0], my_bits, opp_bits ) )
+    hash_move = entry.move[0];
+
+  int reliable_hash = (hash_move != 0) &&
+                      (entry.draft >= empties - 1) &&
+                      ((entry.flags & (EXACT_VALUE | LOWER_BOUND)) != 0) &&
+                      ((entry.flags & EXACT_VALUE) || (entry.eval > alpha));
 
   /* Check for stability cutoff */
 
@@ -1803,7 +1812,7 @@ solve_parity_hash_high( BitBoard my_bits,
 	parity = 0;
       goodness[moves] = move_bonus[parity][sq];
       if ( sq == hash_move )
-	goodness[moves] += 128;
+	goodness[moves] += 1024;
 
       goodness[moves] -= weighted_mobility( new_opp_bits, bb_flips );
 
@@ -1896,6 +1905,8 @@ solve_parity_hash_high( BitBoard my_bits,
     alpha = score;
   }
 
+  int pv_established = (score > orig_alpha) && reliable_hash && (sq == hash_move);
+
   /* Play through the rest of the moves */
 
   move_order[best_index] = move_order[0];
@@ -1937,12 +1948,30 @@ solve_parity_hash_high( BitBoard my_bits,
       tls.stable_discs[WHITESQ][level + 1] = tls.stable_discs[WHITESQ][level];
     }
 
-    if ( empties <= LOW_LEVEL_DEPTH )  /* Fail-high for opp is likely. */
-      ev = -solve_parity_hash( new_opp_bits, bb_flips, -beta, -alpha,
-			       oppcol, empties - 1, new_disc_diff, TRUE, level + 1 );
-    else
-      ev = -solve_parity_hash_high( new_opp_bits, bb_flips, -beta, -alpha,
-				    oppcol, empties - 1, new_disc_diff, TRUE, level + 1 );
+    if ( pv_established && (beta > alpha + 1) ) {
+      if ( empties <= LOW_LEVEL_DEPTH )
+        ev = -solve_parity_hash( new_opp_bits, bb_flips, -alpha - 1, -alpha,
+                                 oppcol, empties - 1, new_disc_diff, TRUE, level + 1 );
+      else
+        ev = -solve_parity_hash_high( new_opp_bits, bb_flips, -alpha - 1, -alpha,
+                                      oppcol, empties - 1, new_disc_diff, TRUE, level + 1 );
+      if ( ev > alpha && ev < beta ) {
+        if ( empties <= LOW_LEVEL_DEPTH )
+          ev = -solve_parity_hash( new_opp_bits, bb_flips, -beta, -ev,
+                                   oppcol, empties - 1, new_disc_diff, TRUE, level + 1 );
+        else
+          ev = -solve_parity_hash_high( new_opp_bits, bb_flips, -beta, -ev,
+                                        oppcol, empties - 1, new_disc_diff, TRUE, level + 1 );
+      }
+    }
+    else {
+      if ( empties <= LOW_LEVEL_DEPTH )
+        ev = -solve_parity_hash( new_opp_bits, bb_flips, -beta, -alpha,
+                                 oppcol, empties - 1, new_disc_diff, TRUE, level + 1 );
+      else
+        ev = -solve_parity_hash_high( new_opp_bits, bb_flips, -beta, -alpha,
+                                      oppcol, empties - 1, new_disc_diff, TRUE, level + 1 );
+    }
 
     region_parity ^= quadrant_mask[sq];
 
