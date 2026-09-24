@@ -37,7 +37,8 @@
 
 #define KEY1_MASK                   0xFF000000u
 
-#define SECONDARY_HASH( a )         ((a) ^ 1)
+#define BUCKET_SIZE                 4
+#define BUCKET_MASK( mask )         ((mask) & ~3)
 
 
 
@@ -358,14 +359,6 @@ determine_hash_values( int side_to_move,
    not happens-before synchronization.
 */
 
-static INLINE unsigned int
-entry_xor_key2( const CompactHashEntry *e ) {
-  unsigned int k2 = __atomic_load_n( &e->key2, __ATOMIC_RELAXED );
-  int ev = __atomic_load_n( &e->eval, __ATOMIC_RELAXED );
-  unsigned int mv = __atomic_load_n( &e->moves, __ATOMIC_RELAXED );
-  unsigned int k1_p = __atomic_load_n( &e->key1_selectivity_flags_draft, __ATOMIC_RELAXED );
-  return k2 ^ (unsigned int) ev ^ mv ^ k1_p;
-}
 
 
 static INLINE void
@@ -415,8 +408,8 @@ set_hash_transformation( unsigned int trans1, unsigned int trans2 ) {
 
 /*
    ADD_HASH
-   Add information to the hash table. Two adjacent positions are tried
-   and the most shallow search is replaced.
+   Add information to the hash table using 4-way set-associativity.
+   The shallowest search in the 4-entry bucket is replaced.
 */
 
 void
@@ -426,10 +419,12 @@ add_hash( int reverse_mode,
 	  int flags,
 	  int draft,
 	  int selectivity ) {
+  int i;
   int hit = FALSE;
-  int old_draft;
+  int old_draft = 0;
+  int min_draft = 999999;
   int change_encouragment;
-  unsigned int index, index1, index2;
+  unsigned int base, target_slot, victim_slot;
   unsigned int code1, code2;
   HashEntry entry;
 
@@ -444,37 +439,44 @@ add_hash( int reverse_mode,
     code2 = hash2 ^ hash_trans2;
   }
 
-  index1 = code1 & hash_mask;
-  index2 = SECONDARY_HASH( index1 );
-  if ( entry_xor_key2( &hash_table[index1] ) == code2 ) {
-    index = index1;
-    hit = TRUE;
-  }
-  else if ( entry_xor_key2( &hash_table[index2] ) == code2 ) {
-    index = index2;
-    hit = TRUE;
-  }
-  else {
-    unsigned int draft1 = __atomic_load_n( &hash_table[index1].key1_selectivity_flags_draft, __ATOMIC_RELAXED ) & DRAFT_MASK;
-    unsigned int draft2 = __atomic_load_n( &hash_table[index2].key1_selectivity_flags_draft, __ATOMIC_RELAXED ) & DRAFT_MASK;
-    if ( draft1 <= draft2 )
-      index = index1;
-    else
-      index = index2;
+  base = BUCKET_MASK( code1 & hash_mask );
+  victim_slot = base;
+
+  for ( i = 0; i < BUCKET_SIZE; i++ ) {
+    unsigned int idx = base + i;
+    unsigned int k2 = __atomic_load_n( &hash_table[idx].key2, __ATOMIC_RELAXED );
+    int ev = __atomic_load_n( &hash_table[idx].eval, __ATOMIC_RELAXED );
+    unsigned int mv = __atomic_load_n( &hash_table[idx].moves, __ATOMIC_RELAXED );
+    unsigned int k1_p = __atomic_load_n( &hash_table[idx].key1_selectivity_flags_draft, __ATOMIC_RELAXED );
+
+    if ( ((k2 ^ (unsigned int) ev ^ mv ^ k1_p) == code2) && (((k1_p ^ code1) & KEY1_MASK) == 0) ) {
+      hit = TRUE;
+      target_slot = idx;
+      old_draft = k1_p & DRAFT_MASK;
+      break;
+    }
+
+    int d = k1_p & DRAFT_MASK;
+    if ( d < min_draft ) {
+      min_draft = d;
+      victim_slot = idx;
+    }
   }
 
-  old_draft = __atomic_load_n( &hash_table[index].key1_selectivity_flags_draft, __ATOMIC_RELAXED ) & DRAFT_MASK;
-
-  if ( flags & EXACT_VALUE )  /* Exact scores are potentially more useful */
+  if ( flags & EXACT_VALUE )
     change_encouragment = 2;
   else
     change_encouragment = 0;
+
   if ( hit ) {
     if ( old_draft > draft + change_encouragment + 2 )
       return;
   }
-  else if ( old_draft > draft + change_encouragment + REPLACEMENT_OFFSET )
-    return;
+  else {
+    target_slot = victim_slot;
+    if ( min_draft > draft + change_encouragment + REPLACEMENT_OFFSET )
+      return;
+  }
 
   entry.key1 = code1;
   entry.key2 = code2;
@@ -486,14 +488,14 @@ add_hash( int reverse_mode,
   entry.flags = (short) flags;
   entry.draft = (short) draft;
   entry.selectivity = selectivity;
-  wide_to_compact( &entry, &hash_table[index] );
+  wide_to_compact( &entry, &hash_table[target_slot] );
 }
 
 
 /*
    ADD_HASH_EXTENDED
-   Add information to the hash table. Two adjacent positions are tried
-   and the most shallow search is replaced.
+   Add information to the hash table using 4-way set-associativity.
+   The shallowest search in the 4-entry bucket is replaced.
 */
 
 void
@@ -501,9 +503,10 @@ add_hash_extended( int reverse_mode, int score, int *best, int flags,
 		   int draft, int selectivity ) {
   int i;
   int hit = FALSE;
-  int old_draft;
+  int old_draft = 0;
+  int min_draft = 999999;
   int change_encouragment;
-  unsigned int index, index1, index2;
+  unsigned int base, target_slot, victim_slot;
   unsigned int code1, code2;
   HashEntry entry;
 
@@ -516,37 +519,44 @@ add_hash_extended( int reverse_mode, int score, int *best, int flags,
     code2 = hash2 ^ hash_trans2;
   }
 
-  index1 = code1 & hash_mask;
-  index2 = SECONDARY_HASH( index1 );
-  if ( entry_xor_key2( &hash_table[index1] ) == code2 ) {
-    index = index1;
-    hit = TRUE;
-  }
-  else if ( entry_xor_key2( &hash_table[index2] ) == code2 ) {
-    index = index2;
-    hit = TRUE;
-  }
-  else {
-    unsigned int draft1 = __atomic_load_n( &hash_table[index1].key1_selectivity_flags_draft, __ATOMIC_RELAXED ) & DRAFT_MASK;
-    unsigned int draft2 = __atomic_load_n( &hash_table[index2].key1_selectivity_flags_draft, __ATOMIC_RELAXED ) & DRAFT_MASK;
-    if ( draft1 <= draft2 )
-      index = index1;
-    else
-      index = index2;
+  base = BUCKET_MASK( code1 & hash_mask );
+  victim_slot = base;
+
+  for ( i = 0; i < BUCKET_SIZE; i++ ) {
+    unsigned int idx = base + i;
+    unsigned int k2 = __atomic_load_n( &hash_table[idx].key2, __ATOMIC_RELAXED );
+    int ev = __atomic_load_n( &hash_table[idx].eval, __ATOMIC_RELAXED );
+    unsigned int mv = __atomic_load_n( &hash_table[idx].moves, __ATOMIC_RELAXED );
+    unsigned int k1_p = __atomic_load_n( &hash_table[idx].key1_selectivity_flags_draft, __ATOMIC_RELAXED );
+
+    if ( ((k2 ^ (unsigned int) ev ^ mv ^ k1_p) == code2) && (((k1_p ^ code1) & KEY1_MASK) == 0) ) {
+      hit = TRUE;
+      target_slot = idx;
+      old_draft = k1_p & DRAFT_MASK;
+      break;
+    }
+
+    int d = k1_p & DRAFT_MASK;
+    if ( d < min_draft ) {
+      min_draft = d;
+      victim_slot = idx;
+    }
   }
 
-  old_draft = __atomic_load_n( &hash_table[index].key1_selectivity_flags_draft, __ATOMIC_RELAXED ) & DRAFT_MASK;
-
-  if ( flags & EXACT_VALUE )  /* Exact scores are potentially more useful */
+  if ( flags & EXACT_VALUE )
     change_encouragment = 2;
   else
     change_encouragment = 0;
+
   if ( hit ) {
     if ( old_draft > draft + change_encouragment + 2 )
       return;
   }
-  else if ( old_draft > draft + change_encouragment + REPLACEMENT_OFFSET )
-    return;
+  else {
+    target_slot = victim_slot;
+    if ( min_draft > draft + change_encouragment + REPLACEMENT_OFFSET )
+      return;
+  }
 
   entry.key1 = code1;
   entry.key2 = code2;
@@ -556,22 +566,21 @@ add_hash_extended( int reverse_mode, int score, int *best, int flags,
   entry.flags = (short) flags;
   entry.draft = (short) draft;
   entry.selectivity = selectivity;
-  wide_to_compact( &entry, &hash_table[index] );
+  wide_to_compact( &entry, &hash_table[target_slot] );
 }
 
 
 /*
    FIND_HASH
-   Search the hash table for the current position. The two possible
-   hash table positions are probed.
+   Search the hash table for the current position using 4-way set-associativity.
+   All 4 bucket slots in the 64-byte cache line are probed.
 */   
 
 void REGPARM(2)
 find_hash( HashEntry *entry, int reverse_mode ) {
-  int index1, index2;
+  int i;
+  unsigned int base;
   unsigned int code1, code2;
-  unsigned int k2_raw, k1_p, mv;
-  int ev;
 
   if ( reverse_mode ) {
     code1 = hash2 ^ hash_trans2;
@@ -582,30 +591,20 @@ find_hash( HashEntry *entry, int reverse_mode ) {
     code2 = hash2 ^ hash_trans2;
   }
 
-  index1 = code1 & hash_mask;
-  index2 = SECONDARY_HASH( index1 );
+  base = BUCKET_MASK( code1 & hash_mask );
 
-  k2_raw = __atomic_load_n( &hash_table[index1].key2, __ATOMIC_ACQUIRE );
-  ev = __atomic_load_n( &hash_table[index1].eval, __ATOMIC_RELAXED );
-  mv = __atomic_load_n( &hash_table[index1].moves, __ATOMIC_RELAXED );
-  k1_p = __atomic_load_n( &hash_table[index1].key1_selectivity_flags_draft, __ATOMIC_RELAXED );
+  for ( i = 0; i < BUCKET_SIZE; i++ ) {
+    unsigned int idx = base + i;
+    unsigned int k2_raw = __atomic_load_n( &hash_table[idx].key2, __ATOMIC_ACQUIRE );
+    int ev = __atomic_load_n( &hash_table[idx].eval, __ATOMIC_RELAXED );
+    unsigned int mv = __atomic_load_n( &hash_table[idx].moves, __ATOMIC_RELAXED );
+    unsigned int k1_p = __atomic_load_n( &hash_table[idx].key1_selectivity_flags_draft, __ATOMIC_RELAXED );
 
-  if ( (k2_raw ^ (unsigned int) ev ^ mv ^ k1_p) == code2 ) {
-    if ( ((k1_p ^ code1) & KEY1_MASK) == 0 ) {
-      compact_to_wide( entry, code2, ev, mv, k1_p );
-      return;
-    }
-  }
-
-  k2_raw = __atomic_load_n( &hash_table[index2].key2, __ATOMIC_ACQUIRE );
-  ev = __atomic_load_n( &hash_table[index2].eval, __ATOMIC_RELAXED );
-  mv = __atomic_load_n( &hash_table[index2].moves, __ATOMIC_RELAXED );
-  k1_p = __atomic_load_n( &hash_table[index2].key1_selectivity_flags_draft, __ATOMIC_RELAXED );
-
-  if ( (k2_raw ^ (unsigned int) ev ^ mv ^ k1_p) == code2 ) {
-    if ( ((k1_p ^ code1) & KEY1_MASK) == 0 ) {
-      compact_to_wide( entry, code2, ev, mv, k1_p );
-      return;
+    if ( (k2_raw ^ (unsigned int) ev ^ mv ^ k1_p) == code2 ) {
+      if ( ((k1_p ^ code1) & KEY1_MASK) == 0 ) {
+        compact_to_wide( entry, code2, ev, mv, k1_p );
+        return;
+      }
     }
   }
 
