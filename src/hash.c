@@ -44,6 +44,13 @@
 
 /* Global variables */
 
+unsigned char hash_generation = 0;
+
+void
+increment_hash_generation( void ) {
+  hash_generation = (hash_generation + 1) & 0x03;
+}
+
 int hash_size;
 int hash_mask;
 unsigned int hash_trans1 = 0;
@@ -210,8 +217,10 @@ setup_hash( int clear ) {
   unsigned int closeness;
   unsigned int random_pair[130][2];
 
-  if ( clear )
+  if ( clear ) {
     memset( hash_table, 0, (size_t) hash_size * sizeof( CompactHashEntry ) );
+    hash_generation = 0;
+  }
 
   rand_index = 0;
   while ( rand_index < 130 ) {
@@ -363,8 +372,10 @@ determine_hash_values( int side_to_move,
 
 static INLINE void
 wide_to_compact( const HashEntry *entry, CompactHashEntry *compact_entry ) {
+  unsigned int clamped_draft = (unsigned int)(entry->draft < 0 ? 0 : (entry->draft > DRAFT_VALUE_MASK ? DRAFT_VALUE_MASK : entry->draft));
+  unsigned int draft_gen = clamped_draft | (((unsigned int) __atomic_load_n( &hash_generation, __ATOMIC_RELAXED ) & 0x03) << DRAFT_GEN_SHIFT);
   unsigned int k1_packed = (entry->key1 & KEY1_MASK) + (entry->selectivity << 16) +
-    (entry->flags << 8) + entry->draft;
+    (entry->flags << 8) + draft_gen;
   unsigned int moves = entry->move[0] + (entry->move[1] << 8) +
     (entry->move[2] << 16) + (entry->move[3] << 24);
   int eval = entry->eval;
@@ -388,7 +399,7 @@ compact_to_wide( HashEntry *entry, unsigned int code2, int ev, unsigned int mv, 
   entry->key1 = k1_p & KEY1_MASK;
   entry->selectivity = (k1_p & 0x00ffffff) >> 16;
   entry->flags = (k1_p & 0x0000ffff) >> 8;
-  entry->draft = (k1_p & 0x000000ff);
+  entry->draft = (k1_p & DRAFT_VALUE_MASK);
 }
 
 
@@ -422,10 +433,12 @@ add_hash( int reverse_mode,
   int i;
   int hit = FALSE;
   int old_draft = 0;
-  int min_draft = 999999;
+  int old_is_old = FALSE;
+  int min_priority = 999999;
   int change_encouragment;
   unsigned int base, target_slot, victim_slot;
   unsigned int code1, code2;
+  unsigned char curr_gen;
   HashEntry entry;
 
   assert( abs( score ) != SEARCH_ABORT );
@@ -441,6 +454,7 @@ add_hash( int reverse_mode,
 
   base = BUCKET_MASK( code1 & hash_mask );
   victim_slot = base;
+  curr_gen = __atomic_load_n( &hash_generation, __ATOMIC_RELAXED ) & 0x03;
 
   for ( i = 0; i < BUCKET_SIZE; i++ ) {
     unsigned int idx = base + i;
@@ -452,13 +466,19 @@ add_hash( int reverse_mode,
     if ( ((k2 ^ (unsigned int) ev ^ mv ^ k1_p) == code2) && (((k1_p ^ code1) & KEY1_MASK) == 0) ) {
       hit = TRUE;
       target_slot = idx;
-      old_draft = k1_p & DRAFT_MASK;
+      old_draft = k1_p & DRAFT_VALUE_MASK;
+      old_is_old = (((k1_p & DRAFT_GEN_MASK) >> DRAFT_GEN_SHIFT) != curr_gen);
       break;
     }
 
-    int d = k1_p & DRAFT_MASK;
-    if ( d < min_draft ) {
-      min_draft = d;
+    int is_empty = ((k1_p & 0x0000FF00) == 0);
+    int entry_draft = k1_p & DRAFT_VALUE_MASK;
+    int entry_gen = (k1_p & DRAFT_GEN_MASK) >> DRAFT_GEN_SHIFT;
+    int age = (curr_gen - entry_gen) & 0x03;
+    int priority = is_empty ? -999999 : (entry_draft - (age << 5));
+
+    if ( priority < min_priority ) {
+      min_priority = priority;
       victim_slot = idx;
     }
   }
@@ -469,12 +489,12 @@ add_hash( int reverse_mode,
     change_encouragment = 0;
 
   if ( hit ) {
-    if ( old_draft > draft + change_encouragment + 2 )
+    if ( !old_is_old && (old_draft > draft + change_encouragment + 2) )
       return;
   }
   else {
     target_slot = victim_slot;
-    if ( min_draft > draft + change_encouragment + REPLACEMENT_OFFSET )
+    if ( min_priority > draft + change_encouragment + REPLACEMENT_OFFSET )
       return;
   }
 
@@ -504,10 +524,12 @@ add_hash_extended( int reverse_mode, int score, int *best, int flags,
   int i;
   int hit = FALSE;
   int old_draft = 0;
-  int min_draft = 999999;
+  int old_is_old = FALSE;
+  int min_priority = 999999;
   int change_encouragment;
   unsigned int base, target_slot, victim_slot;
   unsigned int code1, code2;
+  unsigned char curr_gen;
   HashEntry entry;
 
   if ( reverse_mode ) {
@@ -521,6 +543,7 @@ add_hash_extended( int reverse_mode, int score, int *best, int flags,
 
   base = BUCKET_MASK( code1 & hash_mask );
   victim_slot = base;
+  curr_gen = __atomic_load_n( &hash_generation, __ATOMIC_RELAXED ) & 0x03;
 
   for ( i = 0; i < BUCKET_SIZE; i++ ) {
     unsigned int idx = base + i;
@@ -532,13 +555,19 @@ add_hash_extended( int reverse_mode, int score, int *best, int flags,
     if ( ((k2 ^ (unsigned int) ev ^ mv ^ k1_p) == code2) && (((k1_p ^ code1) & KEY1_MASK) == 0) ) {
       hit = TRUE;
       target_slot = idx;
-      old_draft = k1_p & DRAFT_MASK;
+      old_draft = k1_p & DRAFT_VALUE_MASK;
+      old_is_old = (((k1_p & DRAFT_GEN_MASK) >> DRAFT_GEN_SHIFT) != curr_gen);
       break;
     }
 
-    int d = k1_p & DRAFT_MASK;
-    if ( d < min_draft ) {
-      min_draft = d;
+    int is_empty = ((k1_p & 0x0000FF00) == 0);
+    int entry_draft = k1_p & DRAFT_VALUE_MASK;
+    int entry_gen = (k1_p & DRAFT_GEN_MASK) >> DRAFT_GEN_SHIFT;
+    int age = (curr_gen - entry_gen) & 0x03;
+    int priority = is_empty ? -999999 : (entry_draft - (age << 5));
+
+    if ( priority < min_priority ) {
+      min_priority = priority;
       victim_slot = idx;
     }
   }
@@ -549,12 +578,12 @@ add_hash_extended( int reverse_mode, int score, int *best, int flags,
     change_encouragment = 0;
 
   if ( hit ) {
-    if ( old_draft > draft + change_encouragment + 2 )
+    if ( !old_is_old && (old_draft > draft + change_encouragment + 2) )
       return;
   }
   else {
     target_slot = victim_slot;
-    if ( min_draft > draft + change_encouragment + REPLACEMENT_OFFSET )
+    if ( min_priority > draft + change_encouragment + REPLACEMENT_OFFSET )
       return;
   }
 

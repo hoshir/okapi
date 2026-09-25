@@ -1322,6 +1322,7 @@ middle_game( int side_to_move, int max_depth,
 
   last_panic_check = 0.0;
   counter_phase = 0;
+  increment_hash_generation();
 
   piece_count[BLACKSQ][disks_played] = disc_count( BLACKSQ );
   piece_count[WHITESQ][disks_played] = disc_count( WHITESQ );

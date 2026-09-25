@@ -40,6 +40,15 @@ extern "C" {
 
 #define NO_HASH_MOVE              0
 
+#define DRAFT_VALUE_MASK          0x3F
+#define DRAFT_GEN_MASK            0xC0
+#define DRAFT_GEN_SHIFT           6
+
+extern unsigned char hash_generation;
+
+void
+increment_hash_generation( void );
+
 
 
 /* The structure returned when a hash probe resulted in a hit.
