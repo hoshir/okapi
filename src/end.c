@@ -2414,6 +2414,7 @@ end_tree_search( int level,
   int best_list_index, best_list_length;
   int best_list[4];
   int proven[100], proven_score[100], proven_cutoff[100];
+  int etc_demoted[100];
   int siblings_dispatched = FALSE;
   int can_split;
   int cand_moves_arr[64], cand_scores_arr[64];
@@ -2656,6 +2657,8 @@ end_tree_search( int level,
   best = -INFINITE_EVAL;
   pre_search_done = FALSE;
   etc_tried = 0;
+  for ( i = 0; i < 100; i++ )
+    etc_demoted[i] = FALSE;
   curr_alpha = alpha;
 
   /* Initialize the move list and check the hash table move list */
@@ -2739,11 +2742,17 @@ end_tree_search( int level,
 
 		if ( (etc_entry.flags & ENDGAME_SCORE) &&
 		     (etc_entry.draft == empties - 1) &&
-		     (etc_entry.selectivity <= selectivity) &&
-		     (etc_entry.flags & (UPPER_BOUND | EXACT_VALUE)) &&
-		     (etc_entry.eval <= -beta) ) {
-		  etc_move = move;
-		  break;
+		     (etc_entry.selectivity <= selectivity) ) {
+		  if ( (etc_entry.flags & (UPPER_BOUND | EXACT_VALUE)) &&
+		       (etc_entry.eval <= -beta) ) {
+		    etc_move = move;
+		    break;
+		  }
+		  else if ( (remains < DEEP_ENDGAME_SPLIT_THRESHOLD) &&
+			    (etc_entry.flags & (LOWER_BOUND | EXACT_VALUE)) &&
+			    (etc_entry.eval >= -curr_alpha) ) {
+		    etc_demoted[move] = TRUE;
+		  }
 		}
 	      }
 	    }
@@ -2778,7 +2787,7 @@ end_tree_search( int level,
 
 	      if ( !already_checked && (board[move] == EMPTY) &&
 		   (TestFlips_wrapper( move, my_bits, opp_bits ) > 0) ) {
-		if ( can_split && proven[move] && (proven_score[move] <= curr_alpha) ) {
+		if ( (can_split && proven[move] && (proven_score[move] <= curr_alpha)) || etc_demoted[move] ) {
 		  evals[disks_played][move] = -INFINITE_EVAL;
 		  move_list[disks_played][move_count[disks_played]] = move;
 		  move_count[disks_played]++;
@@ -2867,7 +2876,7 @@ end_tree_search( int level,
 
 	      if ( !already_checked && (board[move] == EMPTY) &&
 		   (TestFlips_wrapper( move, my_bits, opp_bits ) > 0) ) {
-		if ( can_split && proven[move] && (proven_score[move] <= curr_alpha) ) {
+		if ( (can_split && proven[move] && (proven_score[move] <= curr_alpha)) || etc_demoted[move] ) {
 		  cand_moves_arr[cand_count] = move;
 		  cand_scores_arr[cand_count] = -INFINITE_EVAL;
 		  cand_count++;
