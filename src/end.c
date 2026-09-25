@@ -1711,6 +1711,7 @@ solve_parity_hash_high( BitBoard my_bits,
 	0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0 }
   };
   BitBoard new_opp_bits;
+  BitBoard nws_my_bits;
   BitBoard best_new_my_bits, best_new_opp_bits;
   int i;
   int score;
@@ -1737,12 +1738,14 @@ solve_parity_hash_high( BitBoard my_bits,
   if ( entry.draft == empties ) {
     if ( (entry.selectivity == 0) &&
 	 (entry.flags & ENDGAME_SCORE) &&
-	 bb_valid_move( entry.move[0], my_bits, opp_bits ) &&
-	 ((entry.flags & EXACT_VALUE) ||
-	  ((entry.flags & LOWER_BOUND) && entry.eval >= beta) ||
-	  ((entry.flags & UPPER_BOUND) && entry.eval <= alpha)) ) {
-      end_best_move = entry.move[0];
-      return entry.eval;
+	 bb_valid_move( entry.move[0], my_bits, opp_bits ) ) {
+      if ( (entry.flags & EXACT_VALUE) ||
+	   ((entry.flags & LOWER_BOUND) && entry.eval >= beta) ||
+	   ((entry.flags & UPPER_BOUND) && entry.eval <= alpha) ) {
+        end_best_move = entry.move[0];
+        return entry.eval;
+      }
+      hash_move = entry.move[0];
     }
   }
 
@@ -1937,12 +1940,28 @@ solve_parity_hash_high( BitBoard my_bits,
       tls.stable_discs[WHITESQ][level + 1] = tls.stable_discs[WHITESQ][level];
     }
 
-    if ( empties <= LOW_LEVEL_DEPTH )  /* Fail-high for opp is likely. */
-      ev = -solve_parity_hash( new_opp_bits, bb_flips, -beta, -alpha,
+    /* PVS: search sibling moves with null window [-(alpha+1), -alpha] */
+    nws_my_bits = bb_flips;
+    if ( empties <= LOW_LEVEL_DEPTH )
+      ev = -solve_parity_hash( new_opp_bits, nws_my_bits, -(alpha + 1), -alpha,
 			       oppcol, empties - 1, new_disc_diff, TRUE, level + 1 );
     else
-      ev = -solve_parity_hash_high( new_opp_bits, bb_flips, -beta, -alpha,
+      ev = -solve_parity_hash_high( new_opp_bits, nws_my_bits, -(alpha + 1), -alpha,
 				    oppcol, empties - 1, new_disc_diff, TRUE, level + 1 );
+
+    /* Re-search with full window if null window failed high within (alpha, beta) */
+    if ( ev > alpha && ev < beta ) {
+      if ( level + 1 <= MAX_SEARCH_DEPTH ) {
+        tls.stable_discs[BLACKSQ][level + 1] = tls.stable_discs[BLACKSQ][level];
+        tls.stable_discs[WHITESQ][level + 1] = tls.stable_discs[WHITESQ][level];
+      }
+      if ( empties <= LOW_LEVEL_DEPTH )
+        ev = -solve_parity_hash( new_opp_bits, nws_my_bits, -beta, -ev,
+                                 oppcol, empties - 1, new_disc_diff, TRUE, level + 1 );
+      else
+        ev = -solve_parity_hash_high( new_opp_bits, nws_my_bits, -beta, -ev,
+                                      oppcol, empties - 1, new_disc_diff, TRUE, level + 1 );
+    }
 
     region_parity ^= quadrant_mask[sq];
 
