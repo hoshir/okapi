@@ -50,9 +50,6 @@
    output and then the program is terminated. */
 #define  DEBUG                    0
 
-/* The squares along the border of the board. */
-#define  BORDER_MASK              0xFF818181818181FFull
-
 
 
 /* Global variables */

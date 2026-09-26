@@ -24,6 +24,9 @@
 extern "C" {
 #endif
 
+#define CORNER_MASK  0x8100000000000081ull
+#define BORDER_MASK  0xFF818181818181FFull
+
 
 
 extern _Thread_local BitBoard last_black_stable, last_white_stable;
