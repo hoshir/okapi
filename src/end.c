@@ -53,11 +53,7 @@
 
 #define PV_EXPANSION                 16
 
-#define DEPTH_TWO_SEARCH             15
-#define DEPTH_THREE_SEARCH           18
-#define DEPTH_FOUR_SEARCH            24
-#define DEPTH_SIX_SEARCH             28
-#define EXTRA_ROOT_SEARCH            2
+#define PRE_SEARCH_DEEP_THRESHOLD    18
 
 #define SELECTIVE_PRE_DEPTH_THRESHOLD 2
 #define SELECTIVE_PRE_DEPTH_TOP_K 2
@@ -1826,27 +1822,8 @@ end_search_pvs( BitBoard my_bits,
       }
     }
 
-    /* Shallow pre-search depth */
-    if ( empties >= DEPTH_TWO_SEARCH ) {
-      if ( empties >= DEPTH_THREE_SEARCH )
-	if ( empties >= DEPTH_FOUR_SEARCH ) {
-	  if ( empties >= DEPTH_SIX_SEARCH )
-	    pre_depth = 6;
-	  else
-	    pre_depth = 4;
-	}
-	else
-	  pre_depth = 3;
-      else
-	pre_depth = 2;
-    }
-    else
-      pre_depth = 1;
-    if ( level == 0 ) {
-      pre_depth += EXTRA_ROOT_SEARCH;
-      if ( (pre_depth % 2) == 1 )
-	pre_depth++;
-    }
+    /* Shallow pre-search depth: unified 2-tier threshold (SIMP-003) */
+    pre_depth = (empties >= PRE_SEARCH_DEEP_THRESHOLD ? 4 : 2);
 
     first = TRUE;
     can_split = (empties >= PARALLEL_SPLIT_DEPTH +
