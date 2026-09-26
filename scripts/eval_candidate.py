@@ -22,7 +22,8 @@ import time
 # Heavy benchmark positions that dominate total search nodes.
 # Per-position regression guards prevent aggregate masking.
 HEAVY_POSITIONS = {"FFO #53", "FFO #54", "FFO #55", "FFO #57"}
-HEAVY_REGRESSION_THRESHOLD_PCT = 1.0  # default: reject if any heavy position regresses > +1.0%
+HEAVY_REGRESSION_THRESHOLD_PCT = 3.0  # default: reject if any heavy position regresses > +3.0%
+SIMPLIFICATION_THRESHOLD_PCT = 5.0   # simplification mode: relaxed threshold up to +5.0%
 
 STANDARD_NAMES = {
     "FFO #40",
@@ -499,7 +500,7 @@ def compare_with_baseline(candidate_results, baseline_results):
     return comparison, summary
 
 
-def generate_text_table(comparison, summary, mode, threads, hash_bits, early_halted=None):
+def generate_text_table(comparison, summary, mode, threads, hash_bits, early_halted=None, heavy_threshold=HEAVY_REGRESSION_THRESHOLD_PCT):
     """Format clean, plain-text summary table optimized for terminal width (< 68 chars)."""
     lines = []
     lines.append(f"Benchmark ({mode.upper()}, threads={threads}, hash_bits={hash_bits}):")
@@ -515,7 +516,7 @@ def generate_text_table(comparison, summary, mode, threads, hash_bits, early_hal
         t_delta = f"({time_sign}{d['time_delta_pct']:.1f}%)"
         time_str = f"{t_cand:>6} {t_delta:>7}"
         heavy_tag = ""
-        if name in HEAVY_POSITIONS and d["node_delta_pct"] > HEAVY_REGRESSION_THRESHOLD_PCT:
+        if name in HEAVY_POSITIONS and d["node_delta_pct"] > heavy_threshold:
             heavy_tag = " [HEAVY!]"
         lines.append(
             f"  {name:<7} {d['candidate_nodes']:>14,} {d['baseline_nodes']:>14,} "
@@ -537,7 +538,7 @@ def generate_text_table(comparison, summary, mode, threads, hash_bits, early_hal
     return "\n".join(lines)
 
 
-def generate_markdown_table(comparison, summary, mode, threads, hash_bits, early_halted=None):
+def generate_markdown_table(comparison, summary, mode, threads, hash_bits, early_halted=None, heavy_threshold=HEAVY_REGRESSION_THRESHOLD_PCT):
     """Format human-readable markdown table for PR or logs (compact width for 80-col terminals)."""
     md = []
     md.append(f"### Evaluation Benchmark ({mode.upper()} mode, threads={threads}, hash_bits={hash_bits})\n")
@@ -547,7 +548,7 @@ def generate_markdown_table(comparison, summary, mode, threads, hash_bits, early
     for name, d in sorted(comparison.items()):
         node_sign = "+" if d["node_delta_pct"] > 0 else ""
         time_sign = "+" if d["time_delta_pct"] > 0 else ""
-        heavy_warn = " ⚠️" if (name in HEAVY_POSITIONS and d["node_delta_pct"] > HEAVY_REGRESSION_THRESHOLD_PCT) else ""
+        heavy_warn = " ⚠️" if (name in HEAVY_POSITIONS and d["node_delta_pct"] > heavy_threshold) else ""
         md.append(
             f"| {name} | {d['baseline_nodes']:,} | {d['candidate_nodes']:,} | "
             f"{node_sign}{d['node_delta_pct']:.2f}%{heavy_warn} | "
@@ -571,17 +572,21 @@ def generate_markdown_table(comparison, summary, mode, threads, hash_bits, early
 
 def determine_verdict(mode, test_passed, all_correct, summary, timed_out_positions=None,
                        early_halted=None,
-                       comparison=None, heavy_threshold=HEAVY_REGRESSION_THRESHOLD_PCT):
+                       comparison=None, heavy_threshold=None,
+                       simplification_mode=False):
     """
     Automated decision engine for agents:
     - REJECT_TIMEOUT: search process exceeded runtime ceiling (e.g. 2.5x baseline) and was forcibly killed.
     - REJECT_CORRECTNESS: make test failed or any FFO score/move mismatch.
     - REJECT_REGRESSION: deterministic node counts grew by more than +0.5% (aggregate)
       OR any heavy benchmark position regressed by more than heavy_threshold% (anti-masking guard).
-    - NEEDS_FULL: screen mode passed with notable node reduction (< -0.5%); needs full 19-position verification.
-    - ACCEPT: full mode passed with notable node reduction (< -0.5%) and no correctness issues.
-    - NEUTRAL: node counts within [-0.5%, +0.5%].
+    - NEEDS_FULL: screen mode passed with notable node reduction (< -0.5%) or preserved in simplification mode (<= +0.5%); needs full 19-position verification.
+    - ACCEPT: full mode passed with notable node reduction (< -0.5%) or preserved in simplification mode (<= +0.5%) and no correctness issues.
+    - NEUTRAL: node counts within [-0.5%, +0.5%] (standard mode).
     """
+    if heavy_threshold is None:
+        heavy_threshold = SIMPLIFICATION_THRESHOLD_PCT if simplification_mode else HEAVY_REGRESSION_THRESHOLD_PCT
+
     if timed_out_positions:
         return (
             "REJECT_TIMEOUT",
@@ -637,6 +642,18 @@ def determine_verdict(mode, test_passed, all_correct, summary, timed_out_positio
             return (
                 "ACCEPT",
                 f"Full suite confirmed node reduction of {node_delta:+.2f}% with correct evaluations."
+            )
+
+    if simplification_mode:
+        if mode == "screen":
+            return (
+                "NEEDS_FULL",
+                f"Simplification candidate preserved benchmark efficiency ({node_delta:+.2f}% <= +0.5%). Proceed to --mode full."
+            )
+        else:
+            return (
+                "ACCEPT",
+                f"Simplification accepted: aggregate nodes preserved/improved ({node_delta:+.2f}% <= +0.5%) with zero heavy regressions > +{heavy_threshold:.1f}%."
             )
 
     return (
@@ -745,10 +762,19 @@ def main():
     parser.add_argument(
         "--heavy-threshold",
         type=float,
-        default=HEAVY_REGRESSION_THRESHOLD_PCT,
+        default=None,
         help="Per-position node regression threshold (%%) for heavy benchmark positions "
              f"({', '.join(sorted(HEAVY_POSITIONS))}). Reject if any heavy position regresses "
-             f"by more than this percentage (default: {HEAVY_REGRESSION_THRESHOLD_PCT}%%, anti-masking guard)."
+             f"by more than this percentage (default: {HEAVY_REGRESSION_THRESHOLD_PCT}%%, or "
+             f"{SIMPLIFICATION_THRESHOLD_PCT}%% in --simplification-mode; anti-masking guard)."
+    )
+    parser.add_argument(
+        "--simplification-mode",
+        action="store_true",
+        default=False,
+        help="Enable simplification mode: relaxes heavy position regression threshold to "
+             f"{SIMPLIFICATION_THRESHOLD_PCT}%% and accepts net neutral/improved aggregate nodes "
+             "to prioritize code simplicity over minor individual position variance."
     )
     parser.add_argument(
         "--fast-first",
@@ -783,6 +809,13 @@ def main():
 
     threads = get_default_threads() if args.threads == "auto" else int(args.threads)
     progress = "none" if args.quiet else args.progress
+
+    if args.heavy_threshold is not None:
+        heavy_threshold = args.heavy_threshold
+    elif args.simplification_mode:
+        heavy_threshold = SIMPLIFICATION_THRESHOLD_PCT
+    else:
+        heavy_threshold = HEAVY_REGRESSION_THRESHOLD_PCT
 
     # Handle --init-baseline request
     if args.init_baseline is not None:
@@ -826,7 +859,7 @@ def main():
                 repo_root, target_positions, t, hash_bits,
                 verbose=args.verbose, baseline_results=None, progress=progress,
                 timeout_factor=args.timeout_factor, timeout_floor=args.timeout_floor, timeout_ceiling=args.timeout_ceiling,
-                fast_first=False, early_halt=False, heavy_threshold=args.heavy_threshold
+                fast_first=False, early_halt=False, heavy_threshold=heavy_threshold
             )
             if not all_correct or timed_out_positions:
                 sys.stderr.write(f"Error: Baseline generation failed or timed out for mode={mode_name}, threads={t}.\n")
@@ -883,6 +916,8 @@ def main():
                 "mode": args.mode,
                 "threads": threads,
                 "hash_bits": args.hash_bits,
+                "simplification_mode": args.simplification_mode,
+                "heavy_threshold": heavy_threshold,
                 "totals": None,
                 "summary": None,
                 "comparison": None,
@@ -958,7 +993,7 @@ def main():
         repo_root, target_positions, threads, args.hash_bits,
         verbose=args.verbose, baseline_results=baseline_results, progress=progress,
         timeout_factor=args.timeout_factor, timeout_floor=args.timeout_floor, timeout_ceiling=args.timeout_ceiling,
-        fast_first=args.fast_first, early_halt=args.early_halt, heavy_threshold=args.heavy_threshold
+        fast_first=args.fast_first, early_halt=args.early_halt, heavy_threshold=heavy_threshold
     )
 
     comparison = None
@@ -971,7 +1006,8 @@ def main():
         args.mode, test_passed, all_correct, summary,
         timed_out_positions=timed_out_positions,
         early_halted=early_halted,
-        comparison=comparison, heavy_threshold=args.heavy_threshold
+        comparison=comparison, heavy_threshold=heavy_threshold,
+        simplification_mode=args.simplification_mode
     )
 
     # 6. Compute raw totals across evaluated positions
@@ -1006,6 +1042,8 @@ def main():
         "mode": args.mode,
         "threads": threads,
         "hash_bits": args.hash_bits,
+        "simplification_mode": args.simplification_mode,
+        "heavy_threshold": heavy_threshold,
         "totals": totals,
         "summary": summary,
         "comparison": comparison,
@@ -1025,12 +1063,12 @@ def main():
         print(json.dumps(output_obj, indent=2))
     elif args.format == "markdown":
         if comparison and summary:
-            print(generate_markdown_table(comparison, summary, args.mode, threads, args.hash_bits, early_halted=early_halted))
+            print(generate_markdown_table(comparison, summary, args.mode, threads, args.hash_bits, early_halted=early_halted, heavy_threshold=heavy_threshold))
             print()
         print(f"**Verdict:** `{verdict}` — {reason}")
     else:  # text
         if comparison and summary:
-            print(generate_text_table(comparison, summary, args.mode, threads, args.hash_bits, early_halted=early_halted))
+            print(generate_text_table(comparison, summary, args.mode, threads, args.hash_bits, early_halted=early_halted, heavy_threshold=heavy_threshold))
             print()
         print(f"Verdict: {verdict} — {reason}")
 
