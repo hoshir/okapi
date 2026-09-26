@@ -165,6 +165,10 @@ INLINE static void
 edge_zardoz_stable( BitBoard *ss,
 		    BitBoard dd,
 		    BitBoard od ) {
+  const BitBoard central_mask = dd & CENTRAL_MASK;
+  if ( central_mask == 0 )
+    return;
+
   BitBoard ost, fb, lrf, udf, daf, dbf;
   BitBoard expand_ss;
   BitBoard t;
@@ -208,7 +212,7 @@ edge_zardoz_stable( BitBoard *ss,
     BitBoard d9 = dbf | (ost << 9) | (ost >> 9);
 
     expand_ss = d1 & d8 & d7 & d9;
-    *ss = ost | (expand_ss & dd);
+    *ss = ost | (expand_ss & central_mask);
   } while ( ost != *ss );	/* changing */
 }
 
@@ -292,7 +296,9 @@ count_stable_indexed( int color,
   BitBoard col_stable = edges->bits;
 
   /* Expand the stable edge discs into a full set of stable discs */
-  edge_zardoz_stable( &col_stable, col_bits, opp_bits );
+  if ( (col_bits & CENTRAL_MASK) != 0 && col_stable != 0 )
+    edge_zardoz_stable( &col_stable, col_bits, opp_bits );
+
   if ( color == BLACKSQ )
     last_black_stable = col_stable;
   else
