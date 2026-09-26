@@ -27,6 +27,7 @@
 #include "display.h"
 #include "doflip.h"
 #include "end.h"
+#include "end_leaf.h"
 #include "epcstat.h"
 #include "eval.h"
 #include "getcoeff.h"
@@ -75,10 +76,6 @@
 
 #define GOOD_TRANSPOSITION_EVAL      10000000
 
-/* Parameters for the fastest-first algorithm. The performance does
-   not seem to depend a lot on the precise values. */
-#define FAST_FIRST_FACTOR            0.45
-#define MOB_FACTOR                   460
 #define FRONTIER_MOB_FACTOR          48
 
 /* The disc difference when special wipeout move ordering is tried.
@@ -86,29 +83,14 @@
 #define WIPEOUT_THRESHOLD            60
 
 /* Use stability pruning? */
+#ifndef USE_STABILITY
 #define USE_STABILITY                TRUE
+#endif
 
 /* Use shallow transposition table for low-depth endgame nodes? */
+#ifndef USE_SHALLOW_TT
 #define USE_SHALLOW_TT               TRUE
 #define SHALLOW_TT_MIN_DEPTH         5
-
-
-
-#if 0
-
-// Profiling code
-
-static long long int
-rdtsc( void ) {
-#if defined(__GNUC__)
-  long long a;
-  asm volatile("rdtsc":"=A" (a));
-  return a;
-#else
-  return 0;
-#endif
-}
-
 #endif
 
 
@@ -155,97 +137,11 @@ static const int stability_threshold[] = { 65, 65, 65, 65, 65, 0, 0, 0, 0,
 
 
 
-static double fast_first_mean[61][64];
-static double fast_first_sigma[61][64];
 static int true_found, true_val;
-static int full_output_mode;
-static int earliest_wld_solve, earliest_full_solve;
-static int fast_first_threshold[61][64];
-static int ff_mob_factor[61];
-
-static BitBoard neighborhood_mask[100];
-const unsigned int quadrant_mask[100] = {
-  0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-  0, 1, 1, 1, 1, 2, 2, 2, 2, 0,
-  0, 1, 1, 1, 1, 2, 2, 2, 2, 0,
-  0, 1, 1, 1, 1, 2, 2, 2, 2, 0,
-  0, 1, 1, 1, 1, 2, 2, 2, 2, 0,
-  0, 4, 4, 4, 4, 8, 8, 8, 8, 0,
-  0, 4, 4, 4, 4, 8, 8, 8, 8, 0,
-  0, 4, 4, 4, 4, 8, 8, 8, 8, 0,
-  0, 4, 4, 4, 4, 8, 8, 8, 8, 0,
-  0, 0, 0, 0, 0, 0, 0, 0, 0, 0
-};
 
 /* Number of discs that the side to move at the root has to win with. */
 static int komi_shift;
 
-
-
-#if 1
-
-/*
-  TESTFLIPS_WRAPPER
-  Checks if SQ is a valid move by
-  (1) verifying that there exists a neighboring opponent disc,
-  (2) verifying that the move flips some disc.
-*/
-
-INLINE static int
-TestFlips_wrapper( int sq,
-		   BitBoard my_bits,
-		   BitBoard opp_bits ) {
-  int flipped;
-
-  if ( (neighborhood_mask[sq] & opp_bits) != 0 )
-    flipped = TestFlips_bitboard( sq, my_bits, opp_bits );
-  else
-    flipped = 0;
-
-  return flipped;
-}
-
-#else
-#define TestFlips_wrapper( sq, my_bits, opp_bits ) \
-  TestFlips_bitboard( sq, my_bits, opp_bits )
-
-
-#endif
-
-
-/*
-  Helpers that let the endgame hash zone work on the bitboards alone,
-  without maintaining the board array, the flip stack or DoFlips_hash.
-*/
-
-/*
-  END_HASH_DIFF
-  Compute the incremental hash-key update for COLOR playing SQ,
-  from the difference between the old and new bitboards of the mover.
-  Replaces the array-based DoFlips_hash.
-*/
-
-static INLINE void
-end_hash_diff( const BitBoard new_my_bits, const BitBoard my_bits,
-	       int color, int sq,
-	       unsigned int *diff1, unsigned int *diff2 ) {
-  BitBoard fl;
-  int bit, index;
-  unsigned int d1 = hash_put_value1[color][sq];
-  unsigned int d2 = hash_put_value2[color][sq];
-
-  fl = (new_my_bits ^ my_bits) & ~square_mask[sq];
-  while ( fl != 0 ) {
-    bit = FIRST_BIT( fl );
-    fl &= fl - 1;
-    index = 10 * (bit / 8 + 1) + (bit % 8) + 1;
-    d1 ^= hash_flip1[index];
-    d2 ^= hash_flip2[index];
-  }
-
-  *diff1 = d1;
-  *diff2 = d2;
-}
 
 
 /*
@@ -313,29 +209,7 @@ prepare_to_solve( const int *in_board ) {
 
 
 
-#if 0
 
-/*
-  CHECK_LIST
-  Performs a minimal sanity check of the move list: That it contains
-  the same number of moves as there are empty squares on the board.
-*/
-
-static void
-check_list( int empties ) {
-  int links = 0;
-  int sq = end_move_list[END_MOVE_LIST_HEAD].succ;
-
-  while ( sq != END_MOVE_LIST_TAIL ) {
-    links++;
-    sq = end_move_list[sq].succ;
-  }
-
-  if ( links != empties )
-    printf( "%d links, %d empties\n", links, empties );
-}
-
-#endif
 
 
 
@@ -368,7 +242,6 @@ solve_two_empty( BitBoard my_bits,
 		 int beta,
 		 int disc_diff,
 		 int pass_legal ) {
-  // BitBoard new_opp_bits;
   int score = -INFINITE_EVAL;
   int flipped;
   int ev;
@@ -388,50 +261,24 @@ solve_two_empty( BitBoard my_bits,
 
     ev = disc_diff + 2 * flipped;
 
-#if 0
-    FULL_ANDNOT( new_opp_bits, opp_bits, bb_flips );
-    if ( ev - 2 <= alpha ) { /* Fail-low if he can play SQ2 */
-      if ( ValidOneEmpty_bitboard[sq2]( new_opp_bits ) != 0 )
-	ev = alpha;
-      else {  /* He passes, check if SQ2 is feasible for me */
-	if ( ev >= 0 ) {  /* I'm ahead, so EV will increase by at least 2 */
-	  ev += 2;
-	  if ( ev < beta )  /* Only bother if not certain fail-high */
-	    ev += 2 * CountFlips_bitboard( sq2, bb_flips );
-	}
-	else {
-	  if ( ev < beta ) {  /* Only bother if not fail-high already */
-	    flipped = CountFlips_bitboard( sq2, bb_flips );
-	    if ( flipped != 0 )  /* SQ2 feasible for me, game over */
-	      ev += 2 * (flipped + 1);
-	    /* ELSE: SQ2 will end up empty, game over */
-	  }
+    flipped = CountFlips_bitboard( sq2, opp_bits & ~bb_flips );
+    if ( flipped != 0 )
+      ev -= 2 * flipped;
+    else {  /* He passes, check if SQ2 is feasible for me */
+      if ( ev >= 0 ) {  /* I'm ahead, so EV will increase by at least 2 */
+	ev += 2;
+	if ( ev < beta )  /* Only bother if not certain fail-high */
+	  ev += 2 * CountFlips_bitboard( sq2, bb_flips );
+      }
+      else {
+	if ( ev < beta ) {  /* Only bother if not fail-high already */
+	  flipped = CountFlips_bitboard( sq2, bb_flips );
+	  if ( flipped != 0 )  /* SQ2 feasible for me, game over */
+	    ev += 2 * (flipped + 1);
+	  /* ELSE: SQ2 will end up empty, game over */
 	}
       }
     }
-    else {
-#endif
-      flipped = CountFlips_bitboard( sq2, opp_bits & ~bb_flips );
-      if ( flipped != 0 )
-	ev -= 2 * flipped;
-      else {  /* He passes, check if SQ2 is feasible for me */
-	if ( ev >= 0 ) {  /* I'm ahead, so EV will increase by at least 2 */
-	  ev += 2;
-	  if ( ev < beta )  /* Only bother if not certain fail-high */
-	    ev += 2 * CountFlips_bitboard( sq2, bb_flips );
-	}
-	else {
-	  if ( ev < beta ) {  /* Only bother if not fail-high already */
-	    flipped = CountFlips_bitboard( sq2, bb_flips );
-	    if ( flipped != 0 )  /* SQ2 feasible for me, game over */
-	      ev += 2 * (flipped + 1);
-	    /* ELSE: SQ2 will end up empty, game over */
-	  }
-	}
-      }
-#if 0
-    }
-#endif
 
     /* Being legal, the first move is the best so far */
     score = ev;
@@ -449,50 +296,25 @@ solve_two_empty( BitBoard my_bits,
     INCREMENT_COUNTER( nodes );
 
     ev = disc_diff + 2 * flipped;
-#if 0
-    FULL_ANDNOT( new_opp_bits, opp_bits, bb_flips );
-    if ( ev - 2 <= alpha ) {  /* Fail-low if he can play SQ1 */
-      if ( ValidOneEmpty_bitboard[sq1]( new_opp_bits ) != 0 )
-	ev = alpha;
-      else {  /* He passes, check if SQ1 is feasible for me */
-	if ( ev >= 0 ) {  /* I'm ahead, so EV will increase by at least 2 */
-	  ev += 2;
-	  if ( ev < beta )  /* Only bother if not certain fail-high */
-	    ev += 2 * CountFlips_bitboard( sq1, bb_flips );
-	}
-	else {
-	  if ( ev < beta ) {  /* Only bother if not fail-high already */
-	    flipped = CountFlips_bitboard( sq1, bb_flips );
-	    if ( flipped != 0 )  /* SQ1 feasible for me, game over */
-	      ev += 2 * (flipped + 1);
-	    /* ELSE: SQ1 will end up empty, game over */
-	  }
+
+    flipped = CountFlips_bitboard( sq1, opp_bits & ~bb_flips );
+    if ( flipped != 0 )  /* SQ1 feasible for him, game over */
+      ev -= 2 * flipped;
+    else {  /* He passes, check if SQ1 is feasible for me */
+      if ( ev >= 0 ) {  /* I'm ahead, so EV will increase by at least 2 */
+	ev += 2;
+	if ( ev < beta )  /* Only bother if not certain fail-high */
+	  ev += 2 * CountFlips_bitboard( sq1, bb_flips );
+      }
+      else {
+	if ( ev < beta ) {  /* Only bother if not fail-high already */
+	  flipped = CountFlips_bitboard( sq1, bb_flips );
+	  if ( flipped != 0 )  /* SQ1 feasible for me, game over */
+	    ev += 2 * (flipped + 1);
+	  /* ELSE: SQ1 will end up empty, game over */
 	}
       }
     }
-    else {
-#endif
-      flipped = CountFlips_bitboard( sq1, opp_bits & ~bb_flips );
-      if ( flipped != 0 )  /* SQ1 feasible for him, game over */
-	ev -= 2 * flipped;
-      else {  /* He passes, check if SQ1 is feasible for me */
-	if ( ev >= 0 ) {  /* I'm ahead, so EV will increase by at least 2 */
-	  ev += 2;
-	  if ( ev < beta )  /* Only bother if not certain fail-high */
-	    ev += 2 * CountFlips_bitboard( sq1, bb_flips );
-	}
-	else {
-	  if ( ev < beta ) {  /* Only bother if not fail-high already */
-	    flipped = CountFlips_bitboard( sq1, bb_flips );
-	    if ( flipped != 0 )  /* SQ1 feasible for me, game over */
-	      ev += 2 * (flipped + 1);
-	    /* ELSE: SQ1 will end up empty, game over */
-	  }
-	}
-      }
-#if 0
-    }
-#endif
 
     /* If the second move is better than the first (if that move was legal),
        its score is the score of the position */
@@ -520,7 +342,7 @@ solve_two_empty( BitBoard my_bits,
 }
 
 
-static int
+int
 solve_three_empty( BitBoard my_bits,
 		   BitBoard opp_bits,
 		   int sq1,
@@ -599,775 +421,6 @@ solve_three_empty( BitBoard my_bits,
       return -solve_three_empty( opp_bits, my_bits, sq1, sq2, sq3,
 				 -beta, -alpha, -disc_diff, FALSE );
   }
-
-  return score;
-}
-
-
-
-static int
-solve_four_empty( BitBoard my_bits,
-		  BitBoard opp_bits,
-		  int sq1,
-		  int sq2,
-		  int sq3,
-		  int sq4,
-		  int alpha,
-		  int beta,
-		  int disc_diff,
-		  int pass_legal ) {
-  BitBoard new_opp_bits;
-  int score = -INFINITE_EVAL;
-  int flipped;
-  int new_disc_diff;
-  int ev;
-
-  INCREMENT_COUNTER( nodes );
-
-  if ( region_parity != 0 ) {
-    int m[4];
-    int head = 0, tail = 3;
-    if ( quadrant_mask[sq1] & region_parity ) m[head++] = sq1; else m[tail--] = sq1;
-    if ( quadrant_mask[sq2] & region_parity ) m[head++] = sq2; else m[tail--] = sq2;
-    if ( quadrant_mask[sq3] & region_parity ) m[head++] = sq3; else m[tail--] = sq3;
-    if ( quadrant_mask[sq4] & region_parity ) m[head++] = sq4; else m[tail--] = sq4;
-    sq1 = m[0]; sq2 = m[1]; sq3 = m[2]; sq4 = m[3];
-  }
-
-  flipped = TestFlips_wrapper( sq1, my_bits, opp_bits );
-  if ( flipped != 0 ) {
-    FULL_ANDNOT( new_opp_bits, opp_bits, bb_flips );
-    new_disc_diff = -disc_diff - 2 * flipped - 1;
-    score = -solve_three_empty( new_opp_bits, bb_flips, sq2, sq3, sq4,
-				-beta, -alpha, new_disc_diff, TRUE );
-    if ( score >= beta )
-      return score;
-    else if ( score > alpha )
-      alpha = score;
-  }
-
-  flipped = TestFlips_wrapper( sq2, my_bits, opp_bits );
-  if ( flipped != 0 ) {
-    FULL_ANDNOT( new_opp_bits, opp_bits, bb_flips );
-    new_disc_diff = -disc_diff - 2 * flipped - 1;
-    ev = -solve_three_empty( new_opp_bits, bb_flips, sq1, sq3, sq4,
-			     -beta, -alpha, new_disc_diff, TRUE );
-    if ( ev >= beta )
-      return ev;
-    else if ( ev > score ) {
-      score = ev;
-      if ( score > alpha )
-	alpha = score;
-    }
-  }
-
-  flipped = TestFlips_wrapper( sq3, my_bits, opp_bits );
-  if ( flipped != 0 ) {
-    FULL_ANDNOT( new_opp_bits, opp_bits, bb_flips );
-    new_disc_diff = -disc_diff - 2 * flipped - 1;
-    ev = -solve_three_empty( new_opp_bits, bb_flips, sq1, sq2, sq4,
-			     -beta, -alpha, new_disc_diff, TRUE );
-    if ( ev >= beta )
-      return ev;
-    else if ( ev > score ) {
-      score = ev;
-      if ( score > alpha )
-	alpha = score;
-    }
-  }
-
-  flipped = TestFlips_wrapper( sq4, my_bits, opp_bits );
-  if ( flipped != 0 ) {
-    FULL_ANDNOT( new_opp_bits, opp_bits, bb_flips );
-    new_disc_diff = -disc_diff - 2 * flipped - 1;
-    ev = -solve_three_empty( new_opp_bits, bb_flips, sq1, sq2, sq3,
-			     -beta, -alpha, new_disc_diff, TRUE );
-    if ( ev >= score )
-      return ev;
-  }
-
-  if ( score == -INFINITE_EVAL ) {
-    if ( !pass_legal ) {  /* Four empty squares */
-      if ( disc_diff > 0 )
-	return disc_diff + 4;
-      if ( disc_diff < 0 )
-	return disc_diff - 4;
-      return 0;
-    }
-    else
-      return -solve_four_empty( opp_bits, my_bits, sq1, sq2, sq3, sq4,
-				-beta, -alpha, -disc_diff, FALSE );
-  }
-
-  return score;
-}
-
-static int
-solve_five_empty( BitBoard my_bits,
-		  BitBoard opp_bits,
-		  int sq1,
-		  int sq2,
-		  int sq3,
-		  int sq4,
-		  int sq5,
-		  int alpha,
-		  int beta,
-		  int color,
-		  int disc_diff,
-		  int pass_legal ) {
-  BitBoard new_opp_bits;
-  int score = -INFINITE_EVAL;
-  int in_alpha = alpha;
-  int oppcol = OPP( color );
-  int flipped;
-  int new_disc_diff;
-  int ev;
-  int best_sq = 0;
-
-  INCREMENT_COUNTER( nodes );
-
-#if USE_SHALLOW_TT
-  {
-    HashEntry entry;
-    find_shallow_hash( &entry );
-    if ( (entry.draft == 5) && (entry.flags & ENDGAME_SCORE) ) {
-      if ( (entry.flags & EXACT_VALUE) ||
-	   ((entry.flags & LOWER_BOUND) && entry.eval >= beta) ||
-	   ((entry.flags & UPPER_BOUND) && entry.eval <= alpha) ) {
-	end_best_move = entry.move[0];
-	return entry.eval;
-      }
-    }
-  }
-#endif
-
-#if USE_STABILITY
-  int opp_cnt = non_iterative_popcount( opp_bits );
-  if ( alpha >= 0 && (64 - 2 * opp_cnt <= alpha || 64 - 2 * opp_cnt < beta) ) {
-    int stability_bound;
-    EdgeIndices edges;
-    stability_bound = 64 - 2 * count_edge_stable_indexed( oppcol, opp_bits, my_bits, &edges );
-    if ( stability_bound <= alpha )
-      return alpha;
-    if ( edges.bits != 0 ) {
-      stability_bound = 64 - 2 * count_stable_indexed( oppcol, opp_bits, my_bits, &edges );
-      if ( stability_bound < beta )
-        beta = stability_bound + 1;
-      if ( stability_bound <= alpha )
-        return alpha;
-    }
-  }
-#endif
-
-  if ( region_parity != 0 ) {
-    int m_odd[5], m_even[5];
-    int n_odd = 0, n_even = 0;
-    int s[5];
-    int i;
-    s[0] = sq1; s[1] = sq2; s[2] = sq3; s[3] = sq4; s[4] = sq5;
-    for ( i = 0; i < 5; i++ ) {
-      if ( quadrant_mask[s[i]] & region_parity )
-	m_odd[n_odd++] = s[i];
-      else
-	m_even[n_even++] = s[i];
-    }
-    for ( i = 0; i < n_odd; i++ )
-      s[i] = m_odd[i];
-    for ( i = 0; i < n_even; i++ )
-      s[n_odd + i] = m_even[i];
-    sq1 = s[0]; sq2 = s[1]; sq3 = s[2]; sq4 = s[3]; sq5 = s[4];
-  }
-
-  flipped = TestFlips_wrapper( sq1, my_bits, opp_bits );
-  if ( flipped != 0 ) {
-    FULL_ANDNOT( new_opp_bits, opp_bits, bb_flips );
-    new_disc_diff = -disc_diff - 2 * flipped - 1;
-    region_parity ^= quadrant_mask[sq1];
-    score = -solve_four_empty( new_opp_bits, bb_flips, sq2, sq3, sq4, sq5,
-			       -beta, -alpha, new_disc_diff, TRUE );
-    region_parity ^= quadrant_mask[sq1];
-    if ( score >= beta ) {
-      end_best_move = sq1;
-#if USE_SHALLOW_TT
-      add_shallow_hash( score, sq1, ENDGAME_SCORE | LOWER_BOUND, 5 );
-#endif
-      return score;
-    }
-    else if ( score > alpha )
-      alpha = score;
-    best_sq = sq1;
-  }
-
-  flipped = TestFlips_wrapper( sq2, my_bits, opp_bits );
-  if ( flipped != 0 ) {
-    FULL_ANDNOT( new_opp_bits, opp_bits, bb_flips );
-    new_disc_diff = -disc_diff - 2 * flipped - 1;
-    region_parity ^= quadrant_mask[sq2];
-    ev = -solve_four_empty( new_opp_bits, bb_flips, sq1, sq3, sq4, sq5,
-			    -beta, -alpha, new_disc_diff, TRUE );
-    region_parity ^= quadrant_mask[sq2];
-    if ( ev >= beta ) {
-      end_best_move = sq2;
-#if USE_SHALLOW_TT
-      add_shallow_hash( ev, sq2, ENDGAME_SCORE | LOWER_BOUND, 5 );
-#endif
-      return ev;
-    }
-    else if ( ev > score ) {
-      score = ev;
-      if ( score > alpha )
-	alpha = score;
-      best_sq = sq2;
-    }
-  }
-
-  flipped = TestFlips_wrapper( sq3, my_bits, opp_bits );
-  if ( flipped != 0 ) {
-    FULL_ANDNOT( new_opp_bits, opp_bits, bb_flips );
-    new_disc_diff = -disc_diff - 2 * flipped - 1;
-    region_parity ^= quadrant_mask[sq3];
-    ev = -solve_four_empty( new_opp_bits, bb_flips, sq1, sq2, sq4, sq5,
-			    -beta, -alpha, new_disc_diff, TRUE );
-    region_parity ^= quadrant_mask[sq3];
-    if ( ev >= beta ) {
-      end_best_move = sq3;
-#if USE_SHALLOW_TT
-      add_shallow_hash( ev, sq3, ENDGAME_SCORE | LOWER_BOUND, 5 );
-#endif
-      return ev;
-    }
-    else if ( ev > score ) {
-      score = ev;
-      if ( score > alpha )
-	alpha = score;
-      best_sq = sq3;
-    }
-  }
-
-  flipped = TestFlips_wrapper( sq4, my_bits, opp_bits );
-  if ( flipped != 0 ) {
-    FULL_ANDNOT( new_opp_bits, opp_bits, bb_flips );
-    new_disc_diff = -disc_diff - 2 * flipped - 1;
-    region_parity ^= quadrant_mask[sq4];
-    ev = -solve_four_empty( new_opp_bits, bb_flips, sq1, sq2, sq3, sq5,
-			    -beta, -alpha, new_disc_diff, TRUE );
-    region_parity ^= quadrant_mask[sq4];
-    if ( ev >= beta ) {
-      end_best_move = sq4;
-#if USE_SHALLOW_TT
-      add_shallow_hash( ev, sq4, ENDGAME_SCORE | LOWER_BOUND, 5 );
-#endif
-      return ev;
-    }
-    else if ( ev > score ) {
-      score = ev;
-      if ( score > alpha )
-	alpha = score;
-      best_sq = sq4;
-    }
-  }
-
-  flipped = TestFlips_wrapper( sq5, my_bits, opp_bits );
-  if ( flipped != 0 ) {
-    FULL_ANDNOT( new_opp_bits, opp_bits, bb_flips );
-    new_disc_diff = -disc_diff - 2 * flipped - 1;
-    region_parity ^= quadrant_mask[sq5];
-    ev = -solve_four_empty( new_opp_bits, bb_flips, sq1, sq2, sq3, sq4,
-			    -beta, -alpha, new_disc_diff, TRUE );
-    region_parity ^= quadrant_mask[sq5];
-    if ( ev >= beta ) {
-      end_best_move = sq5;
-#if USE_SHALLOW_TT
-      add_shallow_hash( ev, sq5, ENDGAME_SCORE | LOWER_BOUND, 5 );
-#endif
-      return ev;
-    }
-    else if ( ev > score ) {
-      score = ev;
-      best_sq = sq5;
-    }
-  }
-
-  if ( score == -INFINITE_EVAL ) {
-    if ( !pass_legal ) {  /* Five empty squares */
-      if ( disc_diff > 0 )
-	return disc_diff + 5;
-      if ( disc_diff < 0 )
-	return disc_diff - 5;
-      return 0;
-    }
-    else {
-      hash1 ^= hash_flip_color1;
-      hash2 ^= hash_flip_color2;
-      ev = -solve_five_empty( opp_bits, my_bits, sq1, sq2, sq3, sq4, sq5,
-			      -beta, -alpha, oppcol, -disc_diff, FALSE );
-      hash1 ^= hash_flip_color1;
-      hash2 ^= hash_flip_color2;
-      return ev;
-    }
-  }
-
-  end_best_move = best_sq;
-#if USE_SHALLOW_TT
-  {
-    int flags = ENDGAME_SCORE | (score > in_alpha ? EXACT_VALUE : UPPER_BOUND);
-    add_shallow_hash( score, best_sq, flags, 5 );
-  }
-#endif
-
-  return score;
-}
-
-
-
-static int
-solve_six_empty( BitBoard my_bits,
-		 BitBoard opp_bits,
-		 int sq1,
-		 int sq2,
-		 int sq3,
-		 int sq4,
-		 int sq5,
-		 int sq6,
-		 int alpha,
-		 int beta,
-		 int color,
-		 int disc_diff,
-		 int pass_legal ) {
-  BitBoard new_opp_bits;
-  int score = -INFINITE_EVAL;
-  int in_alpha = alpha;
-  int oppcol = OPP( color );
-  int flipped;
-  int new_disc_diff;
-  int ev;
-  int best_sq = 0;
-
-  INCREMENT_COUNTER( nodes );
-
-#if USE_SHALLOW_TT
-  {
-    HashEntry entry;
-    find_shallow_hash( &entry );
-    if ( (entry.draft == 6) && (entry.flags & ENDGAME_SCORE) ) {
-      if ( (entry.flags & EXACT_VALUE) ||
-	   ((entry.flags & LOWER_BOUND) && entry.eval >= beta) ||
-	   ((entry.flags & UPPER_BOUND) && entry.eval <= alpha) ) {
-	end_best_move = entry.move[0];
-	return entry.eval;
-      }
-    }
-  }
-#endif
-
-#if USE_STABILITY
-  int opp_cnt = non_iterative_popcount( opp_bits );
-  if ( alpha >= 0 && (64 - 2 * opp_cnt <= alpha || 64 - 2 * opp_cnt < beta) ) {
-    int stability_bound;
-    EdgeIndices edges;
-    stability_bound = 64 - 2 * count_edge_stable_indexed( oppcol, opp_bits, my_bits, &edges );
-    if ( stability_bound <= alpha )
-      return alpha;
-    if ( edges.bits != 0 ) {
-      stability_bound = 64 - 2 * count_stable_indexed( oppcol, opp_bits, my_bits, &edges );
-      if ( stability_bound < beta )
-        beta = stability_bound + 1;
-      if ( stability_bound <= alpha )
-        return alpha;
-    }
-  }
-#endif
-
-  if ( region_parity != 0 ) {
-    int m_odd[6], m_even[6];
-    int n_odd = 0, n_even = 0;
-    int s[6];
-    int i;
-    s[0] = sq1; s[1] = sq2; s[2] = sq3; s[3] = sq4; s[4] = sq5; s[5] = sq6;
-    for ( i = 0; i < 6; i++ ) {
-      if ( quadrant_mask[s[i]] & region_parity )
-	m_odd[n_odd++] = s[i];
-      else
-	m_even[n_even++] = s[i];
-    }
-    for ( i = 0; i < n_odd; i++ )
-      s[i] = m_odd[i];
-    for ( i = 0; i < n_even; i++ )
-      s[n_odd + i] = m_even[i];
-    sq1 = s[0]; sq2 = s[1]; sq3 = s[2]; sq4 = s[3]; sq5 = s[4]; sq6 = s[5];
-  }
-
-  flipped = TestFlips_wrapper( sq1, my_bits, opp_bits );
-  if ( flipped != 0 ) {
-    FULL_ANDNOT( new_opp_bits, opp_bits, bb_flips );
-    new_disc_diff = -disc_diff - 2 * flipped - 1;
-    region_parity ^= quadrant_mask[sq1];
-#if USE_SHALLOW_TT
-    unsigned int diff1, diff2;
-    end_hash_diff( bb_flips, my_bits, color, sq1, &diff1, &diff2 );
-    hash1 ^= diff1;
-    hash2 ^= diff2;
-#endif
-    score = -solve_five_empty( new_opp_bits, bb_flips, sq2, sq3, sq4, sq5, sq6,
-			       -beta, -alpha, oppcol, new_disc_diff, TRUE );
-#if USE_SHALLOW_TT
-    hash1 ^= diff1;
-    hash2 ^= diff2;
-#endif
-    region_parity ^= quadrant_mask[sq1];
-    if ( score >= beta ) {
-      end_best_move = sq1;
-#if USE_SHALLOW_TT
-      add_shallow_hash( score, sq1, ENDGAME_SCORE | LOWER_BOUND, 6 );
-#endif
-      return score;
-    }
-    else if ( score > alpha )
-      alpha = score;
-    best_sq = sq1;
-  }
-
-  flipped = TestFlips_wrapper( sq2, my_bits, opp_bits );
-  if ( flipped != 0 ) {
-    FULL_ANDNOT( new_opp_bits, opp_bits, bb_flips );
-    new_disc_diff = -disc_diff - 2 * flipped - 1;
-    region_parity ^= quadrant_mask[sq2];
-#if USE_SHALLOW_TT
-    unsigned int diff1, diff2;
-    end_hash_diff( bb_flips, my_bits, color, sq2, &diff1, &diff2 );
-    hash1 ^= diff1;
-    hash2 ^= diff2;
-#endif
-    ev = -solve_five_empty( new_opp_bits, bb_flips, sq1, sq3, sq4, sq5, sq6,
-			    -beta, -alpha, oppcol, new_disc_diff, TRUE );
-#if USE_SHALLOW_TT
-    hash1 ^= diff1;
-    hash2 ^= diff2;
-#endif
-    region_parity ^= quadrant_mask[sq2];
-    if ( ev >= beta ) {
-      end_best_move = sq2;
-#if USE_SHALLOW_TT
-      add_shallow_hash( ev, sq2, ENDGAME_SCORE | LOWER_BOUND, 6 );
-#endif
-      return ev;
-    }
-    else if ( ev > score ) {
-      score = ev;
-      if ( score > alpha )
-	alpha = score;
-      best_sq = sq2;
-    }
-  }
-
-  flipped = TestFlips_wrapper( sq3, my_bits, opp_bits );
-  if ( flipped != 0 ) {
-    FULL_ANDNOT( new_opp_bits, opp_bits, bb_flips );
-    new_disc_diff = -disc_diff - 2 * flipped - 1;
-    region_parity ^= quadrant_mask[sq3];
-#if USE_SHALLOW_TT
-    unsigned int diff1, diff2;
-    end_hash_diff( bb_flips, my_bits, color, sq3, &diff1, &diff2 );
-    hash1 ^= diff1;
-    hash2 ^= diff2;
-#endif
-    ev = -solve_five_empty( new_opp_bits, bb_flips, sq1, sq2, sq4, sq5, sq6,
-			    -beta, -alpha, oppcol, new_disc_diff, TRUE );
-#if USE_SHALLOW_TT
-    hash1 ^= diff1;
-    hash2 ^= diff2;
-#endif
-    region_parity ^= quadrant_mask[sq3];
-    if ( ev >= beta ) {
-      end_best_move = sq3;
-#if USE_SHALLOW_TT
-      add_shallow_hash( ev, sq3, ENDGAME_SCORE | LOWER_BOUND, 6 );
-#endif
-      return ev;
-    }
-    else if ( ev > score ) {
-      score = ev;
-      if ( score > alpha )
-	alpha = score;
-      best_sq = sq3;
-    }
-  }
-
-  flipped = TestFlips_wrapper( sq4, my_bits, opp_bits );
-  if ( flipped != 0 ) {
-    FULL_ANDNOT( new_opp_bits, opp_bits, bb_flips );
-    new_disc_diff = -disc_diff - 2 * flipped - 1;
-    region_parity ^= quadrant_mask[sq4];
-#if USE_SHALLOW_TT
-    unsigned int diff1, diff2;
-    end_hash_diff( bb_flips, my_bits, color, sq4, &diff1, &diff2 );
-    hash1 ^= diff1;
-    hash2 ^= diff2;
-#endif
-    ev = -solve_five_empty( new_opp_bits, bb_flips, sq1, sq2, sq3, sq5, sq6,
-			    -beta, -alpha, oppcol, new_disc_diff, TRUE );
-#if USE_SHALLOW_TT
-    hash1 ^= diff1;
-    hash2 ^= diff2;
-#endif
-    region_parity ^= quadrant_mask[sq4];
-    if ( ev >= beta ) {
-      end_best_move = sq4;
-#if USE_SHALLOW_TT
-      add_shallow_hash( ev, sq4, ENDGAME_SCORE | LOWER_BOUND, 6 );
-#endif
-      return ev;
-    }
-    else if ( ev > score ) {
-      score = ev;
-      if ( score > alpha )
-	alpha = score;
-      best_sq = sq4;
-    }
-  }
-
-  flipped = TestFlips_wrapper( sq5, my_bits, opp_bits );
-  if ( flipped != 0 ) {
-    FULL_ANDNOT( new_opp_bits, opp_bits, bb_flips );
-    new_disc_diff = -disc_diff - 2 * flipped - 1;
-    region_parity ^= quadrant_mask[sq5];
-#if USE_SHALLOW_TT
-    unsigned int diff1, diff2;
-    end_hash_diff( bb_flips, my_bits, color, sq5, &diff1, &diff2 );
-    hash1 ^= diff1;
-    hash2 ^= diff2;
-#endif
-    ev = -solve_five_empty( new_opp_bits, bb_flips, sq1, sq2, sq3, sq4, sq6,
-			    -beta, -alpha, oppcol, new_disc_diff, TRUE );
-#if USE_SHALLOW_TT
-    hash1 ^= diff1;
-    hash2 ^= diff2;
-#endif
-    region_parity ^= quadrant_mask[sq5];
-    if ( ev >= beta ) {
-      end_best_move = sq5;
-#if USE_SHALLOW_TT
-      add_shallow_hash( ev, sq5, ENDGAME_SCORE | LOWER_BOUND, 6 );
-#endif
-      return ev;
-    }
-    else if ( ev > score ) {
-      score = ev;
-      if ( score > alpha )
-	alpha = score;
-      best_sq = sq5;
-    }
-  }
-
-  flipped = TestFlips_wrapper( sq6, my_bits, opp_bits );
-  if ( flipped != 0 ) {
-    FULL_ANDNOT( new_opp_bits, opp_bits, bb_flips );
-    new_disc_diff = -disc_diff - 2 * flipped - 1;
-    region_parity ^= quadrant_mask[sq6];
-#if USE_SHALLOW_TT
-    unsigned int diff1, diff2;
-    end_hash_diff( bb_flips, my_bits, color, sq6, &diff1, &diff2 );
-    hash1 ^= diff1;
-    hash2 ^= diff2;
-#endif
-    ev = -solve_five_empty( new_opp_bits, bb_flips, sq1, sq2, sq3, sq4, sq5,
-			    -beta, -alpha, oppcol, new_disc_diff, TRUE );
-#if USE_SHALLOW_TT
-    hash1 ^= diff1;
-    hash2 ^= diff2;
-#endif
-    region_parity ^= quadrant_mask[sq6];
-    if ( ev >= beta ) {
-      end_best_move = sq6;
-#if USE_SHALLOW_TT
-      add_shallow_hash( ev, sq6, ENDGAME_SCORE | LOWER_BOUND, 6 );
-#endif
-      return ev;
-    }
-    else if ( ev > score ) {
-      score = ev;
-      best_sq = sq6;
-    }
-  }
-
-  if ( score == -INFINITE_EVAL ) {
-    if ( !pass_legal ) {  /* Six empty squares */
-      if ( disc_diff > 0 )
-	return disc_diff + 6;
-      if ( disc_diff < 0 )
-	return disc_diff - 6;
-      return 0;
-    }
-    else
-      return -solve_six_empty( opp_bits, my_bits, sq1, sq2, sq3, sq4, sq5, sq6,
-			       -beta, -alpha, oppcol, -disc_diff, FALSE );
-  }
-
-#if USE_SHALLOW_TT
-  if ( score <= in_alpha )
-    add_shallow_hash( score, best_sq, ENDGAME_SCORE | UPPER_BOUND, 6 );
-  else
-    add_shallow_hash( score, best_sq, ENDGAME_SCORE | EXACT_VALUE, 6 );
-#endif
-
-  return score;
-}
-
-
-
-static int
-solve_seven_empty( BitBoard my_bits,
-		   BitBoard opp_bits,
-		   int sq1,
-		   int sq2,
-		   int sq3,
-		   int sq4,
-		   int sq5,
-		   int sq6,
-		   int sq7,
-		   int alpha,
-		   int beta,
-		   int color,
-		   int disc_diff,
-		   int pass_legal ) {
-  BitBoard new_opp_bits;
-  int score = -INFINITE_EVAL;
-  int in_alpha = alpha;
-  int oppcol = OPP( color );
-  int flipped;
-  int new_disc_diff;
-  int ev;
-  int best_sq = 0;
-
-  INCREMENT_COUNTER( nodes );
-
-#if USE_SHALLOW_TT
-  {
-    HashEntry entry;
-    find_shallow_hash( &entry );
-    if ( (entry.draft == 7) && (entry.flags & ENDGAME_SCORE) ) {
-      if ( (entry.flags & EXACT_VALUE) ||
-	   ((entry.flags & LOWER_BOUND) && entry.eval >= beta) ||
-	   ((entry.flags & UPPER_BOUND) && entry.eval <= alpha) ) {
-	end_best_move = entry.move[0];
-	return entry.eval;
-      }
-    }
-  }
-#endif
-
-#if USE_STABILITY
-  int opp_cnt = non_iterative_popcount( opp_bits );
-  if ( alpha >= 0 && (64 - 2 * opp_cnt <= alpha || 64 - 2 * opp_cnt < beta) ) {
-    int stability_bound;
-    EdgeIndices edges;
-    stability_bound = 64 - 2 * count_edge_stable_indexed( oppcol, opp_bits, my_bits, &edges );
-    if ( stability_bound <= alpha )
-      return alpha;
-    if ( edges.bits != 0 ) {
-      stability_bound = 64 - 2 * count_stable_indexed( oppcol, opp_bits, my_bits, &edges );
-      if ( stability_bound < beta )
-        beta = stability_bound + 1;
-      if ( stability_bound <= alpha )
-        return alpha;
-    }
-  }
-#endif
-
-  int orig_sq[7];
-  int cand[7];
-  int k;
-
-  orig_sq[0] = sq1; orig_sq[1] = sq2; orig_sq[2] = sq3; orig_sq[3] = sq4;
-  orig_sq[4] = sq5; orig_sq[5] = sq6; orig_sq[6] = sq7;
-
-  if ( region_parity != 0 ) {
-    int m_even[7];
-    int n_odd = 0, n_even = 0;
-    int i;
-    for ( i = 0; i < 7; i++ ) {
-      if ( quadrant_mask[orig_sq[i]] & region_parity )
-	cand[n_odd++] = orig_sq[i];
-      else
-	m_even[n_even++] = orig_sq[i];
-    }
-    for ( i = 0; i < n_even; i++ )
-      cand[n_odd + i] = m_even[i];
-  }
-  else {
-    for ( k = 0; k < 7; k++ )
-      cand[k] = orig_sq[k];
-  }
-
-  for ( k = 0; k < 7; k++ ) {
-    int m = cand[k];
-    flipped = TestFlips_wrapper( m, my_bits, opp_bits );
-    if ( flipped != 0 ) {
-      int rem[6];
-      int r = 0, j;
-      for ( j = 0; j < 7; j++ ) {
-	if ( orig_sq[j] != m )
-	  rem[r++] = orig_sq[j];
-      }
-      FULL_ANDNOT( new_opp_bits, opp_bits, bb_flips );
-      new_disc_diff = -disc_diff - 2 * flipped - 1;
-      region_parity ^= quadrant_mask[m];
-#if USE_SHALLOW_TT
-      unsigned int diff1, diff2;
-      end_hash_diff( bb_flips, my_bits, color, m, &diff1, &diff2 );
-      hash1 ^= diff1;
-      hash2 ^= diff2;
-#endif
-      ev = -solve_six_empty( new_opp_bits, bb_flips,
-			     rem[0], rem[1], rem[2], rem[3], rem[4], rem[5],
-			     -beta, -alpha, oppcol, new_disc_diff, TRUE );
-#if USE_SHALLOW_TT
-      hash1 ^= diff1;
-      hash2 ^= diff2;
-#endif
-      region_parity ^= quadrant_mask[m];
-      if ( ev >= beta ) {
-	end_best_move = m;
-#if USE_SHALLOW_TT
-	add_shallow_hash( ev, m, ENDGAME_SCORE | LOWER_BOUND, 7 );
-#endif
-	return ev;
-      }
-      else if ( ev > score ) {
-	score = ev;
-	if ( score > alpha )
-	  alpha = score;
-	best_sq = m;
-      }
-    }
-  }
-
-  if ( score == -INFINITE_EVAL ) {
-    if ( !pass_legal ) {  /* Seven empty squares */
-      if ( disc_diff > 0 )
-	return disc_diff + 7;
-      if ( disc_diff < 0 )
-	return disc_diff - 7;
-      return 0;
-    }
-    else {
-      hash1 ^= hash_flip_color1;
-      hash2 ^= hash_flip_color2;
-      ev = -solve_seven_empty( opp_bits, my_bits,
-			       orig_sq[0], orig_sq[1], orig_sq[2], orig_sq[3], orig_sq[4], orig_sq[5], orig_sq[6],
-			       -beta, -alpha, oppcol, -disc_diff, FALSE );
-      hash1 ^= hash_flip_color1;
-      hash2 ^= hash_flip_color2;
-      return ev;
-    }
-  }
-
-#if USE_SHALLOW_TT
-  if ( score <= in_alpha )
-    add_shallow_hash( score, best_sq, ENDGAME_SCORE | UPPER_BOUND, 7 );
-  else
-    add_shallow_hash( score, best_sq, ENDGAME_SCORE | EXACT_VALUE, 7 );
-#endif
 
   return score;
 }
@@ -3983,103 +3036,3 @@ end_game( int side_to_move,
 }
 
 
-
-/*
-   SETUP_END
-   Prepares the endgame solver for a new game.
-   This means clearing a few status fields.   
-*/
-
-void
-setup_end( void ) {
-  double last_mean, last_sigma;
-  double ff_threshold[61];
-  double prelim_threshold[61][64];
-  int i, j;
-  static const int dir_shift[8] = {1, -1, 7, -7, 8, -8, 9, -9};
-
-  earliest_wld_solve = 0;
-  earliest_full_solve = 0;
-  full_output_mode = TRUE;
-
-  /* Calculate the neighborhood masks */
-
-  for ( i = 1; i <= 8; i++ )
-    for ( j = 1; j <= 8; j++ ) {
-      /* Create the neighborhood mask for the square POS */
-
-      int pos = 10 * i + j;
-      int shift = 8 * (i - 1) + (j - 1);
-      unsigned int k;
-
-      neighborhood_mask[pos] = 0;
-
-      for ( k = 0; k < 8; k++ )
-	if ( dir_mask[pos] & (1 << k) ) {
-	  unsigned int neighbor = shift + dir_shift[k];
-	  neighborhood_mask[pos] |= 1ull << neighbor;
-	}
-    }
-
-  /* Set the fastest-first mobility encouragements and thresholds */
-
-  for ( i = 0; i <= 60; i++ )
-    ff_mob_factor[i] = MOB_FACTOR;
-  for ( i = 0; i <= 60; i++ )
-    ff_threshold[i] = FAST_FIRST_FACTOR;
-
-  /* Calculate the alpha thresholds for using fastest-first for
-     each #empty and shallow search depth. */
-
-  for ( j = 0; j <= MAX_END_CORR_DEPTH; j++ ) {
-    last_sigma = 100.0;  /* Infinity in disc difference */
-    last_mean = 0.0;
-    for ( i = 60; i >= 0; i-- ) {
-      if ( end_stats_available[i][j] ) {
-	last_mean = end_mean[i][j];
-	last_sigma = ff_threshold[i] * end_sigma[i][j];
-      }
-      fast_first_mean[i][j] = last_mean;
-      fast_first_sigma[i][j] = last_sigma;
-      prelim_threshold[i][j] = last_mean + last_sigma;
-    }
-  }
-  for ( j = MAX_END_CORR_DEPTH + 1; j < 64; j++ )
-    for ( i = 0; i <= 60; i++ )
-      prelim_threshold[i][j] = prelim_threshold[i][MAX_END_CORR_DEPTH];
-  for ( i = 0; i <= 60; i++ )
-    for ( j = 0; j < 64; j++ )
-      fast_first_threshold[i][j] =
-	(int) ceil( prelim_threshold[i][j] * 128.0 );
-}
-
-
-
-/*
-  GET_EARLIEST_WLD_SOLVE
-  GET_EARLIEST_FULL_SOLVE
-  Return the highest #empty when WLD and full solve respectively
-  were completed (not initiated).
-*/
-
-int
-get_earliest_wld_solve( void ) {
-  return earliest_wld_solve;
-}
-
-int
-get_earliest_full_solve( void ) {
-  return earliest_full_solve;
-}
-
-
-
-/*
-  SET_OUTPUT_MODE
-  Toggles output of intermediate search status on/off.
-*/
-
-void
-set_output_mode( int full ) {
-  full_output_mode = full;
-}

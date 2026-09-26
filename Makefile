@@ -30,6 +30,8 @@ SRCS = \
 	display.c \
 	doflip.c \
 	end.c \
+	end_init.c \
+	end_leaf.c \
 	epcstat.c \
 	error.c \
 	eval.c \
