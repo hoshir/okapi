@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Unit tests for the determine_verdict function in scripts/eval_candidate.py.
 
-Tests the SRCH-006 heavy position anti-masking guard alongside existing verdict logic.
+Tests the SRCH-006 heavy position anti-masking guard and TOOL-004 regression guard
+relaxation & simplification policy alongside existing verdict logic.
 """
 
 import os
@@ -14,7 +15,10 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "scripts"))
 from eval_candidate import (
     HEAVY_POSITIONS,
     HEAVY_REGRESSION_THRESHOLD_PCT,
+    SIMPLIFICATION_THRESHOLD_PCT,
     determine_verdict,
+    generate_markdown_table,
+    generate_text_table,
 )
 
 
@@ -61,7 +65,7 @@ def _make_comparison(**overrides):
 
 
 class TestDetermineVerdictBasic(unittest.TestCase):
-    """Tests for existing (pre-SRCH-006) verdict logic."""
+    """Tests for basic verdict logic."""
 
     def test_timeout_takes_priority(self):
         verdict, reason = determine_verdict(
@@ -107,11 +111,11 @@ class TestDetermineVerdictBasic(unittest.TestCase):
 
 
 class TestHeavyPositionGuard(unittest.TestCase):
-    """Tests for SRCH-006 heavy position anti-masking guard."""
+    """Tests for heavy position anti-masking guard with relaxed 3.0% threshold (TOOL-004)."""
 
     def test_heavy_regression_rejects_despite_aggregate_improvement(self):
-        """Core anti-masking scenario: aggregate is great (-2.0%) but FFO #55 regressed +1.5%."""
-        comparison = _make_comparison(ffo55=1.5)
+        """Core anti-masking scenario: aggregate is great (-2.0%) but FFO #55 regressed +3.5% (> 3.0%)."""
+        comparison = _make_comparison(ffo55=3.5)
         verdict, reason = determine_verdict(
             "full", True, True, _make_summary(-2.0),
             comparison=comparison
@@ -119,11 +123,12 @@ class TestHeavyPositionGuard(unittest.TestCase):
         self.assertEqual(verdict, "REJECT_REGRESSION")
         self.assertIn("FFO #55", reason)
         self.assertIn("anti-masking guard", reason)
-        self.assertIn("+1.50%", reason)
+        self.assertIn("+3.50%", reason)
+        self.assertIn("> +3.0%", reason)
 
     def test_multiple_heavy_regressions(self):
-        """Multiple heavy positions regressing should all be listed."""
-        comparison = _make_comparison(ffo53=2.0, ffo55=1.5, ffo57=3.0)
+        """Multiple heavy positions regressing > 3.0% should all be listed."""
+        comparison = _make_comparison(ffo53=3.5, ffo55=4.0, ffo57=5.0)
         verdict, reason = determine_verdict(
             "full", True, True, _make_summary(-2.0),
             comparison=comparison
@@ -134,16 +139,25 @@ class TestHeavyPositionGuard(unittest.TestCase):
         self.assertIn("FFO #57", reason)
 
     def test_heavy_position_within_threshold_passes(self):
-        """Heavy positions at or below threshold should not trigger guard."""
-        comparison = _make_comparison(ffo55=0.8, ffo53=1.0)  # 1.0 is not > 1.0
+        """Heavy positions at or below default threshold (3.0%) should not trigger guard."""
+        comparison = _make_comparison(ffo55=2.5, ffo53=3.0)  # 3.0 is not > 3.0
         verdict, _ = determine_verdict(
             "full", True, True, _make_summary(-2.0),
             comparison=comparison
         )
         self.assertEqual(verdict, "ACCEPT")
 
+    def test_relaxed_threshold_allows_minor_variance(self):
+        """Verify that regressions between 1.0% and 3.0% pass under the new TOOL-004 default."""
+        comparison = _make_comparison(ffo55=1.8, ffo57=2.5)
+        verdict, _ = determine_verdict(
+            "full", True, True, _make_summary(-1.5),
+            comparison=comparison
+        )
+        self.assertEqual(verdict, "ACCEPT")
+
     def test_non_heavy_position_regression_ignored_by_guard(self):
-        """Non-heavy positions (e.g. FFO #45) regressing > 1.0% should NOT trigger the heavy guard."""
+        """Non-heavy positions (e.g. FFO #45) regressing > 3.0% should NOT trigger the heavy guard."""
         comparison = _make_comparison(ffo45=5.0)
         verdict, _ = determine_verdict(
             "full", True, True, _make_summary(-2.0),
@@ -153,8 +167,8 @@ class TestHeavyPositionGuard(unittest.TestCase):
         self.assertEqual(verdict, "ACCEPT")
 
     def test_heavy_guard_applies_in_screen_mode(self):
-        """Heavy guard should trigger even in screen mode."""
-        comparison = _make_comparison(ffo55=2.0)
+        """Heavy guard should trigger even in screen mode when regression > 3.0%."""
+        comparison = _make_comparison(ffo55=3.5)
         verdict, reason = determine_verdict(
             "screen", True, True, _make_summary(-2.0),
             comparison=comparison
@@ -164,19 +178,19 @@ class TestHeavyPositionGuard(unittest.TestCase):
 
     def test_custom_heavy_threshold(self):
         """Custom heavy_threshold should override the default."""
-        comparison = _make_comparison(ffo55=1.5)
+        comparison = _make_comparison(ffo55=2.5)
 
-        # With default threshold (1.0%), this should reject
-        verdict, _ = determine_verdict(
-            "full", True, True, _make_summary(-2.0),
-            comparison=comparison, heavy_threshold=1.0
-        )
-        self.assertEqual(verdict, "REJECT_REGRESSION")
-
-        # With higher threshold (2.0%), this should accept
+        # With lower custom threshold (2.0%), this should reject
         verdict, _ = determine_verdict(
             "full", True, True, _make_summary(-2.0),
             comparison=comparison, heavy_threshold=2.0
+        )
+        self.assertEqual(verdict, "REJECT_REGRESSION")
+
+        # With higher custom threshold (4.0%), this should accept
+        verdict, _ = determine_verdict(
+            "full", True, True, _make_summary(-2.0),
+            comparison=comparison, heavy_threshold=4.0
         )
         self.assertEqual(verdict, "ACCEPT")
 
@@ -209,7 +223,7 @@ class TestHeavyPositionGuard(unittest.TestCase):
 
     def test_heavy_guard_before_aggregate_regression(self):
         """When both aggregate and heavy regress, heavy guard message should appear (checked first)."""
-        comparison = _make_comparison(ffo55=2.0)
+        comparison = _make_comparison(ffo55=3.5)
         verdict, reason = determine_verdict(
             "full", True, True, _make_summary(+1.0),
             comparison=comparison
@@ -223,8 +237,145 @@ class TestHeavyPositionGuard(unittest.TestCase):
         self.assertEqual(HEAVY_POSITIONS, {"FFO #53", "FFO #54", "FFO #55", "FFO #57"})
 
     def test_default_threshold(self):
-        """Verify the default threshold constant."""
-        self.assertEqual(HEAVY_REGRESSION_THRESHOLD_PCT, 1.0)
+        """Verify the default threshold constant is 3.0% (relaxed from 1.0% by TOOL-004)."""
+        self.assertEqual(HEAVY_REGRESSION_THRESHOLD_PCT, 3.0)
+
+
+class TestSimplificationMode(unittest.TestCase):
+    """Tests for TOOL-004 simplification mode and relaxed policy."""
+
+    def test_simplification_threshold_constant(self):
+        """Verify the simplification threshold constant is 5.0%."""
+        self.assertEqual(SIMPLIFICATION_THRESHOLD_PCT, 5.0)
+
+    def test_simplification_mode_allows_heavy_regression_up_to_5_pct(self):
+        """In simplification mode, heavy position regressions up to 5.0% should pass."""
+        comparison = _make_comparison(ffo55=4.0)
+
+        # In standard mode (threshold=3.0%), +4.0% regresses
+        verdict_std, _ = determine_verdict(
+            "full", True, True, _make_summary(-1.0),
+            comparison=comparison, simplification_mode=False
+        )
+        self.assertEqual(verdict_std, "REJECT_REGRESSION")
+
+        # In simplification mode (threshold=5.0%), +4.0% passes
+        verdict_simp, _ = determine_verdict(
+            "full", True, True, _make_summary(-1.0),
+            comparison=comparison, simplification_mode=True
+        )
+        self.assertEqual(verdict_simp, "ACCEPT")
+
+    def test_simplification_mode_rejects_heavy_regression_above_5_pct(self):
+        """In simplification mode, heavy position regression > 5.0% must still reject."""
+        comparison = _make_comparison(ffo55=5.5)
+        verdict, reason = determine_verdict(
+            "full", True, True, _make_summary(-1.0),
+            comparison=comparison, simplification_mode=True
+        )
+        self.assertEqual(verdict, "REJECT_REGRESSION")
+        self.assertIn("> +5.0%", reason)
+        self.assertIn("FFO #55", reason)
+        self.assertIn("anti-masking guard", reason)
+
+    def test_simplification_mode_accepts_neutral_aggregate(self):
+        """Simplification mode accepts net neutral aggregate nodes (e.g. 0.0%, within +/-0.5%)."""
+        summary = _make_summary(0.0)
+
+        # Standard mode returns NEUTRAL
+        verdict_std, _ = determine_verdict("full", True, True, summary, simplification_mode=False)
+        self.assertEqual(verdict_std, "NEUTRAL")
+
+        # Simplification mode returns ACCEPT
+        verdict_simp, reason = determine_verdict("full", True, True, summary, simplification_mode=True)
+        self.assertEqual(verdict_simp, "ACCEPT")
+        self.assertIn("Simplification accepted", reason)
+
+    def test_simplification_mode_accepts_slight_reduction(self):
+        """Simplification mode accepts small node reductions (e.g. -0.2%) as ACCEPT."""
+        summary = _make_summary(-0.2)
+        verdict, reason = determine_verdict("full", True, True, summary, simplification_mode=True)
+        self.assertEqual(verdict, "ACCEPT")
+        self.assertIn("Simplification accepted", reason)
+
+    def test_simplification_mode_needs_full_in_screen_mode(self):
+        """In screen mode with simplification, neutral results should return NEEDS_FULL."""
+        summary = _make_summary(0.1)
+        verdict, reason = determine_verdict("screen", True, True, summary, simplification_mode=True)
+        self.assertEqual(verdict, "NEEDS_FULL")
+        self.assertIn("Proceed to --mode full", reason)
+
+    def test_simplification_mode_rejects_aggregate_regression_over_half_pct(self):
+        """Even in simplification mode, aggregate regression > +0.5% must reject."""
+        summary = _make_summary(+0.8)
+        verdict, reason = determine_verdict("full", True, True, summary, simplification_mode=True)
+        self.assertEqual(verdict, "REJECT_REGRESSION")
+        self.assertIn("+0.80%", reason)
+
+    def test_simplification_mode_preserves_correctness_invariant(self):
+        """Correctness failure must still reject in simplification mode."""
+        verdict, _ = determine_verdict("full", False, True, _make_summary(-1.0), simplification_mode=True)
+        self.assertEqual(verdict, "REJECT_CORRECTNESS")
+
+        verdict, _ = determine_verdict("full", True, False, _make_summary(-1.0), simplification_mode=True)
+        self.assertEqual(verdict, "REJECT_CORRECTNESS")
+
+    def test_simplification_mode_preserves_timeout_invariant(self):
+        """Timeout must still reject in simplification mode."""
+        verdict, _ = determine_verdict(
+            "full", True, True, _make_summary(-1.0),
+            timed_out_positions=["FFO #55"], simplification_mode=True
+        )
+        self.assertEqual(verdict, "REJECT_TIMEOUT")
+
+    def test_simplification_mode_with_custom_heavy_threshold(self):
+        """Explicit heavy_threshold overrides the 5.0% default in simplification mode."""
+        comparison = _make_comparison(ffo55=4.5)
+        verdict, reason = determine_verdict(
+            "full", True, True, _make_summary(-1.0),
+            comparison=comparison, heavy_threshold=4.0, simplification_mode=True
+        )
+        self.assertEqual(verdict, "REJECT_REGRESSION")
+        self.assertIn("> +4.0%", reason)
+
+    def test_early_halt_respects_simplification_threshold(self):
+        """Early halt message correctly reflects simplification heavy threshold."""
+        verdict, reason = determine_verdict(
+            "full", True, True, _make_summary(-1.0),
+            early_halted=("FFO #55", 5.2), simplification_mode=True
+        )
+        self.assertEqual(verdict, "REJECT_REGRESSION")
+        self.assertIn("> +5.0% limit", reason)
+
+
+class TestTableGeneration(unittest.TestCase):
+    """Tests for text and markdown table warning tags with configurable thresholds."""
+
+    def test_text_table_heavy_tag(self):
+        """Text table displays [HEAVY!] only when position exceeds threshold."""
+        comparison = _make_comparison(ffo55=2.0)
+        summary = _make_summary(-1.0)
+
+        # At default 3.0% threshold: no [HEAVY!] tag for +2.0%
+        text_def = generate_text_table(comparison, summary, "full", 1, 22, heavy_threshold=3.0)
+        self.assertNotIn("[HEAVY!]", text_def)
+
+        # At 1.0% threshold: [HEAVY!] tag present
+        text_1pct = generate_text_table(comparison, summary, "full", 1, 22, heavy_threshold=1.0)
+        self.assertIn("[HEAVY!]", text_1pct)
+
+    def test_markdown_table_heavy_warning(self):
+        """Markdown table displays warning emoji only when position exceeds threshold."""
+        comparison = _make_comparison(ffo55=2.0)
+        summary = _make_summary(-1.0)
+
+        # At default 3.0% threshold: no warning emoji
+        md_def = generate_markdown_table(comparison, summary, "full", 1, 22, heavy_threshold=3.0)
+        self.assertNotIn("⚠️", md_def)
+
+        # At 1.0% threshold: warning emoji present
+        md_1pct = generate_markdown_table(comparison, summary, "full", 1, 22, heavy_threshold=1.0)
+        self.assertIn("⚠️", md_1pct)
 
 
 if __name__ == "__main__":
