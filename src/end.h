@@ -15,6 +15,7 @@
 
 
 
+#include "end_init.h"
 #include "search.h"
 #include "tlstate.h"
 
@@ -25,10 +26,6 @@
 
 
 
-extern const unsigned int quadrant_mask[100];
-
-
-
 int
 end_game( int side_to_move,
 	  int wld,
@@ -36,18 +33,6 @@ end_game( int side_to_move,
 	  int allow_book,
 	  int komi,
 	  EvaluationType *eval_info );
-
-void
-set_output_mode( int full );
-
-void
-setup_end( void );
-
-int
-get_earliest_wld_solve( void );
-
-int
-get_earliest_full_solve( void );
 
 
 

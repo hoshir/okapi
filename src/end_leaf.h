@@ -33,8 +33,6 @@ extern "C" {
 #define SHALLOW_TT_MIN_DEPTH         5
 #endif
 
-extern BitBoard neighborhood_mask[100];
-
 /*
   TESTFLIPS_WRAPPER
   Checks if SQ is a valid move by

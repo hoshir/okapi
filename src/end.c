@@ -76,10 +76,6 @@
 
 #define GOOD_TRANSPOSITION_EVAL      10000000
 
-/* Parameters for the fastest-first algorithm. The performance does
-   not seem to depend a lot on the precise values. */
-#define FAST_FIRST_FACTOR            0.45
-#define MOB_FACTOR                   460
 #define FRONTIER_MOB_FACTOR          48
 
 /* The disc difference when special wipeout move ordering is tried.
@@ -95,25 +91,6 @@
 #ifndef USE_SHALLOW_TT
 #define USE_SHALLOW_TT               TRUE
 #define SHALLOW_TT_MIN_DEPTH         5
-#endif
-
-
-
-#if 0
-
-// Profiling code
-
-static long long int
-rdtsc( void ) {
-#if defined(__GNUC__)
-  long long a;
-  asm volatile("rdtsc":"=A" (a));
-  return a;
-#else
-  return 0;
-#endif
-}
-
 #endif
 
 
@@ -160,27 +137,7 @@ static const int stability_threshold[] = { 65, 65, 65, 65, 65, 0, 0, 0, 0,
 
 
 
-static double fast_first_mean[61][64];
-static double fast_first_sigma[61][64];
 static int true_found, true_val;
-static int full_output_mode;
-static int earliest_wld_solve, earliest_full_solve;
-static int fast_first_threshold[61][64];
-static int ff_mob_factor[61];
-
-BitBoard neighborhood_mask[100];
-const unsigned int quadrant_mask[100] = {
-  0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-  0, 1, 1, 1, 1, 2, 2, 2, 2, 0,
-  0, 1, 1, 1, 1, 2, 2, 2, 2, 0,
-  0, 1, 1, 1, 1, 2, 2, 2, 2, 0,
-  0, 1, 1, 1, 1, 2, 2, 2, 2, 0,
-  0, 4, 4, 4, 4, 8, 8, 8, 8, 0,
-  0, 4, 4, 4, 4, 8, 8, 8, 8, 0,
-  0, 4, 4, 4, 4, 8, 8, 8, 8, 0,
-  0, 4, 4, 4, 4, 8, 8, 8, 8, 0,
-  0, 0, 0, 0, 0, 0, 0, 0, 0, 0
-};
 
 /* Number of discs that the side to move at the root has to win with. */
 static int komi_shift;
@@ -252,29 +209,7 @@ prepare_to_solve( const int *in_board ) {
 
 
 
-#if 0
 
-/*
-  CHECK_LIST
-  Performs a minimal sanity check of the move list: That it contains
-  the same number of moves as there are empty squares on the board.
-*/
-
-static void
-check_list( int empties ) {
-  int links = 0;
-  int sq = end_move_list[END_MOVE_LIST_HEAD].succ;
-
-  while ( sq != END_MOVE_LIST_TAIL ) {
-    links++;
-    sq = end_move_list[sq].succ;
-  }
-
-  if ( links != empties )
-    printf( "%d links, %d empties\n", links, empties );
-}
-
-#endif
 
 
 
@@ -307,7 +242,6 @@ solve_two_empty( BitBoard my_bits,
 		 int beta,
 		 int disc_diff,
 		 int pass_legal ) {
-  // BitBoard new_opp_bits;
   int score = -INFINITE_EVAL;
   int flipped;
   int ev;
@@ -327,50 +261,24 @@ solve_two_empty( BitBoard my_bits,
 
     ev = disc_diff + 2 * flipped;
 
-#if 0
-    FULL_ANDNOT( new_opp_bits, opp_bits, bb_flips );
-    if ( ev - 2 <= alpha ) { /* Fail-low if he can play SQ2 */
-      if ( ValidOneEmpty_bitboard[sq2]( new_opp_bits ) != 0 )
-	ev = alpha;
-      else {  /* He passes, check if SQ2 is feasible for me */
-	if ( ev >= 0 ) {  /* I'm ahead, so EV will increase by at least 2 */
-	  ev += 2;
-	  if ( ev < beta )  /* Only bother if not certain fail-high */
-	    ev += 2 * CountFlips_bitboard( sq2, bb_flips );
-	}
-	else {
-	  if ( ev < beta ) {  /* Only bother if not fail-high already */
-	    flipped = CountFlips_bitboard( sq2, bb_flips );
-	    if ( flipped != 0 )  /* SQ2 feasible for me, game over */
-	      ev += 2 * (flipped + 1);
-	    /* ELSE: SQ2 will end up empty, game over */
-	  }
+    flipped = CountFlips_bitboard( sq2, opp_bits & ~bb_flips );
+    if ( flipped != 0 )
+      ev -= 2 * flipped;
+    else {  /* He passes, check if SQ2 is feasible for me */
+      if ( ev >= 0 ) {  /* I'm ahead, so EV will increase by at least 2 */
+	ev += 2;
+	if ( ev < beta )  /* Only bother if not certain fail-high */
+	  ev += 2 * CountFlips_bitboard( sq2, bb_flips );
+      }
+      else {
+	if ( ev < beta ) {  /* Only bother if not fail-high already */
+	  flipped = CountFlips_bitboard( sq2, bb_flips );
+	  if ( flipped != 0 )  /* SQ2 feasible for me, game over */
+	    ev += 2 * (flipped + 1);
+	  /* ELSE: SQ2 will end up empty, game over */
 	}
       }
     }
-    else {
-#endif
-      flipped = CountFlips_bitboard( sq2, opp_bits & ~bb_flips );
-      if ( flipped != 0 )
-	ev -= 2 * flipped;
-      else {  /* He passes, check if SQ2 is feasible for me */
-	if ( ev >= 0 ) {  /* I'm ahead, so EV will increase by at least 2 */
-	  ev += 2;
-	  if ( ev < beta )  /* Only bother if not certain fail-high */
-	    ev += 2 * CountFlips_bitboard( sq2, bb_flips );
-	}
-	else {
-	  if ( ev < beta ) {  /* Only bother if not fail-high already */
-	    flipped = CountFlips_bitboard( sq2, bb_flips );
-	    if ( flipped != 0 )  /* SQ2 feasible for me, game over */
-	      ev += 2 * (flipped + 1);
-	    /* ELSE: SQ2 will end up empty, game over */
-	  }
-	}
-      }
-#if 0
-    }
-#endif
 
     /* Being legal, the first move is the best so far */
     score = ev;
@@ -388,50 +296,25 @@ solve_two_empty( BitBoard my_bits,
     INCREMENT_COUNTER( nodes );
 
     ev = disc_diff + 2 * flipped;
-#if 0
-    FULL_ANDNOT( new_opp_bits, opp_bits, bb_flips );
-    if ( ev - 2 <= alpha ) {  /* Fail-low if he can play SQ1 */
-      if ( ValidOneEmpty_bitboard[sq1]( new_opp_bits ) != 0 )
-	ev = alpha;
-      else {  /* He passes, check if SQ1 is feasible for me */
-	if ( ev >= 0 ) {  /* I'm ahead, so EV will increase by at least 2 */
-	  ev += 2;
-	  if ( ev < beta )  /* Only bother if not certain fail-high */
-	    ev += 2 * CountFlips_bitboard( sq1, bb_flips );
-	}
-	else {
-	  if ( ev < beta ) {  /* Only bother if not fail-high already */
-	    flipped = CountFlips_bitboard( sq1, bb_flips );
-	    if ( flipped != 0 )  /* SQ1 feasible for me, game over */
-	      ev += 2 * (flipped + 1);
-	    /* ELSE: SQ1 will end up empty, game over */
-	  }
+
+    flipped = CountFlips_bitboard( sq1, opp_bits & ~bb_flips );
+    if ( flipped != 0 )  /* SQ1 feasible for him, game over */
+      ev -= 2 * flipped;
+    else {  /* He passes, check if SQ1 is feasible for me */
+      if ( ev >= 0 ) {  /* I'm ahead, so EV will increase by at least 2 */
+	ev += 2;
+	if ( ev < beta )  /* Only bother if not certain fail-high */
+	  ev += 2 * CountFlips_bitboard( sq1, bb_flips );
+      }
+      else {
+	if ( ev < beta ) {  /* Only bother if not fail-high already */
+	  flipped = CountFlips_bitboard( sq1, bb_flips );
+	  if ( flipped != 0 )  /* SQ1 feasible for me, game over */
+	    ev += 2 * (flipped + 1);
+	  /* ELSE: SQ1 will end up empty, game over */
 	}
       }
     }
-    else {
-#endif
-      flipped = CountFlips_bitboard( sq1, opp_bits & ~bb_flips );
-      if ( flipped != 0 )  /* SQ1 feasible for him, game over */
-	ev -= 2 * flipped;
-      else {  /* He passes, check if SQ1 is feasible for me */
-	if ( ev >= 0 ) {  /* I'm ahead, so EV will increase by at least 2 */
-	  ev += 2;
-	  if ( ev < beta )  /* Only bother if not certain fail-high */
-	    ev += 2 * CountFlips_bitboard( sq1, bb_flips );
-	}
-	else {
-	  if ( ev < beta ) {  /* Only bother if not fail-high already */
-	    flipped = CountFlips_bitboard( sq1, bb_flips );
-	    if ( flipped != 0 )  /* SQ1 feasible for me, game over */
-	      ev += 2 * (flipped + 1);
-	    /* ELSE: SQ1 will end up empty, game over */
-	  }
-	}
-      }
-#if 0
-    }
-#endif
 
     /* If the second move is better than the first (if that move was legal),
        its score is the score of the position */
@@ -3153,103 +3036,3 @@ end_game( int side_to_move,
 }
 
 
-
-/*
-   SETUP_END
-   Prepares the endgame solver for a new game.
-   This means clearing a few status fields.   
-*/
-
-void
-setup_end( void ) {
-  double last_mean, last_sigma;
-  double ff_threshold[61];
-  double prelim_threshold[61][64];
-  int i, j;
-  static const int dir_shift[8] = {1, -1, 7, -7, 8, -8, 9, -9};
-
-  earliest_wld_solve = 0;
-  earliest_full_solve = 0;
-  full_output_mode = TRUE;
-
-  /* Calculate the neighborhood masks */
-
-  for ( i = 1; i <= 8; i++ )
-    for ( j = 1; j <= 8; j++ ) {
-      /* Create the neighborhood mask for the square POS */
-
-      int pos = 10 * i + j;
-      int shift = 8 * (i - 1) + (j - 1);
-      unsigned int k;
-
-      neighborhood_mask[pos] = 0;
-
-      for ( k = 0; k < 8; k++ )
-	if ( dir_mask[pos] & (1 << k) ) {
-	  unsigned int neighbor = shift + dir_shift[k];
-	  neighborhood_mask[pos] |= 1ull << neighbor;
-	}
-    }
-
-  /* Set the fastest-first mobility encouragements and thresholds */
-
-  for ( i = 0; i <= 60; i++ )
-    ff_mob_factor[i] = MOB_FACTOR;
-  for ( i = 0; i <= 60; i++ )
-    ff_threshold[i] = FAST_FIRST_FACTOR;
-
-  /* Calculate the alpha thresholds for using fastest-first for
-     each #empty and shallow search depth. */
-
-  for ( j = 0; j <= MAX_END_CORR_DEPTH; j++ ) {
-    last_sigma = 100.0;  /* Infinity in disc difference */
-    last_mean = 0.0;
-    for ( i = 60; i >= 0; i-- ) {
-      if ( end_stats_available[i][j] ) {
-	last_mean = end_mean[i][j];
-	last_sigma = ff_threshold[i] * end_sigma[i][j];
-      }
-      fast_first_mean[i][j] = last_mean;
-      fast_first_sigma[i][j] = last_sigma;
-      prelim_threshold[i][j] = last_mean + last_sigma;
-    }
-  }
-  for ( j = MAX_END_CORR_DEPTH + 1; j < 64; j++ )
-    for ( i = 0; i <= 60; i++ )
-      prelim_threshold[i][j] = prelim_threshold[i][MAX_END_CORR_DEPTH];
-  for ( i = 0; i <= 60; i++ )
-    for ( j = 0; j < 64; j++ )
-      fast_first_threshold[i][j] =
-	(int) ceil( prelim_threshold[i][j] * 128.0 );
-}
-
-
-
-/*
-  GET_EARLIEST_WLD_SOLVE
-  GET_EARLIEST_FULL_SOLVE
-  Return the highest #empty when WLD and full solve respectively
-  were completed (not initiated).
-*/
-
-int
-get_earliest_wld_solve( void ) {
-  return earliest_wld_solve;
-}
-
-int
-get_earliest_full_solve( void ) {
-  return earliest_full_solve;
-}
-
-
-
-/*
-  SET_OUTPUT_MODE
-  Toggles output of intermediate search status on/off.
-*/
-
-void
-set_output_mode( int full ) {
-  full_output_mode = full;
-}
