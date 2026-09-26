@@ -1403,33 +1403,6 @@ end_order_moves_presearch( int level,
   return FALSE;
 }
 
-/* Move bonuses without and with parity for the squares.
-   These are only used when sorting moves in the 8-12 empties
-   range and were automatically tuned by OPTIMIZE. */
-static const unsigned char move_bonus[2][128] = {  /* 2 * 100 used */
-  {   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,
-      0,  24,   1,   0,  25,  25,   0,   1,  24,   0,
-      0,   1,   0,   0,   0,   0,   0,   0,   1,   0,
-      0,   0,   0,   0,   0,   0,   0,   0,   0,   0,
-      0,  25,   0,   0,   0,   0,   0,   0,  25,   0,
-      0,  25,   0,   0,   0,   0,   0,   0,  25,   0,
-      0,   0,   0,   0,   0,   0,   0,   0,   0,   0,
-      0,   1,   0,   0,   0,   0,   0,   0,   1,   0,
-      0,  24,   1,   0,  25,  25,   0,   1,  24,   0,
-      0,   0,   0,   0,   0,   0,   0,   0,   0,   0,
-      0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0 },
-  {   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,
-      0, 128,  86, 122, 125, 125, 122,  86, 128,   0,
-      0,  86, 117, 128, 128, 128, 128, 117,  86,   0,
-      0, 122, 128, 128, 128, 128, 128, 128, 122,   0,
-      0, 125, 128, 128, 128, 128, 128, 128, 125,   0,
-      0, 125, 128, 128, 128, 128, 128, 128, 125,   0,
-      0, 122, 128, 128, 128, 128, 128, 128, 122,   0,
-      0,  86, 117, 128, 128, 128, 128, 117,  86,   0,
-      0, 128,  86, 122, 125, 125, 122,  86, 128,   0,
-      0,   0,   0,   0,   0,   0,   0,   0,   0,   0,
-      0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0 }
-};
 
 /*
   END_SEARCH_PVS
@@ -1654,7 +1627,6 @@ end_search_pvs( BitBoard my_bits,
     int new_disc_diff;
     int ev;
     int moves = 0;
-    int parity;
     int best_value = -INFINITE_EVAL, best_index = 0;
     int pred, succ;
     int sq, old_sq, best_sq = 0;
@@ -1672,23 +1644,12 @@ end_search_pvs( BitBoard my_bits,
 	FULL_ANDNOT( new_opp_bits, opp_bits, bb_flips );
 	end_move_list[old_sq].succ = end_move_list[sq].succ;
 
-	if ( quadrant_mask[sq] & region_parity )
-	  parity = 1;
-	else
-	  parity = 0;
-	goodness[moves] = move_bonus[parity][sq];
+	int move_score = 0;
 	if ( sq == hash_move )
-	  goodness[moves] += 128;
-
-	goodness[moves] -= weighted_mobility( new_opp_bits, bb_flips );
-
-	if ( goodness[moves] > best_value ) {
-	  best_value = goodness[moves];
-	  best_index = moves;
-	  best_new_my_bits = bb_flips;
-	  best_new_opp_bits = new_opp_bits;
-	  best_flipped = flipped;
-	}
+	  move_score += 128;
+	if ( quadrant_mask[sq] & region_parity )
+	  move_score += 128;
+	move_score -= weighted_mobility( new_opp_bits, bb_flips );
 
 	end_move_list[old_sq].succ = sq;
 
@@ -1708,17 +1669,26 @@ end_search_pvs( BitBoard my_bits,
 	       (etc_entry.selectivity <= selectivity) ) {
 	    if ( (etc_entry.flags & (UPPER_BOUND | EXACT_VALUE)) &&
 		 (etc_entry.eval <= -beta) ) {
-	      int score = -etc_entry.eval;
-	      end_store_tt( score, sq, in_alpha, beta, empties );
+	      int cutoff_score = -etc_entry.eval;
+	      end_store_tt( cutoff_score, sq, in_alpha, beta, empties );
 	      if ( level == 0 )
 		end_best_root_move = sq;
-	      return score;
+	      return cutoff_score;
 	    }
 	    else if ( (etc_entry.flags & (LOWER_BOUND | EXACT_VALUE)) &&
 		      (etc_entry.eval >= -alpha) ) {
-	      goodness[moves] -= 10000;
+	      move_score -= 10000;
 	    }
 	  }
+	}
+
+	goodness[moves] = move_score;
+	if ( move_score > best_value ) {
+	  best_value = move_score;
+	  best_index = moves;
+	  best_new_my_bits = bb_flips;
+	  best_new_opp_bits = new_opp_bits;
+	  best_flipped = flipped;
 	}
 
 	move_order[moves] = sq;
