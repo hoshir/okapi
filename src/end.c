@@ -16,6 +16,7 @@
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 #include "autoplay.h"
 #include "bitbcnt.h"
@@ -37,6 +38,7 @@
 #include "midgame.h"
 #include "moves.h"
 #include "osfbook.h"
+#include "patterns.h"
 #include "probcut.h"
 #include "search.h"
 #include "stable.h"
@@ -161,7 +163,7 @@ bb_valid_move( int move, BitBoard my_bits, BitBoard opp_bits ) {
 */
 
 static void
-prepare_to_solve( const int *in_board ) {
+prepare_to_solve( BitBoard occupied ) {
   /* fixed square ordering: */
   /* jcw's order, which is the best of 4 tried (according to Warren Smith) */
   static const unsigned char worst2best[64] = {
@@ -184,7 +186,7 @@ prepare_to_solve( const int *in_board ) {
   last_sq = END_MOVE_LIST_HEAD;
   for ( i = 59; i >=0; i-- ) {
     int sq = worst2best[i];
-    if ( in_board[sq] == EMPTY ) {
+    if ( !(occupied & square_mask[sq]) ) {
       end_move_list[last_sq].succ = sq;
       end_move_list[sq].pred = last_sq;
       region_parity ^= quadrant_mask[sq];
@@ -648,6 +650,46 @@ end_unmake_move( int sq,
 
 
 
+/*
+  SYNC_BOARD_FROM_BITBOARDS
+  Synchronize 100-cell array board, board_bits, piece_count, and
+  pattern indices from bitboards for midgame heuristic pre-search.
+*/
+
+static void
+sync_board_from_bitboards( BitBoard my_bits, BitBoard opp_bits, int side_to_move, int empties ) {
+  BitBoard b_bits = (side_to_move == BLACKSQ ? my_bits : opp_bits);
+  BitBoard w_bits = (side_to_move == BLACKSQ ? opp_bits : my_bits);
+  int i, j;
+
+  board_bits[BLACKSQ] = b_bits;
+  board_bits[WHITESQ] = w_bits;
+  board_bits[EMPTY] = ~(b_bits | w_bits);
+
+  for ( i = 1; i <= 8; i++ ) {
+    for ( j = 1; j <= 8; j++ ) {
+      int pos = 10 * i + j;
+      BitBoard mask = square_mask[pos];
+      if ( b_bits & mask )
+	board[pos] = BLACKSQ;
+      else if ( w_bits & mask )
+	board[pos] = WHITESQ;
+      else
+	board[pos] = EMPTY;
+    }
+  }
+
+  disks_played = 60 - empties;
+  int b_count = non_iterative_popcount( b_bits );
+  int w_count = non_iterative_popcount( w_bits );
+  piece_count[BLACKSQ][disks_played] = b_count;
+  piece_count[WHITESQ][disks_played] = w_count;
+
+  determine_pattern_indices();
+}
+
+
+
 
 
 
@@ -718,6 +760,8 @@ update_best_list( int *best_list, int move, int best_list_index,
 
 typedef struct SiblingBatchTag {
   SearchState root;
+  BitBoard my_bits;
+  BitBoard opp_bits;
   BitBoard saved_stable[3];
   struct SiblingBatchTag *parent;   /* the batch this one was started from */
   int level;
@@ -783,22 +827,25 @@ search_sibling( int index, void *context ) {
   int move = batch->move[index];
   int child_selective_cutoff = FALSE;
   int score, bailed;
-  int **saved_flip_stack = flip_stack;
   SiblingBatch *saved_batch = current_batch;
 
   split_nesting++;
   current_batch = batch;
   search_state_load( &batch->root );
-  set_bitboards( board, batch->side_to_move, &my_bits, &opp_bits );
+  my_bits = batch->my_bits;
+  opp_bits = batch->opp_bits;
 
-  if ( split_abandoned() ||
-       (make_move( batch->side_to_move, move, TRUE ) == 0) ) {
-    flip_stack = saved_flip_stack;
+  if ( split_abandoned() ) {
     current_batch = saved_batch;
     split_nesting--;
     return;
   }
   int flipped = TestFlips_wrapper( move, my_bits, opp_bits );
+  if ( flipped == 0 ) {
+    current_batch = saved_batch;
+    split_nesting--;
+    return;
+  }
   new_my_bits = bb_flips;
   FULL_ANDNOT( new_opp_bits, opp_bits, bb_flips );
 
@@ -807,11 +854,9 @@ search_sibling( int index, void *context ) {
     tls.stable_discs[WHITESQ][batch->level + 1] = batch->saved_stable[WHITESQ];
   }
 
-  int pred = end_move_list[move].pred;
-  int succ = end_move_list[move].succ;
-  end_move_list[pred].succ = succ;
-  end_move_list[succ].pred = pred;
-  region_parity ^= quadrant_mask[move];
+  unsigned int diff1, diff2;
+  int pred, succ;
+  end_make_move( move, new_my_bits, my_bits, batch->side_to_move, &diff1, &diff2, &pred, &succ );
 
   int child_disc_diff = -batch->disc_diff - 2 * flipped - 1;
 
@@ -825,13 +870,7 @@ search_sibling( int index, void *context ) {
 			   batch->selectivity,
 			   &child_selective_cutoff );
 
-  end_move_list[pred].succ = move;
-  end_move_list[succ].pred = move;
-  region_parity ^= quadrant_mask[move];
-
-  /* The move is never unmade, so put the flip stack back by hand;
-     leaving it advanced would overflow it after a few jobs. */
-  flip_stack = saved_flip_stack;
+  end_unmake_move( move, diff1, diff2, pred, succ );
 
   /* Ask before raising the flag ourselves: a job that was cut short
      part way through has no score worth keeping, while the one that
@@ -890,7 +929,7 @@ dispatch_siblings( BitBoard my_bits, BitBoard opp_bits,
   /* 1. First priority: remaining moves in best_list (hash moves) */
   for ( i = 0; i < best_list_length; i++ ) {
     sq = best_list[i];
-    if ( !used[sq] && (board[sq] == EMPTY) &&
+    if ( !used[sq] && !((my_bits | opp_bits) & square_mask[sq]) &&
 	 (TestFlips_wrapper( sq, my_bits, opp_bits ) > 0) ) {
       used[sq] = TRUE;
       if ( count < MAX_ROOT_MOVES )
@@ -930,7 +969,7 @@ dispatch_siblings( BitBoard my_bits, BitBoard opp_bits,
   } else {
     for ( i = 0; i < MOVE_ORDER_SIZE; i++ ) {
       sq = sorted_move_order[disks_played][i];
-      if ( !used[sq] && (board[sq] == EMPTY) &&
+      if ( !used[sq] && !((my_bits | opp_bits) & square_mask[sq]) &&
 	   (TestFlips_wrapper( sq, my_bits, opp_bits ) > 0) ) {
 	used[sq] = TRUE;
 	if ( count < MAX_ROOT_MOVES )
@@ -969,6 +1008,9 @@ dispatch_siblings( BitBoard my_bits, BitBoard opp_bits,
   batch->alpha = alpha;
   batch->beta = beta;
   batch->selectivity = selectivity;
+  batch->my_bits = my_bits;
+  batch->opp_bits = opp_bits;
+  sync_board_from_bitboards( my_bits, opp_bits, side_to_move, empties );
   search_state_save( &batch->root );
 
   (void) __sync_fetch_and_add( &active_splits, 1 );
@@ -1033,6 +1075,8 @@ end_order_moves_presearch( int level,
   for ( i = 0; i < 100; i++ )
     etc_demoted[i] = FALSE;
 
+  sync_board_from_bitboards( my_bits, opp_bits, side_to_move, empties );
+
   /* Pass 1: Lightweight 1-ply ETC scan for candidate moves before shallow tree_search */
   if ( use_hash ) {
     for ( shallow_index = 0; shallow_index < MOVE_ORDER_SIZE;
@@ -1047,16 +1091,23 @@ end_order_moves_presearch( int level,
 	if ( move == best_list[j] )
 	  already_checked = TRUE;
 
-      if ( !already_checked && (board[move] == EMPTY) &&
+      if ( !already_checked && !((my_bits | opp_bits) & square_mask[move]) &&
 	   (TestFlips_wrapper( move, my_bits, opp_bits ) > 0) ) {
 	if ( can_split && proven[move] && (proven_score[move] <= curr_alpha) )
 	  continue;
 
-	if ( make_move( side_to_move, move, TRUE ) != 0 ) {
-	  HashEntry etc_entry;
+	BitBoard child_my_bits;
+	int flipped = TestFlips_bitboard_to( move, my_bits, opp_bits, &child_my_bits );
+	if ( flipped != 0 ) {
+	  unsigned int diff1, diff2;
+	  end_hash_diff( child_my_bits, my_bits, side_to_move, move, &diff1, &diff2 );
+	  hash1 ^= diff1;
+	  hash2 ^= diff2;
 	  prefetch_hash_endgame_key( hash2 );
+	  HashEntry etc_entry;
 	  find_hash( &etc_entry, ENDGAME_MODE );
-	  unmake_move( side_to_move, move );
+	  hash1 ^= diff1;
+	  hash2 ^= diff2;
 
 	  if ( (etc_entry.flags & ENDGAME_SCORE) &&
 	       (etc_entry.draft == empties - 1) &&
@@ -1100,7 +1151,7 @@ end_order_moves_presearch( int level,
 	  if ( move == best_list[j] )
 	    already_checked = TRUE;
 
-	if ( !already_checked && (board[move] == EMPTY) &&
+	if ( !already_checked && !((my_bits | opp_bits) & square_mask[move]) &&
 	     (TestFlips_wrapper( move, my_bits, opp_bits ) > 0) ) {
 	  if ( (can_split && proven[move] && (proven_score[move] <= curr_alpha)) || etc_demoted[move] ) {
 	    evals[disks_played][move] = -INFINITE_EVAL;
@@ -1189,7 +1240,7 @@ end_order_moves_presearch( int level,
 	  if ( move == best_list[j] )
 	    already_checked = TRUE;
 
-	if ( !already_checked && (board[move] == EMPTY) &&
+	if ( !already_checked && !((my_bits | opp_bits) & square_mask[move]) &&
 	     (TestFlips_wrapper( move, my_bits, opp_bits ) > 0) ) {
 	  if ( (can_split && proven[move] && (proven_score[move] <= curr_alpha)) || etc_demoted[move] ) {
 	    cand_moves_arr[cand_count] = move;
@@ -1791,10 +1842,14 @@ end_search_pvs( BitBoard my_bits,
     int can_split;
     int best;
     int curr_val;
+    int saved_disks_played = disks_played;
+
+    disks_played = 60 - empties;
 
     /* Use endgame multi-prob-cut to selectively prune the tree */
     if ( USE_MPC && (level > 2) && (selectivity > 0) ) {
       int cut;
+      sync_board_from_bitboards( my_bits, opp_bits, side_to_move, empties );
       for ( cut = 0; cut < use_end_cut[disks_played]; cut++ ) {
 	int shallow_remains = end_mpc_depth[disks_played][cut];
 	int mpc_bias = ceil( end_mean[disks_played][shallow_remains] * 128.0 );
@@ -1810,6 +1865,7 @@ end_search_pvs( BitBoard my_bits,
 	    add_hash( ENDGAME_MODE, alpha, pv[level][level],
 		      ENDGAME_SCORE | LOWER_BOUND, empties, selectivity );
 	  *selective_cutoff = TRUE;
+	  disks_played = saved_disks_played;
 	  return beta;
 	}
 	if ( shallow_val <= alpha_bound ) {
@@ -1817,6 +1873,7 @@ end_search_pvs( BitBoard my_bits,
 	    add_hash( ENDGAME_MODE, beta, pv[level][level],
 		      ENDGAME_SCORE | UPPER_BOUND, empties, selectivity );
 	  *selective_cutoff = TRUE;
+	  disks_played = saved_disks_played;
 	  return alpha;
 	}
       }
@@ -1844,29 +1901,39 @@ end_search_pvs( BitBoard my_bits,
     for ( i = 0; i < 4; i++ )
       best_list[i] = 0;
     if ( hash_hit )
-      for ( i = 0; i < 4; i++ )
-	if ( valid_move( entry.move[i], side_to_move ) ) {
-	  best_list[best_list_length++] = entry.move[i];
+      for ( i = 0; i < 4; i++ ) {
+	int cand_sq = entry.move[i];
+	if ( bb_valid_move( cand_sq, my_bits, opp_bits ) ) {
+	  best_list[best_list_length++] = cand_sq;
 
-	  if ( use_hash &&
-	       (make_move( side_to_move, entry.move[i], TRUE ) != 0) ) {
-	    HashEntry etc_entry;
-	    prefetch_hash_endgame_key( hash2 );
-	    find_hash( &etc_entry, ENDGAME_MODE );
-	    if ( (etc_entry.flags & ENDGAME_SCORE) &&
-		 (etc_entry.draft == empties - 1) &&
-		 (etc_entry.selectivity <= selectivity) &&
-		 (etc_entry.flags & (UPPER_BOUND | EXACT_VALUE)) &&
-		 (etc_entry.eval <= -beta) ) {
-	      for ( j = best_list_length - 1; j >= 1; j-- )
-		best_list[j] = best_list[j - 1];
-	      best_list[0] = entry.move[i];
-	      unmake_move( side_to_move, entry.move[i] );
-	      break;
+	  if ( use_hash ) {
+	    BitBoard child_my_bits;
+	    int flipped = TestFlips_bitboard_to( cand_sq, my_bits, opp_bits, &child_my_bits );
+	    if ( flipped != 0 ) {
+	      unsigned int diff1, diff2;
+	      end_hash_diff( child_my_bits, my_bits, side_to_move, cand_sq, &diff1, &diff2 );
+	      hash1 ^= diff1;
+	      hash2 ^= diff2;
+	      prefetch_hash_endgame_key( hash2 );
+	      HashEntry etc_entry;
+	      find_hash( &etc_entry, ENDGAME_MODE );
+	      hash1 ^= diff1;
+	      hash2 ^= diff2;
+
+	      if ( (etc_entry.flags & ENDGAME_SCORE) &&
+		   (etc_entry.draft == empties - 1) &&
+		   (etc_entry.selectivity <= selectivity) &&
+		   (etc_entry.flags & (UPPER_BOUND | EXACT_VALUE)) &&
+		   (etc_entry.eval <= -beta) ) {
+		for ( j = best_list_length - 1; j >= 1; j-- )
+		  best_list[j] = best_list[j - 1];
+		best_list[0] = cand_sq;
+		break;
+	      }
 	    }
-	    unmake_move( side_to_move, entry.move[i] );
 	  }
 	}
+      }
 
     for ( move_index = 0, best_list_index = 0; TRUE;
 	  move_index++, best_list_index++ ) {
@@ -1901,8 +1968,10 @@ end_search_pvs( BitBoard my_bits,
 	if ( echo )
 	  display_buffers();
 	handle_event( TRUE, FALSE, TRUE );
-	if ( is_panic_abort() || force_return )
+	if ( is_panic_abort() || force_return ) {
+	  disks_played = saved_disks_played;
 	  return SEARCH_ABORT;
+	}
       }
 
       if ( (level == 0) && !get_ponder_move() ) {
@@ -1911,23 +1980,18 @@ end_search_pvs( BitBoard my_bits,
 	send_sweep( "%c%c", TO_SQUARE( move ) );
       }
 
-      (void) make_move( side_to_move, move, use_hash );
-      if ( use_hash )
-	prefetch_hash_endgame_key( hash2 );
+      unsigned int diff1, diff2;
+      int pred, succ;
       int flipped = TestFlips_wrapper( move, my_bits, opp_bits );
       new_my_bits = bb_flips;
       FULL_ANDNOT( new_opp_bits, opp_bits, bb_flips );
+
+      end_make_move( move, new_my_bits, my_bits, side_to_move, &diff1, &diff2, &pred, &succ );
 
       if ( level + 1 <= MAX_SEARCH_DEPTH ) {
 	tls.stable_discs[BLACKSQ][level + 1] = tls.stable_discs[BLACKSQ][level];
 	tls.stable_discs[WHITESQ][level + 1] = tls.stable_discs[WHITESQ][level];
       }
-
-      int pred = end_move_list[move].pred;
-      int succ = end_move_list[move].succ;
-      end_move_list[pred].succ = succ;
-      end_move_list[succ].pred = pred;
-      region_parity ^= quadrant_mask[move];
 
       int new_disc_diff = -disc_diff - 2 * flipped - 1;
 
@@ -1988,13 +2052,12 @@ end_search_pvs( BitBoard my_bits,
       else if ( child_selective_cutoff )
 	*selective_cutoff = TRUE;
 
-      unmake_move( side_to_move, move );
-      end_move_list[pred].succ = move;
-      end_move_list[succ].pred = move;
-      region_parity ^= quadrant_mask[move];
+      end_unmake_move( move, diff1, diff2, pred, succ );
 
-      if ( is_panic_abort() || force_return || SPLIT_ABANDONED() )
+      if ( is_panic_abort() || force_return || SPLIT_ABANDONED() ) {
+	disks_played = saved_disks_played;
 	return SEARCH_ABORT;
+      }
 
       if ( (level == 0) && !get_ponder_move() ) {
 	if ( update_pv ) {
@@ -2031,6 +2094,7 @@ end_search_pvs( BitBoard my_bits,
 	  add_hash_extended( ENDGAME_MODE, best, best_list,
 			     ENDGAME_SCORE | LOWER_BOUND, empties,
 			     *selective_cutoff ? selectivity : 0 );
+	disks_played = saved_disks_played;
 	return best;
       }
 
@@ -2061,6 +2125,7 @@ end_search_pvs( BitBoard my_bits,
 	add_hash_extended( ENDGAME_MODE, best, best_list, flags, empties,
 			   *selective_cutoff ? selectivity : 0 );
       }
+      disks_played = saved_disks_played;
       return best;
     }
     else if ( pass_legal ) {
@@ -2076,10 +2141,12 @@ end_search_pvs( BitBoard my_bits,
 	hash1 ^= hash_flip_color1;
 	hash2 ^= hash_flip_color2;
       }
+      disks_played = saved_disks_played;
       return curr_val;
     }
     else {
       pv_depth[level] = level;
+      disks_played = saved_disks_played;
       if ( disc_diff > 0 )
 	return disc_diff + empties;
       else if ( disc_diff < 0 )
@@ -2109,10 +2176,12 @@ end_tree_wrapper( int level,
   (void) max_depth;
   int selective_cutoff;
   BitBoard my_bits, opp_bits;
-
-  prepare_to_solve( board );
+  Board saved_root_board;
+  memcpy( saved_root_board, board, sizeof( Board ) );
 
   set_bitboards( board, side_to_move, &my_bits, &opp_bits );
+
+  prepare_to_solve( my_bits | opp_bits );
 
   if ( level == 0 ) {
     EdgeIndices eb, ew;
@@ -2137,16 +2206,18 @@ end_tree_wrapper( int level,
   int empties = 64 - my_discs - opp_discs;
   int disc_diff = my_discs - opp_discs;
 
-  return end_search_pvs( my_bits, opp_bits,
-			 MAX( alpha - komi_shift, -64 ),
-			 MIN( beta - komi_shift, 64 ),
-			 side_to_move,
-			 empties,
-			 disc_diff,
-			 void_legal,
-			 level,
-			 selectivity,
-			 &selective_cutoff ) + komi_shift;
+  int result = end_search_pvs( my_bits, opp_bits,
+			       MAX( alpha - komi_shift, -64 ),
+			       MIN( beta - komi_shift, 64 ),
+			       side_to_move,
+			       empties,
+			       disc_diff,
+			       void_legal,
+			       level,
+			       selectivity,
+			       &selective_cutoff );
+  memcpy( board, saved_root_board, sizeof( Board ) );
+  return result + komi_shift;
 }
 
 
