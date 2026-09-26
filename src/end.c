@@ -1189,12 +1189,22 @@ search_sibling( int index, void *context ) {
     tls.stable_discs[WHITESQ][batch->level + 1] = batch->saved_stable[WHITESQ];
   }
 
+  int pred = end_move_list[move].pred;
+  int succ = end_move_list[move].succ;
+  end_move_list[pred].succ = succ;
+  end_move_list[succ].pred = pred;
+  region_parity ^= quadrant_mask[move];
+
   score = -end_tree_search( batch->level + 1, batch->max_depth,
 			    new_opp_bits, new_my_bits,
 			    OPP( batch->side_to_move ),
 			    -(batch->alpha + 1), -batch->alpha,
 			    batch->selectivity, &child_selective_cutoff,
 			    TRUE );
+
+  end_move_list[pred].succ = move;
+  end_move_list[succ].pred = move;
+  region_parity ^= quadrant_mask[move];
 
   /* The move is never unmade, so put the flip stack back by hand;
      leaving it advanced would overflow it after a few jobs. */
@@ -1529,7 +1539,6 @@ end_tree_search( int level,
     else
       previous_move = 0;
 
-    prepare_to_solve( board );
     result = end_solve( my_bits, opp_bits, alpha, beta, side_to_move,
 			empties, disk_diff, previous_move, level );
 
@@ -2104,6 +2113,12 @@ end_tree_search( int level,
       tls.stable_discs[WHITESQ][level + 1] = tls.stable_discs[WHITESQ][level];
     }
 
+    int pred = end_move_list[move].pred;
+    int succ = end_move_list[move].succ;
+    end_move_list[pred].succ = succ;
+    end_move_list[succ].pred = pred;
+    region_parity ^= quadrant_mask[move];
+
     update_pv = FALSE;
     if ( first ) {
       best = curr_val =
@@ -2164,6 +2179,9 @@ end_tree_search( int level,
       *selective_cutoff = TRUE;
 
     unmake_move( side_to_move, move );
+    end_move_list[pred].succ = move;
+    end_move_list[succ].pred = move;
+    region_parity ^= quadrant_mask[move];
 
     /* Give up here rather than at the top of the node: the board is
        back the way the caller left it, and nothing has been written to
@@ -2292,6 +2310,8 @@ end_tree_wrapper( int level,
 		  int void_legal ) {
   int selective_cutoff;
   BitBoard my_bits, opp_bits;
+
+  prepare_to_solve( board );
 
   set_bitboards( board, side_to_move, &my_bits, &opp_bits );
 

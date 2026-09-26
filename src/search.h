@@ -122,6 +122,8 @@ typedef struct {
   int saved_sorted_move_order[64][64];
   unsigned int saved_hash1, saved_hash2;
   int saved_disks_played;
+  MoveLink saved_end_move_list[100];
+  unsigned int saved_region_parity;
 } SearchState;
 
 
