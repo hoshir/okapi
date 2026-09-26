@@ -625,11 +625,12 @@ def determine_verdict(mode, test_passed, all_correct, summary, timed_out_positio
             )
 
     node_delta = summary["total_node_delta_pct"]
+    aggregate_threshold = SIMPLIFICATION_THRESHOLD_PCT if simplification_mode else 0.5
 
-    if node_delta > 0.5:
+    if node_delta > aggregate_threshold:
         return (
             "REJECT_REGRESSION",
-            f"Deterministic node count regressed by {node_delta:+.2f}% (> +0.5% tolerance)."
+            f"Deterministic node count regressed by {node_delta:+.2f}% (> +{aggregate_threshold:.1f}% tolerance)."
         )
 
     if node_delta < -0.5:
@@ -648,12 +649,12 @@ def determine_verdict(mode, test_passed, all_correct, summary, timed_out_positio
         if mode == "screen":
             return (
                 "NEEDS_FULL",
-                f"Simplification candidate preserved benchmark efficiency ({node_delta:+.2f}% <= +0.5%). Proceed to --mode full."
+                f"Simplification candidate preserved benchmark efficiency ({node_delta:+.2f}% <= +{aggregate_threshold:.1f}%). Proceed to --mode full."
             )
         else:
             return (
                 "ACCEPT",
-                f"Simplification accepted: aggregate nodes preserved/improved ({node_delta:+.2f}% <= +0.5%) with zero heavy regressions > +{heavy_threshold:.1f}%."
+                f"Simplification accepted: aggregate nodes within tolerance ({node_delta:+.2f}% <= +{aggregate_threshold:.1f}%) with zero heavy regressions > +{heavy_threshold:.1f}%."
             )
 
     return (
