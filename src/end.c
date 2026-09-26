@@ -124,15 +124,6 @@ static const double end_percentile[MAX_SELECTIVITY + 1] =
 
 #if USE_STABILITY
 #define  HIGH_STABILITY_THRESHOLD     0
-/* Alpha above which a stability cutoff is attempted, indexed by the
-   number of empty squares.  Proving a bound costs a stability count, so
-   it only pays when alpha is already high enough that few discs need to
-   be stable; the more empties remain, the higher that bar has to be.
-   Below 5 empties the specialized solvers take over and never consult
-   this table.  Tuned as 2 * empties on FFO #45/#48/#49/#51. */
-static const int stability_threshold[] = { 65, 65, 65, 65, 65, 0, 0, 0, 0,
-					   0, 0, 0, 0, 0, 0, 0, 0, 0,
-					   0 };
 #endif
 
 
@@ -1097,13 +1088,8 @@ end_tree_search( int level, int max_depth, BitBoard my_bits,
 #define MAX_ROOT_MOVES               64
 
 /* Remaining depth at or above which a node is worth splitting.
-   For deep endgames (root empties >= 24), maintaining split depth at 14 prevents
-   massive speculative tree explosions on sibling branches (PAR-010).
-   For shallower endgames, depth 11 distributes work earlier (PAR-001). */
-#define PARALLEL_SPLIT_DEPTH_SHALLOW 11
-#define PARALLEL_SPLIT_DEPTH_DEEP    14
-#define DEEP_ENDGAME_SPLIT_THRESHOLD 24
-#define PARALLEL_SPLIT_DEPTH         PARALLEL_SPLIT_DEPTH_SHALLOW
+   Depth 11 distributes work efficiently across threads (SIMP-002). */
+#define PARALLEL_SPLIT_DEPTH         11
 
 /* How far the splits may nest, and how much more of the tree a node has
    to have left before it may start a batch at each level of nesting.
@@ -1418,9 +1404,6 @@ end_tree_search( int level,
 #if CHECK_HASH_CODES
   unsigned int h1, h2;
 #endif
-#if USE_STABILITY
-  int stability_bound;
-#endif
 
   if ( level == 0 ) {
     sprintf( buffer, "[%d,%d]:", alpha, beta );
@@ -1697,15 +1680,10 @@ end_tree_search( int level,
      bookkeeping, and once it is not, the thread it puts to work is one
      that would otherwise have waited out the longest job of the batch
      doing nothing. */
-  {
-    int min_split_depth = (max_depth >= DEEP_ENDGAME_SPLIT_THRESHOLD)
-      ? PARALLEL_SPLIT_DEPTH_DEEP
-      : PARALLEL_SPLIT_DEPTH_SHALLOW;
-    can_split = (remains >= min_split_depth +
-		 SPLIT_NESTING_MARGIN * split_nesting) &&
-      (split_nesting <= MAX_SPLIT_NESTING) && (threads_count() > 1) &&
-      (threads_idle_count() > 0);
-  }
+  can_split = (remains >= PARALLEL_SPLIT_DEPTH +
+	       SPLIT_NESTING_MARGIN * split_nesting) &&
+    (split_nesting <= MAX_SPLIT_NESTING) && (threads_count() > 1) &&
+    (threads_idle_count() > 0);
   if ( can_split )
     for ( i = 0; i < 100; i++ )
       proven[i] = FALSE;
@@ -1803,8 +1781,7 @@ end_tree_search( int level,
 		    etc_move = move;
 		    break;
 		  }
-		  else if ( (remains < DEEP_ENDGAME_SPLIT_THRESHOLD) &&
-			    (etc_entry.flags & (LOWER_BOUND | EXACT_VALUE)) &&
+		  else if ( (etc_entry.flags & (LOWER_BOUND | EXACT_VALUE)) &&
 			    (etc_entry.eval >= -curr_alpha) ) {
 		    etc_demoted[move] = TRUE;
 		  }
