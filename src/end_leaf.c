@@ -165,19 +165,21 @@ solve_five_empty( BitBoard my_bits,
 #endif
 
 #if USE_STABILITY
-  int opp_cnt = non_iterative_popcount( opp_bits );
-  if ( alpha >= 0 && (64 - 2 * opp_cnt <= alpha || 64 - 2 * opp_cnt < beta) ) {
-    int stability_bound;
-    EdgeIndices edges;
-    stability_bound = 64 - 2 * count_edge_stable_indexed( oppcol, opp_bits, my_bits, &edges );
-    if ( stability_bound <= alpha )
-      return alpha;
-    if ( edges.bits != 0 ) {
-      stability_bound = 64 - 2 * count_stable_indexed( oppcol, opp_bits, my_bits, &edges );
-      if ( stability_bound < beta )
-        beta = stability_bound + 1;
+  if ( ((my_bits | opp_bits) & CORNER_MASK) != 0 && (opp_bits & BORDER_MASK) != 0 ) {
+    int opp_cnt = non_iterative_popcount( opp_bits );
+    if ( alpha >= 0 && (64 - 2 * opp_cnt <= alpha || 64 - 2 * opp_cnt < beta) ) {
+      int stability_bound;
+      EdgeIndices edges;
+      stability_bound = 64 - 2 * count_edge_stable_indexed( oppcol, opp_bits, my_bits, &edges );
       if ( stability_bound <= alpha )
         return alpha;
+      if ( edges.bits != 0 && (opp_bits & CENTRAL_MASK) != 0 ) {
+        stability_bound = 64 - 2 * count_stable_indexed( oppcol, opp_bits, my_bits, &edges );
+        if ( stability_bound < beta )
+          beta = stability_bound + 1;
+        if ( stability_bound <= alpha )
+          return alpha;
+      }
     }
   }
 #endif
@@ -384,19 +386,21 @@ solve_six_empty( BitBoard my_bits,
 #endif
 
 #if USE_STABILITY
-  int opp_cnt = non_iterative_popcount( opp_bits );
-  if ( alpha >= 0 && (64 - 2 * opp_cnt <= alpha || 64 - 2 * opp_cnt < beta) ) {
-    int stability_bound;
-    EdgeIndices edges;
-    stability_bound = 64 - 2 * count_edge_stable_indexed( oppcol, opp_bits, my_bits, &edges );
-    if ( stability_bound <= alpha )
-      return alpha;
-    if ( edges.bits != 0 ) {
-      stability_bound = 64 - 2 * count_stable_indexed( oppcol, opp_bits, my_bits, &edges );
-      if ( stability_bound < beta )
-        beta = stability_bound + 1;
+  if ( ((my_bits | opp_bits) & CORNER_MASK) != 0 && (opp_bits & BORDER_MASK) != 0 ) {
+    int opp_cnt = non_iterative_popcount( opp_bits );
+    if ( alpha >= 0 && (64 - 2 * opp_cnt <= alpha || 64 - 2 * opp_cnt < beta) ) {
+      int stability_bound;
+      EdgeIndices edges;
+      stability_bound = 64 - 2 * count_edge_stable_indexed( oppcol, opp_bits, my_bits, &edges );
       if ( stability_bound <= alpha )
         return alpha;
+      if ( edges.bits != 0 && (opp_bits & CENTRAL_MASK) != 0 ) {
+        stability_bound = 64 - 2 * count_stable_indexed( oppcol, opp_bits, my_bits, &edges );
+        if ( stability_bound < beta )
+          beta = stability_bound + 1;
+        if ( stability_bound <= alpha )
+          return alpha;
+      }
     }
   }
 #endif
@@ -680,19 +684,21 @@ solve_seven_empty( BitBoard my_bits,
 #endif
 
 #if USE_STABILITY
-  int opp_cnt = non_iterative_popcount( opp_bits );
-  if ( alpha >= 0 && (64 - 2 * opp_cnt <= alpha || 64 - 2 * opp_cnt < beta) ) {
-    int stability_bound;
-    EdgeIndices edges;
-    stability_bound = 64 - 2 * count_edge_stable_indexed( oppcol, opp_bits, my_bits, &edges );
-    if ( stability_bound <= alpha )
-      return alpha;
-    if ( edges.bits != 0 ) {
-      stability_bound = 64 - 2 * count_stable_indexed( oppcol, opp_bits, my_bits, &edges );
-      if ( stability_bound < beta )
-        beta = stability_bound + 1;
+  if ( ((my_bits | opp_bits) & CORNER_MASK) != 0 && (opp_bits & BORDER_MASK) != 0 ) {
+    int opp_cnt = non_iterative_popcount( opp_bits );
+    if ( alpha >= 0 && (64 - 2 * opp_cnt <= alpha || 64 - 2 * opp_cnt < beta) ) {
+      int stability_bound;
+      EdgeIndices edges;
+      stability_bound = 64 - 2 * count_edge_stable_indexed( oppcol, opp_bits, my_bits, &edges );
       if ( stability_bound <= alpha )
         return alpha;
+      if ( edges.bits != 0 && (opp_bits & CENTRAL_MASK) != 0 ) {
+        stability_bound = 64 - 2 * count_stable_indexed( oppcol, opp_bits, my_bits, &edges );
+        if ( stability_bound < beta )
+          beta = stability_bound + 1;
+        if ( stability_bound <= alpha )
+          return alpha;
+      }
     }
   }
 #endif

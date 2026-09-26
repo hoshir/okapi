@@ -1490,7 +1490,7 @@ end_search_pvs( BitBoard my_bits,
         }
         if ( upper_bound < beta )
           beta = upper_bound + 1;
-        if ( edges.bits != 0 ) {
+        if ( edges.bits != 0 && (opp_bits & CENTRAL_MASK) != 0 ) {
           int s_full = count_stable_indexed( oppcol, opp_bits, my_bits, &edges );
           if ( level <= MAX_SEARCH_DEPTH )
             tls.stable_discs[oppcol][level] |= (oppcol == BLACKSQ ? last_black_stable : last_white_stable);
@@ -1524,7 +1524,7 @@ end_search_pvs( BitBoard my_bits,
         }
         if ( lower_bound > alpha )
           alpha = lower_bound;
-        if ( edges.bits != 0 ) {
+        if ( edges.bits != 0 && (my_bits & CENTRAL_MASK) != 0 ) {
           int s_full = count_stable_indexed( side_to_move, my_bits, opp_bits, &edges );
           if ( level <= MAX_SEARCH_DEPTH )
             tls.stable_discs[side_to_move][level] |= (side_to_move == BLACKSQ ? last_black_stable : last_white_stable);
