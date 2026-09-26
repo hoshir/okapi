@@ -1039,7 +1039,7 @@ dispatch_siblings( BitBoard my_bits, BitBoard opp_bits,
   to order candidate moves.
 */
 
-static void
+static int
 end_order_moves_presearch( int level,
 			   int pre_depth,
 			   int empties,
@@ -1057,7 +1057,8 @@ end_order_moves_presearch( int level,
 			   const int *proven,
 			   const int *proven_score,
 			   const HashEntry *mid_entry,
-			   int *etc_tried_ptr ) {
+			   int *etc_tried_ptr,
+			   int *etc_cutoff_score ) {
   int shallow_index;
   int etc_move = 0;
   int i, j;
@@ -1110,12 +1111,14 @@ end_order_moves_presearch( int level,
 	  hash2 ^= diff2;
 
 	  if ( (etc_entry.flags & ENDGAME_SCORE) &&
-	       (etc_entry.draft == empties - 1) &&
+	       (etc_entry.draft >= empties - 1) &&
 	       (etc_entry.selectivity <= selectivity) ) {
 	    if ( (etc_entry.flags & (UPPER_BOUND | EXACT_VALUE)) &&
 		 (etc_entry.eval <= -beta) ) {
 	      etc_move = move;
-	      break;
+	      *etc_tried_ptr = etc_move;
+	      *etc_cutoff_score = -etc_entry.eval;
+	      return TRUE;
 	    }
 	    else if ( (etc_entry.flags & (LOWER_BOUND | EXACT_VALUE)) &&
 		      (etc_entry.eval >= -curr_alpha) ) {
@@ -1397,6 +1400,7 @@ end_order_moves_presearch( int level,
       }
     }
   }
+  return FALSE;
 }
 
 /* Move bonuses without and with parity for the squares.
@@ -1687,6 +1691,36 @@ end_search_pvs( BitBoard my_bits,
 	}
 
 	end_move_list[old_sq].succ = sq;
+
+	if ( use_hash ) {
+	  unsigned int diff1, diff2;
+	  end_hash_diff( bb_flips, my_bits, side_to_move, sq, &diff1, &diff2 );
+	  hash1 ^= diff1;
+	  hash2 ^= diff2;
+	  prefetch_hash_endgame_key( hash2 );
+	  HashEntry etc_entry;
+	  find_hash( &etc_entry, ENDGAME_MODE );
+	  hash1 ^= diff1;
+	  hash2 ^= diff2;
+
+	  if ( (etc_entry.flags & ENDGAME_SCORE) &&
+	       (etc_entry.draft >= empties - 1) &&
+	       (etc_entry.selectivity <= selectivity) ) {
+	    if ( (etc_entry.flags & (UPPER_BOUND | EXACT_VALUE)) &&
+		 (etc_entry.eval <= -beta) ) {
+	      int score = -etc_entry.eval;
+	      end_store_tt( score, sq, in_alpha, beta, empties );
+	      if ( level == 0 )
+		end_best_root_move = sq;
+	      return score;
+	    }
+	    else if ( (etc_entry.flags & (LOWER_BOUND | EXACT_VALUE)) &&
+		      (etc_entry.eval >= -alpha) ) {
+	      goodness[moves] -= 10000;
+	    }
+	  }
+	}
+
 	move_order[moves] = sq;
 	moves++;
       }
@@ -1828,7 +1862,7 @@ end_search_pvs( BitBoard my_bits,
        Heuristic pre-search ordering + SMP parallel sibling dispatch
        --------------------------------------------------------------- */
     double node_val;
-    int i, j;
+    int i;
     int move;
     int move_index;
     int pre_depth;
@@ -1921,14 +1955,20 @@ end_search_pvs( BitBoard my_bits,
 	      hash2 ^= diff2;
 
 	      if ( (etc_entry.flags & ENDGAME_SCORE) &&
-		   (etc_entry.draft == empties - 1) &&
+		   (etc_entry.draft >= empties - 1) &&
 		   (etc_entry.selectivity <= selectivity) &&
 		   (etc_entry.flags & (UPPER_BOUND | EXACT_VALUE)) &&
 		   (etc_entry.eval <= -beta) ) {
-		for ( j = best_list_length - 1; j >= 1; j-- )
-		  best_list[j] = best_list[j - 1];
+		int score = -etc_entry.eval;
 		best_list[0] = cand_sq;
-		break;
+		if ( use_hash )
+		  add_hash_extended( ENDGAME_MODE, score, best_list,
+				     ENDGAME_SCORE | LOWER_BOUND, empties,
+				     *selective_cutoff ? selectivity : 0 );
+		if ( level == 0 )
+		  end_best_root_move = cand_sq;
+		disks_played = saved_disks_played;
+		return score;
 	      }
 	    }
 	  }
@@ -1947,12 +1987,24 @@ end_search_pvs( BitBoard my_bits,
       }
       else {
 	if ( !pre_search_done ) {
-	  end_order_moves_presearch( level, pre_depth, empties, side_to_move,
-				     my_bits, opp_bits, alpha, beta, curr_alpha,
-				     selectivity, use_hash,
-				     best_list, best_list_length,
-				     can_split, proven, proven_score,
-				     &mid_entry, &etc_tried );
+	  int etc_cutoff_score = 0;
+	  if ( end_order_moves_presearch( level, pre_depth, empties, side_to_move,
+					  my_bits, opp_bits, alpha, beta, curr_alpha,
+					  selectivity, use_hash,
+					  best_list, best_list_length,
+					  can_split, proven, proven_score,
+					  &mid_entry, &etc_tried,
+					  &etc_cutoff_score ) ) {
+	    best_list[0] = etc_tried;
+	    if ( use_hash )
+	      add_hash_extended( ENDGAME_MODE, etc_cutoff_score, best_list,
+				 ENDGAME_SCORE | LOWER_BOUND, empties,
+				 *selective_cutoff ? selectivity : 0 );
+	    if ( level == 0 )
+	      end_best_root_move = etc_tried;
+	    disks_played = saved_disks_played;
+	    return etc_cutoff_score;
+	  }
 	  pre_search_done = TRUE;
 	}
 
