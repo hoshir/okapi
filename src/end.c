@@ -710,7 +710,7 @@ end_unmake_move( int sq,
 #endif
 
 #ifndef MAX_2PLY_ETC_MOB
-#define MAX_2PLY_ETC_MOB   2
+#define MAX_2PLY_ETC_MOB   3
 #endif
 
 INLINE static int
@@ -1285,6 +1285,9 @@ end_order_moves_presearch( int empties,
   }
 
   /* Pass 2: Pure bitboard static move ordering across all candidate moves */
+  int refuted_moves[64];
+  int refuted_count = 0;
+
   for ( shallow_index = 0; shallow_index < MOVE_ORDER_SIZE; shallow_index++ ) {
     int already_checked;
 
@@ -1298,7 +1301,16 @@ end_order_moves_presearch( int empties,
 
     if ( !already_checked && !((my_bits | opp_bits) & square_mask[move]) &&
 	 (TestFlips_wrapper( move, my_bits, opp_bits ) > 0) ) {
-      if ( (can_split && proven[move] && (proven_score[move] <= curr_alpha)) || etc_demoted[move] ) {
+      if ( can_split && proven[move] && (proven_score[move] <= curr_alpha) ) {
+	evals[disks_played][move] = -INFINITE_EVAL;
+	move_list[disks_played][move_count[disks_played]++] = move;
+	continue;
+      }
+      if ( etc_demoted[move] ) {
+	if ( beta == curr_alpha + 1 ) {
+	  refuted_moves[refuted_count++] = move;
+	  continue;
+	}
 	evals[disks_played][move] = -INFINITE_EVAL;
 	move_list[disks_played][move_count[disks_played]++] = move;
 	continue;
@@ -1338,6 +1350,12 @@ end_order_moves_presearch( int empties,
       evals[disks_played][move] = move_score;
       move_list[disks_played][move_count[disks_played]++] = move;
     }
+  }
+
+  if ( beta == curr_alpha + 1 && move_count[disks_played] == 0 && best_list_length == 0 && refuted_count > 0 ) {
+    int fb_move = refuted_moves[0];
+    evals[disks_played][fb_move] = -INFINITE_EVAL;
+    move_list[disks_played][move_count[disks_played]++] = fb_move;
   }
 
   return FALSE;
@@ -1570,6 +1588,11 @@ end_search_pvs( BitBoard my_bits,
     int sq, old_sq, best_sq = 0;
     int move_order[64];
     int goodness[64];
+    int refuted_moves[64];
+    BitBoard refuted_new_my[64];
+    BitBoard refuted_new_opp[64];
+    int refuted_flipped[64];
+    int refuted_count = 0;
     unsigned int diff1, diff2;
 
     for ( old_sq = END_MOVE_LIST_HEAD, sq = end_move_list[old_sq].succ;
@@ -1629,6 +1652,7 @@ end_search_pvs( BitBoard my_bits,
 	  hash2 ^= diff2;
 
 	  int etc1_demoted = FALSE;
+	  int move_refuted = FALSE;
 	  if ( (etc_entry.flags & ENDGAME_SCORE) &&
 	       (etc_entry.draft >= empties - 1) &&
 	       (etc_entry.selectivity <= selectivity) ) {
@@ -1644,6 +1668,7 @@ end_search_pvs( BitBoard my_bits,
 		      (etc_entry.eval >= -alpha) ) {
 	      move_score -= 10000;
 	      etc1_demoted = TRUE;
+	      move_refuted = TRUE;
 	    }
 	  }
 
@@ -1660,7 +1685,17 @@ end_search_pvs( BitBoard my_bits,
 	    }
 	    else if ( etc2_res == ETC_2PLY_REFUTED ) {
 	      move_score -= 10000;
+	      move_refuted = TRUE;
 	    }
+	  }
+
+	  if ( move_refuted && (beta == alpha + 1) && (sq != hash_move) ) {
+	    refuted_moves[refuted_count] = sq;
+	    refuted_new_my[refuted_count] = bb_flips;
+	    refuted_new_opp[refuted_count] = new_opp_bits;
+	    refuted_flipped[refuted_count] = flipped;
+	    refuted_count++;
+	    continue;
 	  }
 	}
 
@@ -1678,9 +1713,23 @@ end_search_pvs( BitBoard my_bits,
       }
     }
 
-    if ( moves == 0 )
-      return end_handle_pass( my_bits, opp_bits, alpha, beta, oppcol,
-			      empties, disc_diff, pass_legal, level );
+    if ( moves == 0 ) {
+      if ( refuted_count > 0 ) {
+	sq = refuted_moves[0];
+	move_order[0] = sq;
+	goodness[0] = -10000;
+	best_value = -10000;
+	best_index = 0;
+	best_new_my_bits = refuted_new_my[0];
+	best_new_opp_bits = refuted_new_opp[0];
+	best_flipped = refuted_flipped[0];
+	moves = 1;
+      }
+      else {
+	return end_handle_pass( my_bits, opp_bits, alpha, beta, oppcol,
+				empties, disc_diff, pass_legal, level );
+      }
+    }
 
     /* Primary move: full window [-beta, -alpha] */
     sq = move_order[best_index];
