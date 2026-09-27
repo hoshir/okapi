@@ -713,6 +713,166 @@ end_unmake_move( int sq,
 #define MAX_2PLY_ETC_MOB   3
 #endif
 
+#define FORCED_NONE     0
+#define FORCED_REFUTED  1
+#define FORCED_CUTOFF   2
+
+/*
+  PROBE_FORCED_REPLY_CUTOFF
+  Topology-driven forced reply follow-through pruning (PRUN-007).
+  When candidate move leaves opponent with exactly 1 legal reply (B = 1),
+  the sub-path is non-branching (forced reply / 一本道).
+  Without artificial depth thresholds, rolls out along the forced corridor
+  using pure 64-bit bitboard state in CPU registers:
+  - Advances moves along the corridor (including passes).
+  - Probes Transposition Table at each intermediate state for instant beta-cutoff or fail-low refutation.
+  - Zero mutation of end_move_list or global state (100% thread-safe and non-invasive).
+*/
+
+INLINE static int
+probe_forced_reply_cutoff( int cand_sq,
+			   BitBoard child_my_bits,
+			   BitBoard child_opp_bits,
+			   unsigned int diff1_my,
+			   unsigned int diff2_my,
+			   int side_to_move,
+			   int empties,
+			   int alpha,
+			   int beta,
+			   int selectivity,
+			   int *cutoff_score ) {
+  (void) cand_sq;
+  BitBoard opp_moves = bitboard_moves( child_opp_bits, child_my_bits );
+  int opp_mob = non_iterative_popcount( opp_moves );
+
+  if ( opp_mob != 1 )
+    return FORCED_NONE;
+
+  int cur_side = OPP( side_to_move );
+  BitBoard cur_my_bits = child_opp_bits;
+  BitBoard cur_opp_bits = child_my_bits;
+  unsigned int cum_diff1 = diff1_my;
+  unsigned int cum_diff2 = diff2_my;
+  int cur_empties = empties - 1;
+  int k = 1;
+  int pass_legal = TRUE;
+
+  while ( k < 16 && cur_empties > 0 ) {
+    BitBoard cur_moves = bitboard_moves( cur_my_bits, cur_opp_bits );
+    int cur_mob = non_iterative_popcount( cur_moves );
+
+    if ( cur_mob == 1 ) {
+      int sq = square_of_bit[FIRST_BIT( cur_moves )];
+      BitBoard new_my_bits;
+      int flipped = TestFlips_bitboard_to( sq, cur_my_bits, cur_opp_bits, &new_my_bits );
+      if ( flipped == 0 )
+	break;
+
+      unsigned int d1, d2;
+      end_hash_diff( new_my_bits, cur_my_bits, cur_side, sq, &d1, &d2 );
+      cum_diff1 ^= d1;
+      cum_diff2 ^= d2;
+
+      BitBoard next_my = cur_opp_bits & ~new_my_bits;
+      BitBoard next_opp = new_my_bits;
+      cur_my_bits = next_my;
+      cur_opp_bits = next_opp;
+      cur_side = OPP( cur_side );
+      cur_empties--;
+      k++;
+      pass_legal = TRUE;
+
+      /* Edge stability check (PRUN-006): immediate geometric cutoff or refutation */
+      if ( square_mask[sq] & BORDER_MASK ) {
+	EdgeIndices edges;
+	int s_edge = count_edge_stable_indexed( OPP( cur_side ), cur_opp_bits, cur_my_bits, &edges );
+	int bound = 2 * s_edge - 64;
+	if ( OPP( cur_side) == side_to_move ) {
+	  /* side_to_move score is >= bound */
+	  if ( bound >= beta ) {
+	    *cutoff_score = bound;
+	    return FORCED_CUTOFF;
+	  }
+	}
+	else {
+	  /* Opponent score is >= bound => side_to_move score is <= -bound */
+	  if ( -bound <= alpha ) {
+	    return FORCED_REFUTED;
+	  }
+	}
+      }
+
+      /* Probe Transposition Table at intermediate position P_k */
+      hash1 ^= cum_diff1;
+      hash2 ^= cum_diff2;
+      prefetch_hash_endgame_key( hash2 );
+      HashEntry g_entry;
+      find_hash( &g_entry, ENDGAME_MODE );
+      hash1 ^= cum_diff1;
+      hash2 ^= cum_diff2;
+
+      if ( (g_entry.flags & ENDGAME_SCORE) &&
+	   (g_entry.draft >= cur_empties) &&
+	   (g_entry.selectivity <= selectivity) ) {
+	if ( cur_side == side_to_move ) {
+	  /* Even ply: my turn (side_to_move) */
+	  if ( (g_entry.flags & (LOWER_BOUND | EXACT_VALUE)) && (g_entry.eval >= beta) ) {
+	    *cutoff_score = g_entry.eval;
+	    return FORCED_CUTOFF;
+	  }
+	  if ( (g_entry.flags & (UPPER_BOUND | EXACT_VALUE)) && (g_entry.eval <= alpha) ) {
+	    return FORCED_REFUTED;
+	  }
+	}
+	else {
+	  /* Odd ply: opponent turn (OPP(side_to_move)). Score is -eval */
+	  if ( (g_entry.flags & (UPPER_BOUND | EXACT_VALUE)) && (-g_entry.eval >= beta) ) {
+	    *cutoff_score = -g_entry.eval;
+	    return FORCED_CUTOFF;
+	  }
+	  if ( (g_entry.flags & (LOWER_BOUND | EXACT_VALUE)) && (-g_entry.eval <= alpha) ) {
+	    return FORCED_REFUTED;
+	  }
+	}
+      }
+    }
+    else if ( cur_mob == 0 ) {
+      if ( !pass_legal ) {
+	/* Double pass: game over */
+	int s0_discs = non_iterative_popcount( (cur_side == side_to_move) ? cur_my_bits : cur_opp_bits );
+	int s1_discs = non_iterative_popcount( (cur_side == side_to_move) ? cur_opp_bits : cur_my_bits );
+	int term_diff = s0_discs - s1_discs;
+	int term_score = (term_diff > 0) ? (term_diff + cur_empties)
+		       : (term_diff < 0) ? (term_diff - cur_empties) : 0;
+	if ( term_score >= beta ) {
+	  *cutoff_score = term_score;
+	  return FORCED_CUTOFF;
+	}
+	if ( term_score <= alpha ) {
+	  return FORCED_REFUTED;
+	}
+	break;
+      }
+
+      /* Single pass: switch side and continue */
+      cum_diff1 ^= hash_flip_color1;
+      cum_diff2 ^= hash_flip_color2;
+      BitBoard temp = cur_my_bits;
+      cur_my_bits = cur_opp_bits;
+      cur_opp_bits = temp;
+      cur_side = OPP( cur_side );
+      k++;
+      pass_legal = FALSE;
+    }
+    else {
+      /* Branching point reached (cur_mob >= 2): corridor ends */
+      break;
+    }
+  }
+
+  return FORCED_NONE;
+}
+
 INLINE static int
 end_probe_2ply_etc( int sq,
 		    BitBoard child_my_bits,
@@ -725,11 +885,23 @@ end_probe_2ply_etc( int sq,
 		    int beta,
 		    int selectivity,
 		    int *cutoff_score ) {
-  if ( empties < MIN_2PLY_ETC_DEPTH )
-    return ETC_2PLY_NONE;
-
   BitBoard opp_moves = bitboard_moves( child_opp_bits, child_my_bits );
   int opp_mob = non_iterative_popcount( opp_moves );
+
+  if ( opp_mob == 1 ) {
+    int res = probe_forced_reply_cutoff( sq, child_my_bits, child_opp_bits,
+					 diff1_my, diff2_my, side_to_move,
+					 empties, alpha, beta, selectivity,
+					 cutoff_score );
+    if ( res == FORCED_CUTOFF )
+      return ETC_2PLY_CUTOFF;
+    if ( res == FORCED_REFUTED )
+      return ETC_2PLY_REFUTED;
+    return ETC_2PLY_NONE;
+  }
+
+  if ( empties < MIN_2PLY_ETC_DEPTH )
+    return ETC_2PLY_NONE;
 
   if ( opp_mob < 1 || opp_mob > MAX_2PLY_ETC_MOB )
     return ETC_2PLY_NONE;
