@@ -67,7 +67,7 @@
 #endif
 
 #define LOW_LEVEL_DEPTH              7
-#define FASTEST_FIRST_DEPTH          13
+#define FASTEST_FIRST_DEPTH          14
 #define HASH_DEPTH                   (LOW_LEVEL_DEPTH + 1)
 
 #define VERY_HIGH_EVAL               1000000
