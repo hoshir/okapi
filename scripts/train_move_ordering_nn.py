@@ -20,11 +20,144 @@ import torch.optim as optim
 SCRIPT_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(SCRIPT_DIR))
 
-from distill_move_ordering_tree import (
-    parse_wthor_games, OthelloBoard, popcount, generate_all_c,
-    INNER_MASK, MASK_64, CORNER_MASK, CORNERS, X_MAP, C_MAP,
-    BLACK, WHITE, EMPTY, get_quadrant
-)
+# Bitboard helpers
+INNER_MASK = 0x7E7E7E7E7E7E7E7E
+MASK_64 = 0xFFFFFFFFFFFFFFFF
+CORNER_MASK = (1 << 0) | (1 << 7) | (1 << 56) | (1 << 63)
+
+# Coordinates
+CORNERS = {(0, 0), (0, 7), (7, 0), (7, 7)}
+X_MAP = {
+    (1, 1): (0, 0),
+    (1, 6): (0, 7),
+    (6, 1): (7, 0),
+    (6, 6): (7, 7),
+}
+C_MAP = {
+    (0, 1): (0, 0), (1, 0): (0, 0),
+    (0, 6): (0, 7), (1, 7): (0, 7),
+    (6, 0): (7, 0), (7, 1): (7, 0),
+    (6, 7): (7, 7), (7, 6): (7, 7),
+}
+
+DIRECTIONS = [
+    (-1, -1), (-1, 0), (-1, 1),
+    ( 0, -1),          ( 0, 1),
+    ( 1, -1), ( 1, 0), ( 1, 1),
+]
+
+BLACK = 1
+WHITE = 2
+EMPTY = 0
+
+def get_quadrant(r, c):
+    return (0 if r < 4 else 2) + (0 if c < 4 else 1)
+
+def popcount(x):
+    return bin(x).count("1")
+
+def generate_all_c(my_bits, opp_bits):
+    opp_inner = opp_bits & INNER_MASK
+    moves = 0
+    for o, shift in [(opp_inner, 1), (opp_bits, 8), (opp_inner, 7), (opp_inner, 9)]:
+        flip = (my_bits >> shift) & o
+        flip |= (flip >> shift) & o
+        adj = o & (o >> shift)
+        flip |= (flip >> (2 * shift)) & adj
+        flip |= (flip >> (2 * shift)) & adj
+        moves |= flip >> shift
+        
+        flip = ((my_bits << shift) & MASK_64) & o
+        flip |= ((flip << shift) & MASK_64) & o
+        adj = o & ((o << shift) & MASK_64)
+        flip |= ((flip << (2 * shift)) & MASK_64) & adj
+        flip |= ((flip << (2 * shift)) & MASK_64) & adj
+        moves |= (flip << shift) & MASK_64
+        
+    moves &= ~(my_bits | opp_bits) & MASK_64
+    return moves
+
+class OthelloBoard:
+    def __init__(self):
+        self.board = [[EMPTY] * 8 for _ in range(8)]
+        self.board[3][3] = WHITE
+        self.board[3][4] = BLACK
+        self.board[4][3] = BLACK
+        self.board[4][4] = WHITE
+        self.side_to_move = BLACK
+        self.disc_count = 4
+
+    def copy(self):
+        b = OthelloBoard()
+        b.board = [row[:] for row in self.board]
+        b.side_to_move = self.side_to_move
+        b.disc_count = self.disc_count
+        return b
+
+    def get_flips(self, r, c, color):
+        if self.board[r][c] != EMPTY:
+            return []
+        opp = WHITE if color == BLACK else BLACK
+        all_flips = []
+        for dr, dc in DIRECTIONS:
+            flips = []
+            cr, cc = r + dr, c + dc
+            while 0 <= cr < 8 and 0 <= cc < 8 and self.board[cr][cc] == opp:
+                flips.append((cr, cc))
+                cr += dr
+                cc += dc
+            if 0 <= cr < 8 and 0 <= cc < 8 and self.board[cr][cc] == color and len(flips) > 0:
+                all_flips.extend(flips)
+        return all_flips
+
+    def legal_moves(self, color):
+        moves = []
+        for r in range(8):
+            for c in range(8):
+                if self.board[r][c] == EMPTY and len(self.get_flips(r, c, color)) > 0:
+                    moves.append((r, c))
+        return moves
+
+    def make_move(self, r, c):
+        flips = self.get_flips(r, c, self.side_to_move)
+        if not flips:
+            return False
+        for fr, fc in flips:
+            self.board[fr][fc] = self.side_to_move
+        self.board[r][c] = self.side_to_move
+        self.disc_count += 1
+        opp = WHITE if self.side_to_move == BLACK else BLACK
+        if len(self.legal_moves(opp)) > 0:
+            self.side_to_move = opp
+        elif len(self.legal_moves(self.side_to_move)) > 0:
+            pass
+        else:
+            self.side_to_move = EMPTY
+        return True
+
+def parse_wthor_games(wthor_path):
+    games = []
+    with open(wthor_path, "rb") as f:
+        header = f.read(16)
+        if len(header) < 16:
+            return games
+        n_games = header[4] | (header[5] << 8) | (header[6] << 16) | (header[7] << 24)
+        record_size = 68
+        for _ in range(n_games):
+            rec = f.read(record_size)
+            if len(rec) < record_size:
+                break
+            real_score = rec[6]
+            theo_score = rec[7]
+            moves = []
+            for b in rec[8:]:
+                if b == 0:
+                    break
+                col = (b % 10) - 1
+                row = (b // 10) - 1
+                moves.append((row, col))
+            games.append((real_score, theo_score, moves))
+    return games
 
 FEATURE_NAMES = [
     "raw_opp_mob",        # 0: direct legal replies of opponent
@@ -51,9 +184,9 @@ def bitboard_neighbors(b):
 def bitboard_frontier(discs, empty):
     return popcount(bitboard_neighbors(discs) & empty)
 
-def extract_nn_dataset(wthor_dir="data/wthor", min_empties=8, max_empties=16, max_games=None):
-    wthor_files = sorted(Path(wthor_dir).glob("WTH_20*.wtb"))
-    print(f"Scanning {len(wthor_files)} WTHOR files in {wthor_dir}...")
+def extract_nn_dataset(wthor_dir="data/wthor", min_empties=8, max_empties=16, max_games=None, pattern="WTH_*.wtb"):
+    wthor_files = sorted(Path(wthor_dir).glob(pattern))
+    print(f"Scanning {len(wthor_files)} WTHOR files matching '{pattern}' in {wthor_dir}...")
     positions = []
     total_games = 0
     exact_games = 0
@@ -198,20 +331,22 @@ def evaluate_model_top1(positions, model_fn):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--wthor-dir", default="data/wthor")
-    parser.add_argument("--max-games", type=int, default=15000)
+    parser.add_argument("--pattern", default="WTH_*.wtb", help="Glob pattern for WTHOR files")
+    parser.add_argument("--max-games", type=int, default=None, help="Max games to parse (default: unlimited)")
     parser.add_argument("--save-cache", default="data/nn_move_ordering_cache.npz")
+    parser.add_argument("--recompute", action="store_true", help="Force recomputing dataset cache")
     parser.add_argument("--epochs", type=int, default=15)
     parser.add_argument("--batch-size", type=int, default=64)
     parser.add_argument("--lr", type=float, default=0.003)
     args = parser.parse_args()
 
-    if os.path.exists(args.save_cache):
+    if os.path.exists(args.save_cache) and not args.recompute:
         print(f"Loading cached positions from {args.save_cache}...")
         cache = np.load(args.save_cache, allow_pickle=True)
         positions = list(cache["positions"])
         print(f"Loaded {len(positions)} positions from cache.")
     else:
-        positions = extract_nn_dataset(args.wthor_dir, min_empties=8, max_empties=16, max_games=args.max_games)
+        positions = extract_nn_dataset(args.wthor_dir, min_empties=8, max_empties=16, max_games=args.max_games, pattern=args.pattern)
         if args.save_cache:
             print(f"Saving {len(positions)} positions to {args.save_cache}...")
             np.savez_compressed(args.save_cache, positions=positions)
