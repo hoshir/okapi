@@ -1,8 +1,43 @@
 {
+  "verdict": "NEUTRAL",
+  "reason": "Node counts remained virtually unchanged (-0.10% within [-0.5%, +0.5%]).",
+  "tests_passed": true,
+  "all_correct": true,
   "mode": "screen",
   "threads": 1,
   "hash_bits": 22,
-  "created_at": "2026-09-27T16:19:20Z",
+  "simplification_mode": false,
+  "heavy_threshold": 3.0,
+  "totals": {
+    "total_nodes": 1906971380,
+    "total_time": 77.9
+  },
+  "summary": {
+    "total_candidate_nodes": 1906971380,
+    "total_baseline_nodes": 1908789786,
+    "total_node_delta_pct": -0.1,
+    "total_candidate_time": 77.9,
+    "total_baseline_time": 84.7,
+    "total_time_delta_pct": -8.03
+  },
+  "comparison": {
+    "FFO #45": {
+      "candidate_nodes": 374408573,
+      "baseline_nodes": 376226979,
+      "node_delta_pct": -0.48,
+      "candidate_time": 14.1,
+      "baseline_time": 15.1,
+      "time_delta_pct": -6.62
+    },
+    "FFO #50": {
+      "candidate_nodes": 1532562807,
+      "baseline_nodes": 1532562807,
+      "node_delta_pct": 0.0,
+      "candidate_time": 63.8,
+      "baseline_time": 69.6,
+      "time_delta_pct": -8.33
+    }
+  },
   "results": {
     "FFO #45": {
       "correct": true,
@@ -12,9 +47,9 @@
       "expected_moves": [
         "b2"
       ],
-      "nodes": 376226979,
-      "time_sec": 15.1,
-      "nps": 24895222,
+      "nodes": 374408573,
+      "time_sec": 14.1,
+      "nps": 26492373,
       "error": null
     },
     "FFO #50": {
@@ -26,8 +61,8 @@
         "d8"
       ],
       "nodes": 1532562807,
-      "time_sec": 69.6,
-      "nps": 22006690,
+      "time_sec": 63.8,
+      "nps": 24022560,
       "error": null
     }
   }
