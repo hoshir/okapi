@@ -1347,6 +1347,13 @@ end_order_moves_presearch( int empties,
       int my_edge_stable = count_edge_stable_indexed( side_to_move, child_my_bits, new_opp_bits, &edges );
       move_score += 32 * my_edge_stable;
 
+      int lower_bound = 2 * my_edge_stable - 64;
+      if ( lower_bound >= beta ) {
+	*etc_tried_ptr = move;
+	*etc_cutoff_score = (empties <= FASTEST_FIRST_DEPTH) ? lower_bound : beta;
+	return TRUE;
+      }
+
       evals[disks_played][move] = move_score;
       move_list[disks_played][move_count[disks_played]++] = move;
     }
@@ -1606,8 +1613,24 @@ end_search_pvs( BitBoard my_bits,
 	end_move_list[old_sq].succ = end_move_list[sq].succ;
 
 	int move_score = 0;
-	if ( sq == hash_move )
+	if ( sq == hash_move ) {
 	  move_score += HASH_MOVE_BONUS;
+	  if ( square_mask[sq] & BORDER_MASK ) {
+	    BitBoard child_my_bits = my_bits | square_mask[sq] | bb_flips;
+	    EdgeIndices edges;
+	    int my_edge_stable = count_edge_stable_indexed( side_to_move, child_my_bits, new_opp_bits, &edges );
+	    int lower_bound = 2 * my_edge_stable - 64;
+	    if ( lower_bound >= beta ) {
+	      end_move_list[old_sq].succ = sq;
+	      end_store_tt( lower_bound, sq, in_alpha, beta, empties );
+	      pv_depth[level] = level + 1;
+	      pv[level][level] = sq;
+	      if ( level == 0 )
+		end_best_root_move = sq;
+	      return lower_bound;
+	    }
+	  }
+	}
 	else {
 	  BitBoard child_my_bits = my_bits | square_mask[sq] | bb_flips;
 	  BitBoard opp_moves = generate_all_c( new_opp_bits, child_my_bits );
@@ -1636,6 +1659,17 @@ end_search_pvs( BitBoard my_bits,
 	  EdgeIndices edges;
 	  int my_edge_stable = count_edge_stable_indexed( side_to_move, child_my_bits, new_opp_bits, &edges );
 	  move_score += 32 * my_edge_stable;
+
+	  int lower_bound = 2 * my_edge_stable - 64;
+	  if ( lower_bound >= beta ) {
+	    end_move_list[old_sq].succ = sq;
+	    end_store_tt( lower_bound, sq, in_alpha, beta, empties );
+	    pv_depth[level] = level + 1;
+	    pv[level][level] = sq;
+	    if ( level == 0 )
+	      end_best_root_move = sq;
+	    return lower_bound;
+	  }
 	}
 
 	end_move_list[old_sq].succ = sq;
@@ -2014,6 +2048,8 @@ end_search_pvs( BitBoard my_bits,
 	      add_hash_extended( ENDGAME_MODE, etc_cutoff_score, best_list,
 				 ENDGAME_SCORE | LOWER_BOUND, empties,
 				 *selective_cutoff ? selectivity : 0 );
+	    pv_depth[level] = level + 1;
+	    pv[level][level] = etc_tried;
 	    if ( level == 0 )
 	      end_best_root_move = etc_tried;
 	    disks_played = saved_disks_played;
@@ -2057,6 +2093,27 @@ end_search_pvs( BitBoard my_bits,
       if ( level + 1 <= MAX_SEARCH_DEPTH ) {
 	tls.stable_discs[BLACKSQ][level + 1] = tls.stable_discs[BLACKSQ][level];
 	tls.stable_discs[WHITESQ][level + 1] = tls.stable_discs[WHITESQ][level];
+      }
+
+      if ( square_mask[move] & BORDER_MASK ) {
+	EdgeIndices edges;
+	int s_edge = count_edge_stable_indexed( side_to_move, new_my_bits, new_opp_bits, &edges );
+	int lower_bound = 2 * s_edge - 64;
+	if ( lower_bound >= beta ) {
+	  best = (empties <= FASTEST_FIRST_DEPTH) ? lower_bound : beta;
+	  best_list[0] = move;
+	  if ( use_hash )
+	    add_hash_extended( ENDGAME_MODE, best, best_list,
+			       ENDGAME_SCORE | LOWER_BOUND, empties,
+			       *selective_cutoff ? selectivity : 0 );
+	  pv_depth[level] = level + 1;
+	  pv[level][level] = move;
+	  if ( level == 0 )
+	    end_best_root_move = move;
+	  end_unmake_move( move, diff1, diff2, pred, succ );
+	  disks_played = saved_disks_played;
+	  return best;
+	}
       }
 
       int new_disc_diff = -disc_diff - 2 * flipped - 1;
