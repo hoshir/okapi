@@ -9,8 +9,8 @@
   "simplification_mode": false,
   "heavy_threshold": 3.0,
   "totals": {
-    "total_nodes": 1499522392,
-    "total_time": 13.7
+    "total_nodes": 1502174374,
+    "total_time": 13.2
   },
   "summary": null,
   "comparison": null,
@@ -23,9 +23,9 @@
       "expected_moves": [
         "b2"
       ],
-      "nodes": 362893420,
-      "time_sec": 3.2,
-      "nps": 112806987,
+      "nodes": 364568898,
+      "time_sec": 3.1,
+      "nps": 116796335,
       "error": null
     },
     "FFO #50": {
@@ -36,9 +36,9 @@
       "expected_moves": [
         "d8"
       ],
-      "nodes": 1136628972,
-      "time_sec": 10.5,
-      "nps": 108254801,
+      "nodes": 1137605476,
+      "time_sec": 10.1,
+      "nps": 112108550,
       "error": null
     }
   }

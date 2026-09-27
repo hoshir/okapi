@@ -9,8 +9,8 @@
   "simplification_mode": false,
   "heavy_threshold": 3.0,
   "totals": {
-    "total_nodes": 2562174730,
-    "total_time": 27.4
+    "total_nodes": 2508398022,
+    "total_time": 24.6
   },
   "summary": null,
   "comparison": null,
@@ -23,9 +23,9 @@
       "expected_moves": [
         "a2"
       ],
-      "nodes": 15647432,
+      "nodes": 16014297,
       "time_sec": 0.2,
-      "nps": 74741857,
+      "nps": 102609707,
       "error": null
     },
     "FFO #41": {
@@ -36,9 +36,9 @@
       "expected_moves": [
         "h4"
       ],
-      "nodes": 21148622,
-      "time_sec": 0.4,
-      "nps": 54478816,
+      "nodes": 21174272,
+      "time_sec": 0.3,
+      "nps": 63470897,
       "error": null
     },
     "FFO #42": {
@@ -49,9 +49,9 @@
       "expected_moves": [
         "g2"
       ],
-      "nodes": 25685059,
+      "nodes": 24134989,
       "time_sec": 0.4,
-      "nps": 65915407,
+      "nps": 68638043,
       "error": null
     },
     "FFO #45": {
@@ -62,9 +62,9 @@
       "expected_moves": [
         "b2"
       ],
-      "nodes": 361490540,
-      "time_sec": 3.3,
-      "nps": 109777245,
+      "nodes": 363101439,
+      "time_sec": 3.1,
+      "nps": 115854018,
       "error": null
     },
     "FFO #48": {
@@ -75,9 +75,9 @@
       "expected_moves": [
         "f6"
       ],
-      "nodes": 186499018,
+      "nodes": 177117316,
       "time_sec": 2.2,
-      "nps": 84254385,
+      "nps": 80814562,
       "error": null
     },
     "FFO #49": {
@@ -88,9 +88,9 @@
       "expected_moves": [
         "e1"
       ],
-      "nodes": 395130071,
-      "time_sec": 4.5,
-      "nps": 87770696,
+      "nodes": 367966730,
+      "time_sec": 3.7,
+      "nps": 99837405,
       "error": null
     },
     "FFO #50": {
@@ -101,9 +101,9 @@
       "expected_moves": [
         "d8"
       ],
-      "nodes": 1124156507,
-      "time_sec": 10.7,
-      "nps": 105027119,
+      "nodes": 1138911523,
+      "time_sec": 10.1,
+      "nps": 112330910,
       "error": null
     },
     "FFO #52": {
@@ -114,9 +114,9 @@
       "expected_moves": [
         "a3"
       ],
-      "nodes": 432417481,
-      "time_sec": 5.7,
-      "nps": 75924881,
+      "nodes": 399977456,
+      "time_sec": 4.6,
+      "nps": 87006795,
       "error": null
     }
   }

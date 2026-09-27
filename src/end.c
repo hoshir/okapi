@@ -80,6 +80,49 @@
    This means more aggressive use of fastest first. */
 #define WIPEOUT_THRESHOLD            60
 #define REGION_PARITY_BONUS          64
+#define HASH_MOVE_BONUS              65536
+#define X_SQUARE_PENALTY             128
+
+static const unsigned char is_x_square[100] = {
+  0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+  0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+  0, 0, 1, 0, 0, 0, 0, 1, 0, 0,  /* 22=B2, 27=G2 */
+  0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+  0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+  0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+  0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+  0, 0, 1, 0, 0, 0, 0, 1, 0, 0,  /* 72=B7, 77=G7 */
+  0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+  0, 0, 0, 0, 0, 0, 0, 0, 0, 0
+};
+
+static const unsigned char is_c_square[100] = {
+  0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+  0, 0, 1, 0, 0, 0, 0, 1, 0, 0,  /* 12=B1, 17=G1 */
+  0, 1, 0, 0, 0, 0, 0, 0, 1, 0,  /* 21=A2, 28=H2 */
+  0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+  0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+  0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+  0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+  0, 1, 0, 0, 0, 0, 0, 0, 1, 0,  /* 71=A7, 78=H7 */
+  0, 0, 1, 0, 0, 0, 0, 1, 0, 0,  /* 82=B8, 87=G8 */
+  0, 0, 0, 0, 0, 0, 0, 0, 0, 0
+};
+
+static const unsigned char adjacent_corner[100] = {
+  0,  0,  0, 0, 0, 0, 0,  0,  0, 0,
+  0,  0, 11, 0, 0, 0, 0, 18,  0, 0,  /* 12->11, 17->18 */
+  0, 11, 11, 0, 0, 0, 0, 18, 18, 0,  /* 21->11, 22->11, 27->18, 28->18 */
+  0,  0,  0, 0, 0, 0, 0,  0,  0, 0,
+  0,  0,  0, 0, 0, 0, 0,  0,  0, 0,
+  0,  0,  0, 0, 0, 0, 0,  0,  0, 0,
+  0,  0,  0, 0, 0, 0, 0,  0,  0, 0,
+  0, 81, 81, 0, 0, 0, 0, 88, 88, 0,  /* 71->81, 72->81, 77->88, 78->88 */
+  0,  0, 81, 0, 0, 0, 0, 88,  0, 0,  /* 82->81, 87->88 */
+  0,  0,  0, 0, 0, 0, 0,  0,  0, 0
+};
+
+
 
 /* Use stability pruning? */
 #ifndef USE_STABILITY
@@ -1778,10 +1821,29 @@ end_search_pvs( BitBoard my_bits,
 
 	int move_score = 0;
 	if ( sq == hash_move )
-	  move_score += 128;
-	if ( quadrant_mask[sq] & region_parity )
-	  move_score += REGION_PARITY_BONUS;
-	move_score -= weighted_mobility( new_opp_bits, bb_flips );
+	  move_score += HASH_MOVE_BONUS;
+	else {
+	  BitBoard opp_moves = generate_all_c( new_opp_bits, bb_flips );
+	  int raw_opp_mob = non_iterative_popcount( opp_moves );
+	  int opp_corner_moves = non_iterative_popcount( opp_moves & 0x8100000000000081ull );
+	  int weighted_mob = 128 * (raw_opp_mob + opp_corner_moves);
+
+	  if ( quadrant_mask[sq] & region_parity )
+	    move_score += REGION_PARITY_BONUS;
+	  if ( is_x_square[sq] ) {
+	    int c_sq = adjacent_corner[sq];
+	    if ( !( (my_bits | opp_bits) & square_mask[c_sq] ) )
+	      move_score -= X_SQUARE_PENALTY;
+	  }
+	  else if ( is_c_square[sq] && opp_corner_moves > 0 ) {
+	    int c_sq = adjacent_corner[sq];
+	    if ( !( (my_bits | opp_bits) & square_mask[c_sq] ) )
+	      move_score -= 256;
+	  }
+	  if ( raw_opp_mob == 0 )
+	    move_score += 512;
+	  move_score -= weighted_mob;
+	}
 
 	end_move_list[old_sq].succ = sq;
 
