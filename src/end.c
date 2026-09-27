@@ -1843,6 +1843,9 @@ end_search_pvs( BitBoard my_bits,
 	  if ( raw_opp_mob == 0 )
 	    move_score += 512;
 	  move_score -= weighted_mob;
+	  BitBoard empty = ~(bb_flips | new_opp_bits);
+	  int pot_mob = bitboard_frontier( bb_flips, empty );
+	  move_score -= 32 * pot_mob;
 	}
 
 	end_move_list[old_sq].succ = sq;
