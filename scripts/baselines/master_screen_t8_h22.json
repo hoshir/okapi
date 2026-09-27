@@ -1,8 +1,43 @@
 {
+  "verdict": "REJECT_REGRESSION",
+  "reason": "Deterministic node count regressed by +1.36% (> +0.5% tolerance).",
+  "tests_passed": true,
+  "all_correct": true,
   "mode": "screen",
   "threads": 8,
   "hash_bits": 22,
-  "created_at": "2026-09-27T16:19:52Z",
+  "simplification_mode": false,
+  "heavy_threshold": 3.0,
+  "totals": {
+    "total_nodes": 2060554803,
+    "total_time": 19.9
+  },
+  "summary": {
+    "total_candidate_nodes": 2060554803,
+    "total_baseline_nodes": 2032969981,
+    "total_node_delta_pct": 1.36,
+    "total_candidate_time": 19.9,
+    "total_baseline_time": 32.4,
+    "total_time_delta_pct": -38.58
+  },
+  "comparison": {
+    "FFO #45": {
+      "candidate_nodes": 449108181,
+      "baseline_nodes": 449524278,
+      "node_delta_pct": -0.09,
+      "candidate_time": 4.4,
+      "baseline_time": 6.4,
+      "time_delta_pct": -31.25
+    },
+    "FFO #50": {
+      "candidate_nodes": 1611446622,
+      "baseline_nodes": 1583445703,
+      "node_delta_pct": 1.77,
+      "candidate_time": 15.5,
+      "baseline_time": 26.0,
+      "time_delta_pct": -40.38
+    }
+  },
   "results": {
     "FFO #45": {
       "correct": true,
@@ -12,9 +47,9 @@
       "expected_moves": [
         "b2"
       ],
-      "nodes": 449524278,
-      "time_sec": 6.4,
-      "nps": 70337608,
+      "nodes": 449108181,
+      "time_sec": 4.4,
+      "nps": 101966661,
       "error": null
     },
     "FFO #50": {
@@ -25,9 +60,9 @@
       "expected_moves": [
         "d8"
       ],
-      "nodes": 1583445703,
-      "time_sec": 26.0,
-      "nps": 61012430,
+      "nodes": 1611446622,
+      "time_sec": 15.5,
+      "nps": 103984397,
       "error": null
     }
   }
