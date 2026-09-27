@@ -67,7 +67,7 @@
 #endif
 
 #define LOW_LEVEL_DEPTH              7
-#define FASTEST_FIRST_DEPTH          12
+#define FASTEST_FIRST_DEPTH          13
 #define HASH_DEPTH                   (LOW_LEVEL_DEPTH + 1)
 
 #define VERY_HIGH_EVAL               1000000
@@ -79,6 +79,7 @@
 /* The disc difference when special wipeout move ordering is tried.
    This means more aggressive use of fastest first. */
 #define WIPEOUT_THRESHOLD            60
+#define REGION_PARITY_BONUS          64
 
 /* Use stability pruning? */
 #ifndef USE_STABILITY
@@ -1648,7 +1649,7 @@ end_search_pvs( BitBoard my_bits,
 	if ( sq == hash_move )
 	  move_score += 128;
 	if ( quadrant_mask[sq] & region_parity )
-	  move_score += 128;
+	  move_score += REGION_PARITY_BONUS;
 	move_score -= weighted_mobility( new_opp_bits, bb_flips );
 
 	end_move_list[old_sq].succ = sq;
