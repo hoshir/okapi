@@ -1314,7 +1314,7 @@ end_order_moves_presearch( int empties,
 
       int move_score = 0;
       if ( quadrant_mask[move] & region_parity )
-	move_score += REGION_PARITY_BONUS;
+	move_score += (empties >= 16) ? (REGION_PARITY_BONUS / 2) : REGION_PARITY_BONUS;
       if ( is_x_square[move] ) {
 	int c_sq = adjacent_corner[move];
 	if ( !( (my_bits | opp_bits) & square_mask[c_sq] ) )
@@ -1331,6 +1331,9 @@ end_order_moves_presearch( int empties,
       BitBoard empty = ~(child_my_bits | new_opp_bits);
       int pot_mob = bitboard_frontier( child_my_bits, empty );
       move_score -= 32 * pot_mob;
+      EdgeIndices edges;
+      int my_edge_stable = count_edge_stable_indexed( side_to_move, child_my_bits, new_opp_bits, &edges );
+      move_score += 32 * my_edge_stable;
 
       evals[disks_played][move] = move_score;
       move_list[disks_played][move_count[disks_played]++] = move;
@@ -1607,6 +1610,9 @@ end_search_pvs( BitBoard my_bits,
 	  BitBoard empty = ~(child_my_bits | new_opp_bits);
 	  int pot_mob = bitboard_frontier( child_my_bits, empty );
 	  move_score -= 32 * pot_mob;
+	  EdgeIndices edges;
+	  int my_edge_stable = count_edge_stable_indexed( side_to_move, child_my_bits, new_opp_bits, &edges );
+	  move_score += 32 * my_edge_stable;
 	}
 
 	end_move_list[old_sq].succ = sq;
