@@ -652,6 +652,119 @@ end_unmake_move( int sq,
 
 
 /*
+  END_PROBE_2PLY_ETC
+  Selective 2-Ply Enhanced Transposition Cutoffs (ETC) at cut nodes.
+  When opponent mobility after candidate move SQ is low (1..MAX_2PLY_ETC_MOB),
+  probes transposition table for opponent replies in O(1) bitboard time.
+
+  Returns:
+    ETC_2PLY_CUTOFF  (2): All opponent replies prove >= beta (fail-high cutoff).
+    ETC_2PLY_REFUTED (1): At least one opponent reply proves <= alpha (candidate fails low).
+    ETC_2PLY_NONE    (0): Inconclusive.
+*/
+
+#define ETC_2PLY_NONE     0
+#define ETC_2PLY_REFUTED  1
+#define ETC_2PLY_CUTOFF   2
+
+#ifndef MIN_2PLY_ETC_DEPTH
+#define MIN_2PLY_ETC_DEPTH 10
+#endif
+
+#ifndef MAX_2PLY_ETC_MOB
+#define MAX_2PLY_ETC_MOB   2
+#endif
+
+INLINE static int
+end_probe_2ply_etc( int sq,
+		    BitBoard child_my_bits,
+		    BitBoard child_opp_bits,
+		    unsigned int diff1_my,
+		    unsigned int diff2_my,
+		    int side_to_move,
+		    int empties,
+		    int alpha,
+		    int beta,
+		    int selectivity,
+		    int *cutoff_score ) {
+  if ( empties < MIN_2PLY_ETC_DEPTH )
+    return ETC_2PLY_NONE;
+
+  BitBoard opp_moves = bitboard_moves( child_opp_bits, child_my_bits );
+  int opp_mob = non_iterative_popcount( opp_moves );
+
+  if ( opp_mob < 1 || opp_mob > MAX_2PLY_ETC_MOB )
+    return ETC_2PLY_NONE;
+
+  int oppcol = OPP( side_to_move );
+  BitBoard moves_bb = opp_moves;
+  int all_ge_beta = TRUE;
+  int min_g_eval = INFINITE_EVAL;
+
+  while ( moves_bb != 0 ) {
+    int bit = FIRST_BIT( moves_bb );
+    moves_bb &= moves_bb - 1;
+    int opp_sq = square_of_bit[bit];
+
+    BitBoard opp_flips_new_bits;
+    int flipped = TestFlips_bitboard_to( opp_sq, child_opp_bits, child_my_bits, &opp_flips_new_bits );
+    if ( flipped == 0 ) {
+      all_ge_beta = FALSE;
+      continue;
+    }
+
+    unsigned int diff1_opp, diff2_opp;
+    end_hash_diff( opp_flips_new_bits, child_opp_bits, oppcol, opp_sq, &diff1_opp, &diff2_opp );
+
+    unsigned int g_diff1 = diff1_my ^ diff1_opp;
+    unsigned int g_diff2 = diff2_my ^ diff2_opp;
+
+    hash1 ^= g_diff1;
+    hash2 ^= g_diff2;
+    prefetch_hash_endgame_key( hash2 );
+    HashEntry g_entry;
+    find_hash( &g_entry, ENDGAME_MODE );
+    hash1 ^= g_diff1;
+    hash2 ^= g_diff2;
+
+    int valid_entry = (g_entry.flags & ENDGAME_SCORE) &&
+		      (g_entry.draft >= empties - 2) &&
+		      (g_entry.selectivity <= selectivity);
+
+    if ( valid_entry ) {
+      /* Case 1: Refutation - Opponent reply holds my score <= alpha */
+      if ( (g_entry.flags & (UPPER_BOUND | EXACT_VALUE)) &&
+	   (g_entry.eval <= alpha) ) {
+	return ETC_2PLY_REFUTED;
+      }
+
+      /* Check if this reply guarantees score >= beta */
+      if ( (g_entry.flags & (LOWER_BOUND | EXACT_VALUE)) &&
+	   (g_entry.eval >= beta) ) {
+	if ( g_entry.eval < min_g_eval )
+	  min_g_eval = g_entry.eval;
+      }
+      else {
+	all_ge_beta = FALSE;
+      }
+    }
+    else {
+      all_ge_beta = FALSE;
+    }
+  }
+
+  /* Case 2: Immediate Fail-High Cutoff - All replies guarantee >= beta */
+  if ( all_ge_beta && min_g_eval != INFINITE_EVAL ) {
+    *cutoff_score = min_g_eval;
+    return ETC_2PLY_CUTOFF;
+  }
+
+  return ETC_2PLY_NONE;
+}
+
+
+
+/*
   SYNC_BOARD_FROM_BITBOARDS
   Synchronize 100-cell array board, board_bits, piece_count, and
   pattern indices from bitboards for midgame heuristic pre-search.
@@ -1111,6 +1224,7 @@ end_order_moves_presearch( int level,
 	  hash1 ^= diff1;
 	  hash2 ^= diff2;
 
+	  int etc1_demoted = FALSE;
 	  if ( (etc_entry.flags & ENDGAME_SCORE) &&
 	       (etc_entry.draft >= empties - 1) &&
 	       (etc_entry.selectivity <= selectivity) ) {
@@ -1123,6 +1237,23 @@ end_order_moves_presearch( int level,
 	    }
 	    else if ( (etc_entry.flags & (LOWER_BOUND | EXACT_VALUE)) &&
 		      (etc_entry.eval >= -curr_alpha) ) {
+	      etc_demoted[move] = TRUE;
+	      etc1_demoted = TRUE;
+	    }
+	  }
+
+	  if ( !etc1_demoted ) {
+	    int cutoff_score;
+	    int etc2_res = end_probe_2ply_etc( move, child_my_bits, opp_bits & ~child_my_bits,
+					       diff1, diff2, side_to_move, empties,
+					       curr_alpha, beta, selectivity, &cutoff_score );
+	    if ( etc2_res == ETC_2PLY_CUTOFF ) {
+	      etc_move = move;
+	      *etc_tried_ptr = etc_move;
+	      *etc_cutoff_score = cutoff_score;
+	      return TRUE;
+	    }
+	    else if ( etc2_res == ETC_2PLY_REFUTED ) {
 	      etc_demoted[move] = TRUE;
 	    }
 	  }
@@ -1665,6 +1796,7 @@ end_search_pvs( BitBoard my_bits,
 	  hash1 ^= diff1;
 	  hash2 ^= diff2;
 
+	  int etc1_demoted = FALSE;
 	  if ( (etc_entry.flags & ENDGAME_SCORE) &&
 	       (etc_entry.draft >= empties - 1) &&
 	       (etc_entry.selectivity <= selectivity) ) {
@@ -1678,6 +1810,23 @@ end_search_pvs( BitBoard my_bits,
 	    }
 	    else if ( (etc_entry.flags & (LOWER_BOUND | EXACT_VALUE)) &&
 		      (etc_entry.eval >= -alpha) ) {
+	      move_score -= 10000;
+	      etc1_demoted = TRUE;
+	    }
+	  }
+
+	  if ( !etc1_demoted ) {
+	    int cutoff_score;
+	    int etc2_res = end_probe_2ply_etc( sq, bb_flips, new_opp_bits,
+					       diff1, diff2, side_to_move, empties,
+					       alpha, beta, selectivity, &cutoff_score );
+	    if ( etc2_res == ETC_2PLY_CUTOFF ) {
+	      end_store_tt( cutoff_score, sq, in_alpha, beta, empties );
+	      if ( level == 0 )
+		end_best_root_move = sq;
+	      return cutoff_score;
+	    }
+	    else if ( etc2_res == ETC_2PLY_REFUTED ) {
 	      move_score -= 10000;
 	    }
 	  }
@@ -1940,6 +2089,23 @@ end_search_pvs( BitBoard my_bits,
 		  end_best_root_move = cand_sq;
 		disks_played = saved_disks_played;
 		return score;
+	      }
+
+	      /* 2-ply ETC probe on hash candidate move */
+	      int cutoff_score;
+	      int etc2_res = end_probe_2ply_etc( cand_sq, child_my_bits, opp_bits & ~child_my_bits,
+						 diff1, diff2, side_to_move, empties,
+						 alpha, beta, selectivity, &cutoff_score );
+	      if ( etc2_res == ETC_2PLY_CUTOFF ) {
+		best_list[0] = cand_sq;
+		if ( use_hash )
+		  add_hash_extended( ENDGAME_MODE, cutoff_score, best_list,
+				     ENDGAME_SCORE | LOWER_BOUND, empties,
+				     *selective_cutoff ? selectivity : 0 );
+		if ( level == 0 )
+		  end_best_root_move = cand_sq;
+		disks_played = saved_disks_played;
+		return cutoff_score;
 	      }
 	    }
 	  }
