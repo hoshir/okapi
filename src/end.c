@@ -65,17 +65,10 @@
 #define LOW_LEVEL_DEPTH              7
 #define HASH_DEPTH                   (LOW_LEVEL_DEPTH + 1)
 
-#define VERY_HIGH_EVAL               1000000
-
-#define GOOD_TRANSPOSITION_EVAL      10000000
-
-#define FRONTIER_MOB_FACTOR          48
-
 /* The disc difference when special wipeout move ordering is tried.
    This means more aggressive use of fastest first. */
 #define WIPEOUT_THRESHOLD            60
 #define REGION_PARITY_BONUS          64
-#define HASH_MOVE_BONUS              65536
 #define X_SQUARE_PENALTY             128
 
 static const unsigned char is_x_square[100] = {
@@ -132,20 +125,6 @@ static const unsigned char adjacent_corner[100] = {
 
 
 
-typedef enum {
-  NOTHING,
-  SELECTIVE_SCORE,
-  WLD_SCORE,
-  EXACT_SCORE
-} SearchStatus;
-
-
-
-
-
-
-/* The parities of the regions are in the region_parity bit vector. */
-
 
 /* Pseudo-probabilities corresponding to the percentiles.
    These are taken from the normal distribution; to the percentile
@@ -158,14 +137,6 @@ static const double confidence[MAX_SELECTIVITY + 1] =
 /* Percentiles used in the endgame MPC */
 static const double end_percentile[MAX_SELECTIVITY + 1] =
 { 100.0, 4.0, 3.0, 2.0, 1.7, 1.4, 1.1, 0.8, 0.5, 0.25 };
-
-#if USE_STABILITY
-#define  HIGH_STABILITY_THRESHOLD     0
-#endif
-
-
-
-static int true_found, true_val;
 
 /* Number of discs that the side to move at the root has to win with. */
 static int komi_shift;
@@ -975,18 +946,8 @@ sync_board_from_bitboards( BitBoard my_bits, BitBoard opp_bits, int side_to_move
 
 static void
 update_best_list( int *best_list, int move, int best_list_index,
-		  int *best_list_length, int verbose ) {
+		  int *best_list_length ) {
   int i;
-
-  verbose = FALSE;
-
-  if ( verbose ) {
-    printf( "move=%2d  index=%d  length=%d      ", move, best_list_index,
-	    *best_list_length );
-    printf( "Before:  " );
-    for ( i = 0; i < 4; i++ )
-      printf( "%2d ", best_list[i] );
-  }
 
   if ( best_list_index < *best_list_length )
     for ( i = best_list_index; i >= 1; i-- )
@@ -998,13 +959,6 @@ update_best_list( int *best_list, int move, int best_list_index,
       (*best_list_length)++;
   }
   best_list[0] = move;
-
-  if ( verbose ) {
-    printf( "      After:  " );
-    for ( i = 0; i < 4; i++ )
-      printf( "%2d ", best_list[i] );
-    puts( "" );
-  }
 }
 /*
   PARALLEL ROOT SIBLINGS
@@ -1919,8 +1873,6 @@ end_search_pvs( BitBoard my_bits,
 	      send_sweep( ">%d", curr_val - 1 );
 	    else {
 	      send_sweep( "=%d", curr_val );
-	      true_found = TRUE;
-	      true_val = curr_val;
 	    }
 	  }
 	}
@@ -1930,8 +1882,7 @@ end_search_pvs( BitBoard my_bits,
     }
 
     if ( update_pv ) {
-	update_best_list( best_list, move, best_list_index, &best_list_length,
-			  level == 0 );
+	update_best_list( best_list, move, best_list_index, &best_list_length );
 	pv[level][level] = move;
 	if ( pv_depth[level + 1] > level + 1 )
 	  pv_depth[level] = pv_depth[level + 1];
