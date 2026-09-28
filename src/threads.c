@@ -39,6 +39,20 @@
    nesting the search actually does; the rest is slack. */
 #define MAX_BATCHES               (2 * MAX_THREADS)
 
+#define WORKER_SPIN_LIMIT         600
+#define MASTER_JOIN_SPIN_LIMIT     600
+
+static inline void
+cpu_relax( void ) {
+#if defined(__aarch64__) || defined(__arm64__)
+  __asm__ volatile( "yield" ::: "memory" );
+#elif defined(__x86_64__) || defined(_M_X64) || defined(__i386__)
+  __asm__ volatile( "pause" ::: "memory" );
+#else
+  /* fallback */
+#endif
+}
+
 
 
 typedef struct {
@@ -95,6 +109,7 @@ static pthread_cond_t thread_wait_cond[MAX_THREADS];
 
 /* Threads parked with no work to do. */
 static _Atomic int idle_count;
+static _Atomic int active_batches;
 
 _Thread_local int thread_id;
 _Thread_local SplitPoint *current_split_point;
@@ -138,6 +153,8 @@ ybwc_try_steal_and_search( int my_id ) {
       continue;
     if ( atomic_load_explicit( &sp->cutoff_occurred, memory_order_relaxed ) )
       continue;
+    if ( atomic_load_explicit( &sp->alpha, memory_order_relaxed ) >= sp->beta )
+      continue;
     if ( atomic_load_explicit( &sp->next_move_idx, memory_order_relaxed ) >= sp->move_count )
       continue;
     if ( best_sp == NULL || sp->level > best_sp->level ) {
@@ -164,7 +181,8 @@ ybwc_try_steal_and_search( int my_id ) {
     // 2. Double-check that best_sp is still published, same generation, and not in cutoff
     if ( atomic_load_explicit( &thread_split[master_id], memory_order_seq_cst ) != best_sp ||
          atomic_load_explicit( &best_sp->sp_seq, memory_order_relaxed ) != target_seq ||
-         atomic_load_explicit( &best_sp->cutoff_occurred, memory_order_relaxed ) ) {
+         atomic_load_explicit( &best_sp->cutoff_occurred, memory_order_relaxed ) ||
+         atomic_load_explicit( &best_sp->alpha, memory_order_relaxed ) >= best_sp->beta ) {
       int remaining = atomic_fetch_sub_explicit( &best_sp->active_workers, 1, memory_order_release ) - 1;
       if ( remaining == 0 ) {
         pthread_mutex_lock( &thread_wait_mutex[master_id] );
@@ -176,7 +194,9 @@ ybwc_try_steal_and_search( int my_id ) {
 
     // 3. Claim move locklessly
     int idx = atomic_fetch_add_explicit( &best_sp->next_move_idx, 1, memory_order_relaxed );
-    if ( idx < best_sp->move_count && !atomic_load_explicit( &best_sp->cutoff_occurred, memory_order_relaxed ) ) {
+    if ( idx < best_sp->move_count &&
+         !atomic_load_explicit( &best_sp->cutoff_occurred, memory_order_relaxed ) &&
+         atomic_load_explicit( &best_sp->alpha, memory_order_relaxed ) < best_sp->beta ) {
       SplitPoint *saved_sp = current_split_point;
       current_split_point = best_sp;
 
@@ -235,7 +255,8 @@ ybwc_split( SplitPoint *sp ) {
   SplitPoint *saved_sp = current_split_point;
   current_split_point = sp;
 
-  while ( !atomic_load_explicit( &sp->cutoff_occurred, memory_order_relaxed ) ) {
+  while ( !atomic_load_explicit( &sp->cutoff_occurred, memory_order_relaxed ) &&
+          atomic_load_explicit( &sp->alpha, memory_order_relaxed ) < sp->beta ) {
     int idx = atomic_fetch_add_explicit( &sp->next_move_idx, 1, memory_order_relaxed );
     if ( idx >= sp->move_count )
       break;
@@ -248,11 +269,19 @@ ybwc_split( SplitPoint *sp ) {
   // 5. Release master's own reference and wait for active helpers to finish
   int remaining = atomic_fetch_sub_explicit( &sp->active_workers, 1, memory_order_release ) - 1;
   if ( remaining > 0 ) {
-    pthread_mutex_lock( &thread_wait_mutex[my_id] );
-    while ( atomic_load_explicit( &sp->active_workers, memory_order_acquire ) > 0 ) {
-      pthread_cond_wait( &thread_wait_cond[my_id], &thread_wait_mutex[my_id] );
+    int spin;
+    for ( spin = 0; spin < MASTER_JOIN_SPIN_LIMIT; spin++ ) {
+      if ( atomic_load_explicit( &sp->active_workers, memory_order_acquire ) == 0 )
+        break;
+      cpu_relax();
     }
-    pthread_mutex_unlock( &thread_wait_mutex[my_id] );
+    if ( atomic_load_explicit( &sp->active_workers, memory_order_acquire ) > 0 ) {
+      pthread_mutex_lock( &thread_wait_mutex[my_id] );
+      while ( atomic_load_explicit( &sp->active_workers, memory_order_acquire ) > 0 ) {
+        pthread_cond_wait( &thread_wait_cond[my_id], &thread_wait_mutex[my_id] );
+      }
+      pthread_mutex_unlock( &thread_wait_mutex[my_id] );
+    }
   }
 
   // 6. Restore parent split point if nested
@@ -357,14 +386,42 @@ worker_main( void *arg ) {
     if ( ybwc_try_steal_and_search( my_id ) )
       continue;
 
-    // 2. Check for midgame Batch work (threads_run)
+    // 2. Short-spin wait before mutex lock / condvar sleep
+    int spin;
+    int found = FALSE;
+    int backoff = 1;
+    for ( spin = 0; spin < WORKER_SPIN_LIMIT; spin++ ) {
+      if ( pool.shutting_down )
+        break;
+      if ( atomic_load_explicit( &active_batches, memory_order_relaxed ) > 0 )
+        break;
+      if ( active_splits > 0 ) {
+        if ( ybwc_try_steal_and_search( my_id ) ) {
+          found = TRUE;
+          break;
+        }
+        int b;
+        for ( b = 0; b < backoff; b++ )
+          cpu_relax();
+        if ( backoff < 32 )
+          backoff <<= 1;
+      } else {
+        cpu_relax();
+        backoff = 1;
+      }
+    }
+
+    if ( found )
+      continue;
+
+    // 3. Check for midgame Batch work (threads_run)
     pthread_mutex_lock( &pool.lock );
     if ( claim_one( NULL ) ) {
       pthread_mutex_unlock( &pool.lock );
       continue;
     }
 
-    // 3. Park when no work exists
+    // 4. Park when no work exists
     if ( !pool.shutting_down ) {
       atomic_fetch_add_explicit( &idle_count, 1, memory_order_relaxed );
       pthread_cond_wait( &pool.change, &pool.lock );
@@ -404,6 +461,7 @@ threads_init( int count ) {
   pthread_cond_init( &pool.change, NULL );
   pool.shutting_down = FALSE;
   atomic_init( &idle_count, 0 );
+  atomic_init( &active_batches, 0 );
   batch_seq = 0;
   for ( i = 0; i < MAX_BATCHES; i++ )
     batch[i].active = FALSE;
@@ -415,6 +473,7 @@ threads_init( int count ) {
     pthread_cond_init( &thread_wait_cond[i], NULL );
     for ( j = 0; j <= MAX_SPLIT_NESTING; j++ ) {
       thread_splits[i][j].master_thread_id = i;
+      atomic_init( &thread_splits[i][j].alpha, 0 );
       atomic_init( &thread_splits[i][j].active_workers, 0 );
       atomic_init( &thread_splits[i][j].sp_seq, 0 );
       atomic_init( &thread_splits[i][j].cutoff_occurred, false );
@@ -517,6 +576,7 @@ threads_run( void (*job)( int index, void *context ), void *context,
   mine->depth = nesting;
   mine->seq = batch_seq++;
   mine->active = TRUE;
+  atomic_fetch_add_explicit( &active_batches, 1, memory_order_release );
   pthread_cond_broadcast( &pool.change );
 
   /* The caller helps with its own batch rather than idling -- see
@@ -533,6 +593,7 @@ threads_run( void (*job)( int index, void *context ), void *context,
     }
 
   mine->active = FALSE;
+  atomic_fetch_sub_explicit( &active_batches, 1, memory_order_release );
 
   /* Fold what the workers did into this thread's count, so that every
      place that already reports NODES reports the whole batch. */
