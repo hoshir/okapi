@@ -64,18 +64,6 @@ int
 count_stable_indexed( int color, BitBoard col_bits, BitBoard opp_bits, const EdgeIndices *edges );
 
 
-/*
-  GET_STABLE
-  Determines what discs on BOARD are stable with SIDE_TO_MOVE to play next.
-  The stability status of all squares (black, white and empty)
-  is returned in the boolean vector IS_STABLE.
-*/
-
-void
-get_stable( int *in_board,
-	    int side_to_move,
-	    int *is_stable );
-
 void
 init_stable( void );
 
