@@ -11,13 +11,66 @@
 #ifndef THREADS_H
 #define THREADS_H
 
+#include <stdatomic.h>
+#include <stdbool.h>
+#include <stdint.h>
 
+#include "bitboard.h"
+#include "tlstate.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
+#define MAX_SPLIT_NESTING             4
+#define MAX_ROOT_MOVES               64
 
+typedef struct SplitPoint SplitPoint;
+typedef void (*SplitWorkerFn)( SplitPoint *sp, int move_idx );
+
+struct SplitPoint {
+  BitBoard my_bits;
+  BitBoard opp_bits;
+  BitBoard saved_stable[3];
+  int side_to_move;
+  int empties;
+  int disc_diff;
+  int level;
+  int selectivity;
+  int alpha;
+  int beta;
+  unsigned int sp_hash1, sp_hash2;
+  unsigned int sp_region_parity;
+  MoveLink sp_end_move_list[100];
+
+  int moves[MAX_ROOT_MOVES];
+  int move_count;
+  int score[MAX_ROOT_MOVES];
+  int cutoff[MAX_ROOT_MOVES];
+  int valid[MAX_ROOT_MOVES];
+
+  _Atomic int next_move_idx;    /* lock-free work-stealing counter */
+  _Atomic int active_workers;   /* number of threads currently exploring this split */
+  _Atomic bool cutoff_occurred; /* set to true when any sibling >= beta */
+  _Atomic uint64_t pooled_nodes;
+  _Atomic unsigned int sp_seq;  /* generation sequence to prevent stale steals */
+
+  SplitWorkerFn search_fn;
+  struct SplitPoint *parent;
+  int master_thread_id;
+};
+
+/* SplitPoint buffer access */
+SplitPoint *
+ybwc_get_split_point( int my_id, int nesting );
+
+/* YBWC split execution */
+void
+ybwc_split( SplitPoint *sp );
+
+extern volatile int active_splits;
+extern _Thread_local SplitPoint *current_split_point;
+extern _Thread_local int thread_id;
 
 /*
   THREADS_INIT

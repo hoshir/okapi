@@ -627,6 +627,7 @@ negate_current_eval( int negate ) {
 
 void
 init_search_thread( void ) {
+  init_move_lists();
   init_flip_stack();
   init_history_score();
 }
