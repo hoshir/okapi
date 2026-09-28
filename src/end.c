@@ -1019,163 +1019,112 @@ update_best_list( int *best_list, int move, int best_list_index,
   produced by exactly the same code as before.
 */
 
-#define MAX_ROOT_MOVES               64
-
-/* Remaining depth at or above which a node is worth splitting.
-   Depth 11 distributes work efficiently across threads (SIMP-002). */
+/* Remaining depth at or above which a node is worth splitting. */
 #define PARALLEL_SPLIT_DEPTH         11
 
-/* How far the splits may nest, and how much more of the tree a node has
-   to have left before it may start a batch at each level of nesting.
-   Splitting is speculative -- every sibling is searched, including the
-   ones a cutoff would have spared -- so a batch inside a batch costs
-   real work, and without the taper the top plies each pay for one. */
-#define MAX_SPLIT_NESTING             1
-#define SPLIT_NESTING_MARGIN          6
+/* Dynamic nesting limits: allows helper threads on deep subtrees to split */
+#ifndef MAX_SPLIT_NESTING
+#define MAX_SPLIT_NESTING             4
+#endif
+#define SPLIT_NESTING_MARGIN          2
 
-typedef struct SiblingBatchTag {
-  SearchState root;
-  BitBoard my_bits;
-  BitBoard opp_bits;
-  BitBoard saved_stable[3];
-  struct SiblingBatchTag *parent;   /* the batch this one was started from */
-  int level;
-  int empties;
-  int disc_diff;
-  int side_to_move;
-  int alpha;                        /* null window is (alpha, alpha + 1) */
-  int beta;                         /* the split node's own beta */
-  int selectivity;
-  volatile int abandon;             /* the node fails high; stop searching */
-  int move[MAX_ROOT_MOVES];
-  int score[MAX_ROOT_MOVES];
-  int cutoff[MAX_ROOT_MOVES];
-  int valid[MAX_ROOT_MOVES];
-} SiblingBatch;
-
-
-/* How many jobs deep this thread is, so that a node reached from inside
-   a job can tell how far the splitting has already nested, and the
-   innermost batch whose job it is running, so that it can tell whether
-   what it is searching is still wanted. */
+/* How many split levels deep this thread currently is */
 static _Thread_local int split_nesting;
-static _Thread_local SiblingBatch *current_batch;
 
-/* Batches in flight anywhere.  Reading a thread-local costs a call on
-   this platform, and the test below sits on the per-node path, so ask
-   this plain global first: it is zero for the whole of a search that
-   never split, which is every single-threaded one. */
-static volatile int active_splits;
-
+/* Fast check on per-node search path: zero when no splits are live anywhere */
 #define SPLIT_ABANDONED()  ((active_splits != 0) && split_abandoned())
-
 
 /*
   SPLIT_ABANDONED
-  TRUE once the node a job belongs to -- or any node further out that
-  this thread is nested inside -- has been proved to fail high.  Every
-  sibling still being searched for such a node is work the sequential
-  search would never have done: it stops at the first move that reaches
-  beta, and the batch has now found one.
-
-  Callers on the per-node path go through the macro of the same name;
-  the two below are already inside a job, where the global cannot be
-  zero.
+  Walks up the SplitPoint parent chain to check if any ancestor split
+  point encountered a beta cutoff.
 */
 
-static int
+static INLINE int
 split_abandoned( void ) {
-  const SiblingBatch *b;
+  const SplitPoint *sp;
 
-  for ( b = current_batch; b != NULL; b = b->parent )
-    if ( b->abandon )
+  for ( sp = current_split_point; sp != NULL; sp = sp->parent ) {
+    if ( atomic_load_explicit( &sp->cutoff_occurred, memory_order_relaxed ) )
       return TRUE;
+  }
 
   return FALSE;
 }
 
 
+/*
+  END_SEARCH_SIBLING
+  Worker callback: executes search for a single stolen sibling move locklessly.
+*/
+
 static void
-search_sibling( int index, void *context ) {
-  SiblingBatch *batch = (SiblingBatch *) context;
-  BitBoard my_bits, opp_bits, new_my_bits, new_opp_bits;
-  int move = batch->move[index];
+end_search_sibling( SplitPoint *sp, int idx ) {
+  int move = sp->moves[idx];
+  BitBoard my_bits = sp->my_bits;
+  BitBoard opp_bits = sp->opp_bits;
+  BitBoard new_my_bits, new_opp_bits;
   int child_selective_cutoff = FALSE;
-  int score, bailed;
-  SiblingBatch *saved_batch = current_batch;
+  int score;
 
-  split_nesting++;
-  current_batch = batch;
-  search_state_load( &batch->root );
-  my_bits = batch->my_bits;
-  opp_bits = batch->opp_bits;
-
-  if ( split_abandoned() ) {
-    current_batch = saved_batch;
-    split_nesting--;
+  if ( split_abandoned() || is_panic_abort() || force_return )
     return;
-  }
+
+  // Restore thread-local search state for this sibling
+  hash1 = sp->sp_hash1;
+  hash2 = sp->sp_hash2;
+  region_parity = sp->sp_region_parity;
+  memcpy( end_move_list, sp->sp_end_move_list, sizeof( end_move_list ) );
+
   int flipped = TestFlips_wrapper( move, my_bits, opp_bits );
-  if ( flipped == 0 ) {
-    current_batch = saved_batch;
-    split_nesting--;
+  if ( flipped == 0 )
     return;
-  }
+
   new_my_bits = bb_flips;
   FULL_ANDNOT( new_opp_bits, opp_bits, bb_flips );
 
-  if ( batch->level + 1 <= MAX_SEARCH_DEPTH ) {
-    tls.stable_discs[BLACKSQ][batch->level + 1] = batch->saved_stable[BLACKSQ];
-    tls.stable_discs[WHITESQ][batch->level + 1] = batch->saved_stable[WHITESQ];
+  if ( sp->level + 1 <= MAX_SEARCH_DEPTH ) {
+    tls.stable_discs[BLACKSQ][sp->level + 1] = sp->saved_stable[BLACKSQ];
+    tls.stable_discs[WHITESQ][sp->level + 1] = sp->saved_stable[WHITESQ];
   }
 
   unsigned int diff1, diff2;
   int pred, succ;
-  end_make_move( move, new_my_bits, my_bits, batch->side_to_move, &diff1, &diff2, &pred, &succ );
+  end_make_move( move, new_my_bits, my_bits, sp->side_to_move, &diff1, &diff2, &pred, &succ );
 
-  int child_disc_diff = -batch->disc_diff - 2 * flipped - 1;
+  int child_disc_diff = -sp->disc_diff - 2 * flipped - 1;
 
+  split_nesting++;
+  disks_played = 60 - sp->empties;
   score = -end_search_pvs( new_opp_bits, new_my_bits,
-			   -(batch->alpha + 1), -batch->alpha,
-			   OPP( batch->side_to_move ),
-			   batch->empties - 1,
-			   child_disc_diff,
-			   TRUE,
-			   batch->level + 1,
-			   batch->selectivity,
-			   &child_selective_cutoff );
+                           -(sp->alpha + 1), -sp->alpha,
+                           OPP( sp->side_to_move ),
+                           sp->empties - 1,
+                           child_disc_diff,
+                           TRUE,
+                           sp->level + 1,
+                           sp->selectivity,
+                           &child_selective_cutoff );
+  split_nesting--;
 
   end_unmake_move( move, diff1, diff2, pred, succ );
 
-  /* Ask before raising the flag ourselves: a job that was cut short
-     part way through has no score worth keeping, while the one that
-     ran to the end and found the cutoff does. */
-  bailed = split_abandoned();
-  current_batch = saved_batch;
-  split_nesting--;
-
-  if ( !bailed && !is_panic_abort() && !force_return ) {
-    batch->score[index] = score;
-    batch->cutoff[index] = child_selective_cutoff;
-    batch->valid[index] = TRUE;
-    if ( score >= batch->beta )
-      batch->abandon = TRUE;
+  if ( !split_abandoned() && !is_panic_abort() && !force_return && abs( score ) < 20000 ) {
+    sp->score[idx] = score;
+    sp->cutoff[idx] = child_selective_cutoff;
+    sp->valid[idx] = TRUE;
+    if ( score >= sp->beta ) {
+      atomic_store_explicit( &sp->cutoff_occurred, true, memory_order_release );
+    }
   }
 }
 
 
 /*
   DISPATCH_SIBLINGS
-  Search every legal move of this node except SEARCHED_MOVE in parallel
-  with a null window around ALPHA.  Fills PROVEN[sq] with a score for
-  each move that was proved not to beat ALPHA, which the sequential
-  loop can then take instead of searching the move itself.
-
-  The batch stops early once one of the moves reaches BETA, since the
-  node then fails high and the sequential loop would never have looked
-  at the rest.  Without that the batch searches every sibling to the
-  end, which is what made splitting inside a split cost more than the
-  threads it kept busy were worth.
+  Pure bitboard lock-free sibling dispatch.
+  Retrieves SplitPoint from per-thread static buffer, publishes to thread slot,
+  and executes lock-free work-stealing across available cores.
 */
 
 static void
@@ -1186,12 +1135,7 @@ dispatch_siblings( BitBoard my_bits, BitBoard opp_bits,
 		   const int *best_list, int best_list_length,
 		   int pre_search_done,
 		   int *proven, int *proven_score, int *proven_cutoff ) {
-  /* Splits nest, so several batches can be live on one thread at once
-     and the batch cannot be a single static.  It carries the parent's
-     bitboard search state, and a split is rare enough that the allocation
-     does not show up. */
-  SiblingBatch *batch;
-  int move[MAX_ROOT_MOVES];
+  SplitPoint *sp = ybwc_get_split_point( thread_id, split_nesting );
   int count = 0;
   int used[100];
   int i, sq;
@@ -1207,7 +1151,7 @@ dispatch_siblings( BitBoard my_bits, BitBoard opp_bits,
 	 (TestFlips_wrapper( sq, my_bits, opp_bits ) > 0) ) {
       used[sq] = TRUE;
       if ( count < MAX_ROOT_MOVES )
-	move[count++] = sq;
+	sp->moves[count++] = sq;
     }
   }
 
@@ -1238,7 +1182,7 @@ dispatch_siblings( BitBoard my_bits, BitBoard opp_bits,
 	rem_moves[best_idx] = tmp;
       }
       if ( count < MAX_ROOT_MOVES )
-	move[count++] = rem_moves[i];
+	sp->moves[count++] = rem_moves[i];
     }
   } else {
     for ( i = 0; i < MOVE_ORDER_SIZE; i++ ) {
@@ -1247,7 +1191,7 @@ dispatch_siblings( BitBoard my_bits, BitBoard opp_bits,
 	   (TestFlips_wrapper( sq, my_bits, opp_bits ) > 0) ) {
 	used[sq] = TRUE;
 	if ( count < MAX_ROOT_MOVES )
-	  move[count++] = sq;
+	  sp->moves[count++] = sq;
       }
     }
   }
@@ -1255,55 +1199,49 @@ dispatch_siblings( BitBoard my_bits, BitBoard opp_bits,
   if ( count == 0 )
     return;
 
-  batch = (SiblingBatch *) malloc( sizeof( SiblingBatch ) );
-  if ( batch == NULL )
-    return;
-
+  sp->move_count = count;
   for ( i = 0; i < count; i++ ) {
-    batch->move[i] = move[i];
-    batch->score[i] = 0;
-    batch->cutoff[i] = FALSE;
-    batch->valid[i] = FALSE;
+    sp->score[i] = 0;
+    sp->cutoff[i] = FALSE;
+    sp->valid[i] = FALSE;
   }
 
-  batch->parent = current_batch;
-  batch->abandon = FALSE;
-  batch->level = level;
+  sp->my_bits = my_bits;
+  sp->opp_bits = opp_bits;
+  sp->side_to_move = side_to_move;
+  sp->empties = empties;
+  sp->disc_diff = disc_diff;
+  sp->level = level;
+  sp->selectivity = selectivity;
+  sp->alpha = alpha;
+  sp->beta = beta;
+  sp->sp_hash1 = hash1;
+  sp->sp_hash2 = hash2;
+  sp->sp_region_parity = region_parity;
+  memcpy( sp->sp_end_move_list, end_move_list, sizeof( end_move_list ) );
+
   if ( level <= MAX_SEARCH_DEPTH ) {
-    batch->saved_stable[BLACKSQ] = tls.stable_discs[BLACKSQ][level];
-    batch->saved_stable[WHITESQ] = tls.stable_discs[WHITESQ][level];
+    sp->saved_stable[BLACKSQ] = tls.stable_discs[BLACKSQ][level];
+    sp->saved_stable[WHITESQ] = tls.stable_discs[WHITESQ][level];
   } else {
-    batch->saved_stable[BLACKSQ] = 0;
-    batch->saved_stable[WHITESQ] = 0;
+    sp->saved_stable[BLACKSQ] = 0;
+    sp->saved_stable[WHITESQ] = 0;
   }
-  batch->empties = empties;
-  batch->disc_diff = disc_diff;
-  batch->side_to_move = side_to_move;
-  batch->alpha = alpha;
-  batch->beta = beta;
-  batch->selectivity = selectivity;
-  batch->my_bits = my_bits;
-  batch->opp_bits = opp_bits;
-  sync_board_from_bitboards( my_bits, opp_bits, side_to_move, empties );
-  search_state_save( &batch->root );
+
+  sp->search_fn = end_search_sibling;
+  sp->parent = current_split_point;
 
   (void) __sync_fetch_and_add( &active_splits, 1 );
-  threads_run( search_sibling, batch, count );
+  ybwc_split( sp );
   (void) __sync_fetch_and_sub( &active_splits, 1 );
 
-  /* The calling thread takes part in the batch -- and in any other
-     batch that had work while it waited -- so put its own state back
-     the way the sequential search left it. */
-  search_state_load( &batch->root );
-
-  for ( i = 0; i < count; i++ )
-    if ( batch->valid[i] && (batch->score[i] <= alpha) ) {
-      proven[batch->move[i]] = TRUE;
-      proven_score[batch->move[i]] = batch->score[i];
-      proven_cutoff[batch->move[i]] = batch->cutoff[i];
+  for ( i = 0; i < count; i++ ) {
+    if ( sp->valid[i] && (sp->score[i] <= alpha) ) {
+      proven[sp->moves[i]] = TRUE;
+      proven_score[sp->moves[i]] = sp->score[i];
+      proven_cutoff[sp->moves[i]] = sp->cutoff[i];
     }
-
-  free( batch );
+  }
 }
 
 /*
@@ -1529,6 +1467,9 @@ end_search_pvs( BitBoard my_bits,
 
   *selective_cutoff = FALSE;
 
+  if ( SPLIT_ABANDONED() )
+    return SEARCH_ABORT;
+
   /* 1. Terminal leaf dispatch */
   if ( empties <= LOW_LEVEL_DEPTH ) {
     int res = solve_parity( my_bits, opp_bits, alpha, beta, side_to_move,
@@ -1748,13 +1689,7 @@ end_search_pvs( BitBoard my_bits,
   }
 
   first = TRUE;
-  can_split = (empties >= PARALLEL_SPLIT_DEPTH +
-		 SPLIT_NESTING_MARGIN * split_nesting) &&
-    (split_nesting <= MAX_SPLIT_NESTING) && (threads_count() > 1) &&
-    (threads_idle_count() > 0);
-  if ( can_split )
-    for ( i = 0; i < 100; i++ )
-	proven[i] = FALSE;
+  can_split = FALSE;
   best = -INFINITE_EVAL;
   pre_search_done = FALSE;
   etc_tried = 0;
@@ -1956,7 +1891,7 @@ end_search_pvs( BitBoard my_bits,
 
     end_unmake_move( move, diff1, diff2, pred, succ );
 
-    if ( is_panic_abort() || force_return || SPLIT_ABANDONED() ) {
+    if ( abs( curr_val ) >= 20000 || is_panic_abort() || force_return || SPLIT_ABANDONED() ) {
 	disks_played = saved_disks_played;
 	return SEARCH_ABORT;
     }
@@ -2004,14 +1939,19 @@ end_search_pvs( BitBoard my_bits,
 	   (best_list_length < 4) )
 	best_list[best_list_length++] = move;
 
-    if ( can_split && first && !siblings_dispatched &&
-	   (threads_idle_count() > 0) &&
-	   !is_panic_abort() && !force_return ) {
-	siblings_dispatched = TRUE;
-	dispatch_siblings( my_bits, opp_bits, side_to_move, level,
-			   empties, disc_diff, best, beta, selectivity, move,
-			   best_list, best_list_length, pre_search_done,
-			   proven, proven_score, proven_cutoff );
+    if ( !siblings_dispatched && first &&
+	 (empties >= PARALLEL_SPLIT_DEPTH + SPLIT_NESTING_MARGIN * split_nesting) &&
+	 (split_nesting <= MAX_SPLIT_NESTING) && (threads_count() > 1) &&
+	 (threads_idle_count() > 0) &&
+	 !is_panic_abort() && !force_return ) {
+      can_split = TRUE;
+      for ( i = 0; i < 100; i++ )
+	proven[i] = FALSE;
+      siblings_dispatched = TRUE;
+      dispatch_siblings( my_bits, opp_bits, side_to_move, level,
+			 empties, disc_diff, best, beta, selectivity, move,
+			 best_list, best_list_length, pre_search_done,
+			 proven, proven_score, proven_cutoff );
     }
 
     first = FALSE;
