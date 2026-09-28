@@ -1070,6 +1070,13 @@ end_search_sibling( SplitPoint *sp, int idx ) {
   if ( split_abandoned() || is_panic_abort() || force_return )
     return;
 
+  int cur_alpha = atomic_load_explicit( &sp->alpha, memory_order_acquire );
+  if ( cur_alpha >= sp->beta ) {
+    atomic_store_explicit( &sp->cutoff_occurred, true, memory_order_release );
+    return;
+  }
+  sp->searched_alpha[idx] = cur_alpha;
+
   // Restore thread-local search state for this sibling
   hash1 = sp->sp_hash1;
   hash2 = sp->sp_hash2;
@@ -1097,7 +1104,7 @@ end_search_sibling( SplitPoint *sp, int idx ) {
   split_nesting++;
   disks_played = 60 - sp->empties;
   score = -end_search_pvs( new_opp_bits, new_my_bits,
-                           -(sp->alpha + 1), -sp->alpha,
+                           -(cur_alpha + 1), -cur_alpha,
                            OPP( sp->side_to_move ),
                            sp->empties - 1,
                            child_disc_diff,
@@ -1115,6 +1122,11 @@ end_search_sibling( SplitPoint *sp, int idx ) {
     sp->valid[idx] = TRUE;
     if ( score >= sp->beta ) {
       atomic_store_explicit( &sp->cutoff_occurred, true, memory_order_release );
+    } else if ( score > cur_alpha ) {
+      int old_a = cur_alpha;
+      while ( score > old_a &&
+              !atomic_compare_exchange_weak_explicit( &sp->alpha, &old_a, score,
+                                                      memory_order_release, memory_order_relaxed ) ) {}
     }
   }
 }
@@ -1204,6 +1216,7 @@ dispatch_siblings( BitBoard my_bits, BitBoard opp_bits,
     sp->score[i] = 0;
     sp->cutoff[i] = FALSE;
     sp->valid[i] = FALSE;
+    sp->searched_alpha[i] = alpha;
   }
 
   sp->my_bits = my_bits;
@@ -1213,7 +1226,7 @@ dispatch_siblings( BitBoard my_bits, BitBoard opp_bits,
   sp->disc_diff = disc_diff;
   sp->level = level;
   sp->selectivity = selectivity;
-  sp->alpha = alpha;
+  atomic_init( &sp->alpha, alpha );
   sp->beta = beta;
   sp->sp_hash1 = hash1;
   sp->sp_hash2 = hash2;
@@ -1235,8 +1248,9 @@ dispatch_siblings( BitBoard my_bits, BitBoard opp_bits,
   ybwc_split( sp );
   (void) __sync_fetch_and_sub( &active_splits, 1 );
 
+  int final_alpha = atomic_load_explicit( &sp->alpha, memory_order_acquire );
   for ( i = 0; i < count; i++ ) {
-    if ( sp->valid[i] && (sp->score[i] <= alpha) ) {
+    if ( sp->valid[i] && (sp->score[i] <= sp->searched_alpha[i]) && (sp->score[i] <= final_alpha) ) {
       proven[sp->moves[i]] = TRUE;
       proven_score[sp->moves[i]] = sp->score[i];
       proven_cutoff[sp->moves[i]] = sp->cutoff[i];

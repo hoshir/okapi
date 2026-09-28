@@ -37,7 +37,7 @@ struct SplitPoint {
   int disc_diff;
   int level;
   int selectivity;
-  int alpha;
+  _Atomic int alpha;
   int beta;
   unsigned int sp_hash1, sp_hash2;
   unsigned int sp_region_parity;
@@ -48,6 +48,7 @@ struct SplitPoint {
   int score[MAX_ROOT_MOVES];
   int cutoff[MAX_ROOT_MOVES];
   int valid[MAX_ROOT_MOVES];
+  int searched_alpha[MAX_ROOT_MOVES];
 
   _Atomic int next_move_idx;    /* lock-free work-stealing counter */
   _Atomic int active_workers;   /* number of threads currently exploring this split */
