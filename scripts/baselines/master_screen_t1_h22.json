@@ -1,6 +1,6 @@
 {
   "verdict": "NEEDS_FULL",
-  "reason": "Screening showed promising node reduction (-16.80%). Proceed to --mode full.",
+  "reason": "Screening showed promising node reduction (-0.89%). Proceed to --mode full.",
   "tests_passed": true,
   "all_correct": true,
   "mode": "screen",
@@ -9,33 +9,33 @@
   "simplification_mode": false,
   "heavy_threshold": 3.0,
   "totals": {
-    "total_nodes": 1607610809,
-    "total_time": 102.6
+    "total_nodes": 1593377309,
+    "total_time": 106.5
   },
   "summary": {
-    "total_candidate_nodes": 1607610809,
-    "total_baseline_nodes": 1932286805,
-    "total_node_delta_pct": -16.8,
-    "total_candidate_time": 102.6,
-    "total_baseline_time": 81.7,
-    "total_time_delta_pct": 25.58
+    "total_candidate_nodes": 1593377309,
+    "total_baseline_nodes": 1607610809,
+    "total_node_delta_pct": -0.89,
+    "total_candidate_time": 106.5,
+    "total_baseline_time": 102.6,
+    "total_time_delta_pct": 3.8
   },
   "comparison": {
     "FFO #45": {
-      "candidate_nodes": 326510277,
-      "baseline_nodes": 374408573,
-      "node_delta_pct": -12.79,
-      "candidate_time": 18.8,
-      "baseline_time": 14.7,
-      "time_delta_pct": 27.89
+      "candidate_nodes": 322569642,
+      "baseline_nodes": 326510277,
+      "node_delta_pct": -1.21,
+      "candidate_time": 19.3,
+      "baseline_time": 18.8,
+      "time_delta_pct": 2.66
     },
     "FFO #50": {
-      "candidate_nodes": 1281100532,
-      "baseline_nodes": 1557878232,
-      "node_delta_pct": -17.77,
-      "candidate_time": 83.8,
-      "baseline_time": 67.0,
-      "time_delta_pct": 25.07
+      "candidate_nodes": 1270807667,
+      "baseline_nodes": 1281100532,
+      "node_delta_pct": -0.8,
+      "candidate_time": 87.2,
+      "baseline_time": 83.8,
+      "time_delta_pct": 4.06
     }
   },
   "results": {
@@ -47,9 +47,9 @@
       "expected_moves": [
         "b2"
       ],
-      "nodes": 326510277,
-      "time_sec": 18.8,
-      "nps": 17404059,
+      "nodes": 322569642,
+      "time_sec": 19.3,
+      "nps": 16732752,
       "error": null
     },
     "FFO #50": {
@@ -60,9 +60,9 @@
       "expected_moves": [
         "d8"
       ],
-      "nodes": 1281100532,
-      "time_sec": 83.8,
-      "nps": 15296575,
+      "nodes": 1270807667,
+      "time_sec": 87.2,
+      "nps": 14568918,
       "error": null
     }
   }
