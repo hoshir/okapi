@@ -1590,7 +1590,9 @@ end_search_pvs( BitBoard my_bits,
     }
 
     hash_hit = (entry.draft != NO_HASH_MOVE) &&
-	       (entry.flags & ENDGAME_SCORE);
+	       (entry.flags & ENDGAME_SCORE) &&
+	       ((entry.flags & (EXACT_VALUE | LOWER_BOUND)) ||
+		(entry.draft >= empties));
 
     if ( level == 0 && !hash_hit ) {
       HashEntry mid_entry;
