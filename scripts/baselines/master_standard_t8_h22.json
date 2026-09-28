@@ -1,6 +1,6 @@
 {
-  "verdict": "ACCEPT",
-  "reason": "Full suite confirmed node reduction of -5.95% with correct evaluations.",
+  "verdict": "NEUTRAL",
+  "reason": "Node counts remained virtually unchanged (-0.44% within [-0.5%, +0.5%]).",
   "tests_passed": true,
   "all_correct": true,
   "mode": "standard",
@@ -9,81 +9,81 @@
   "simplification_mode": false,
   "heavy_threshold": 3.0,
   "totals": {
-    "total_nodes": 3059435834,
+    "total_nodes": 3045897901,
     "total_time": 41.8
   },
   "summary": {
-    "total_candidate_nodes": 3059435834,
-    "total_baseline_nodes": 3253078149,
-    "total_node_delta_pct": -5.95,
+    "total_candidate_nodes": 3045897901,
+    "total_baseline_nodes": 3059435834,
+    "total_node_delta_pct": -0.44,
     "total_candidate_time": 41.8,
-    "total_baseline_time": 41.6,
-    "total_time_delta_pct": 0.48
+    "total_baseline_time": 41.8,
+    "total_time_delta_pct": -0.0
   },
   "comparison": {
     "FFO #40": {
-      "candidate_nodes": 14836051,
-      "baseline_nodes": 13958846,
-      "node_delta_pct": 6.28,
+      "candidate_nodes": 14685318,
+      "baseline_nodes": 14836051,
+      "node_delta_pct": -1.02,
       "candidate_time": 0.2,
-      "baseline_time": 0.1,
-      "time_delta_pct": 100.0
-    },
-    "FFO #41": {
-      "candidate_nodes": 23953123,
-      "baseline_nodes": 33891534,
-      "node_delta_pct": -29.32,
-      "candidate_time": 0.4,
-      "baseline_time": 0.6,
-      "time_delta_pct": -33.33
-    },
-    "FFO #42": {
-      "candidate_nodes": 42351482,
-      "baseline_nodes": 47082712,
-      "node_delta_pct": -10.05,
-      "candidate_time": 0.6,
-      "baseline_time": 0.6,
+      "baseline_time": 0.2,
       "time_delta_pct": 0.0
     },
+    "FFO #41": {
+      "candidate_nodes": 27301156,
+      "baseline_nodes": 23953123,
+      "node_delta_pct": 13.98,
+      "candidate_time": 0.5,
+      "baseline_time": 0.4,
+      "time_delta_pct": 25.0
+    },
+    "FFO #42": {
+      "candidate_nodes": 37915747,
+      "baseline_nodes": 42351482,
+      "node_delta_pct": -10.47,
+      "candidate_time": 0.5,
+      "baseline_time": 0.6,
+      "time_delta_pct": -16.67
+    },
     "FFO #48": {
-      "candidate_nodes": 152947403,
-      "baseline_nodes": 193234226,
-      "node_delta_pct": -20.85,
-      "candidate_time": 2.7,
-      "baseline_time": 3.2,
-      "time_delta_pct": -15.62
+      "candidate_nodes": 185048088,
+      "baseline_nodes": 152947403,
+      "node_delta_pct": 20.99,
+      "candidate_time": 3.1,
+      "baseline_time": 2.7,
+      "time_delta_pct": 14.81
     },
     "FFO #45": {
-      "candidate_nodes": 354244164,
-      "baseline_nodes": 379524476,
-      "node_delta_pct": -6.66,
+      "candidate_nodes": 362417262,
+      "baseline_nodes": 354244164,
+      "node_delta_pct": 2.31,
       "candidate_time": 4.1,
-      "baseline_time": 4.3,
-      "time_delta_pct": -4.65
+      "baseline_time": 4.1,
+      "time_delta_pct": 0.0
     },
     "FFO #49": {
-      "candidate_nodes": 439971935,
-      "baseline_nodes": 560761137,
-      "node_delta_pct": -21.54,
-      "candidate_time": 5.3,
-      "baseline_time": 6.2,
-      "time_delta_pct": -14.52
+      "candidate_nodes": 486388495,
+      "baseline_nodes": 439971935,
+      "node_delta_pct": 10.55,
+      "candidate_time": 5.7,
+      "baseline_time": 5.3,
+      "time_delta_pct": 7.55
     },
     "FFO #52": {
-      "candidate_nodes": 704849557,
-      "baseline_nodes": 730840366,
-      "node_delta_pct": -3.56,
-      "candidate_time": 10.9,
-      "baseline_time": 10.6,
-      "time_delta_pct": 2.83
+      "candidate_nodes": 727014649,
+      "baseline_nodes": 704849557,
+      "node_delta_pct": 3.14,
+      "candidate_time": 12.3,
+      "baseline_time": 10.9,
+      "time_delta_pct": 12.84
     },
     "FFO #50": {
-      "candidate_nodes": 1326282119,
-      "baseline_nodes": 1293784852,
-      "node_delta_pct": 2.51,
-      "candidate_time": 17.6,
-      "baseline_time": 16.0,
-      "time_delta_pct": 10.0
+      "candidate_nodes": 1205127186,
+      "baseline_nodes": 1326282119,
+      "node_delta_pct": -9.13,
+      "candidate_time": 15.4,
+      "baseline_time": 17.6,
+      "time_delta_pct": -12.5
     }
   },
   "results": {
@@ -95,9 +95,9 @@
       "expected_moves": [
         "a2"
       ],
-      "nodes": 14836051,
+      "nodes": 14685318,
       "time_sec": 0.2,
-      "nps": 98140854,
+      "nps": 81947490,
       "error": null
     },
     "FFO #41": {
@@ -108,9 +108,9 @@
       "expected_moves": [
         "h4"
       ],
-      "nodes": 23953123,
-      "time_sec": 0.4,
-      "nps": 55657046,
+      "nodes": 27301156,
+      "time_sec": 0.5,
+      "nps": 56545088,
       "error": null
     },
     "FFO #42": {
@@ -121,9 +121,9 @@
       "expected_moves": [
         "g2"
       ],
-      "nodes": 42351482,
-      "time_sec": 0.6,
-      "nps": 74369344,
+      "nodes": 37915747,
+      "time_sec": 0.5,
+      "nps": 76642060,
       "error": null
     },
     "FFO #48": {
@@ -134,9 +134,9 @@
       "expected_moves": [
         "f6"
       ],
-      "nodes": 152947403,
-      "time_sec": 2.7,
-      "nps": 56953194,
+      "nodes": 185048088,
+      "time_sec": 3.1,
+      "nps": 59503040,
       "error": null
     },
     "FFO #45": {
@@ -147,9 +147,9 @@
       "expected_moves": [
         "b2"
       ],
-      "nodes": 354244164,
+      "nodes": 362417262,
       "time_sec": 4.1,
-      "nps": 86342113,
+      "nps": 87637416,
       "error": null
     },
     "FFO #49": {
@@ -160,9 +160,9 @@
       "expected_moves": [
         "e1"
       ],
-      "nodes": 439971935,
-      "time_sec": 5.3,
-      "nps": 83755393,
+      "nodes": 486388495,
+      "time_sec": 5.7,
+      "nps": 84960693,
       "error": null
     },
     "FFO #52": {
@@ -173,9 +173,9 @@
       "expected_moves": [
         "a3"
       ],
-      "nodes": 704849557,
-      "time_sec": 10.9,
-      "nps": 64763383,
+      "nodes": 727014649,
+      "time_sec": 12.3,
+      "nps": 59237677,
       "error": null
     },
     "FFO #50": {
@@ -186,9 +186,9 @@
       "expected_moves": [
         "d8"
       ],
-      "nodes": 1326282119,
-      "time_sec": 17.6,
-      "nps": 75420073,
+      "nodes": 1205127186,
+      "time_sec": 15.4,
+      "nps": 78428573,
       "error": null
     }
   }
