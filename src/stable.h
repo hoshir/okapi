@@ -38,27 +38,8 @@ typedef struct {
   BitBoard bits;
 } EdgeIndices;
 
-/*
-  COUNT_EDGE_STABLE
-  Returns the number of stable edge discs for COLOR.
-*/
-
-int
-count_edge_stable( int color, BitBoard col_bits, BitBoard opp_bits );
-
 int
 count_edge_stable_indexed( int color, BitBoard col_bits, BitBoard opp_bits, EdgeIndices *edges );
-
-
-/*
-  COUNT_STABLE
-  Returns the number of stable discs for COLOR.
-  Note: COUNT_EDGE_STABLE must have been called immediately
-        before this function is called *or you lose big*.
-*/
-
-int
-count_stable( int color, BitBoard col_bits, BitBoard opp_bits );
 
 int
 count_stable_indexed( int color, BitBoard col_bits, BitBoard opp_bits, const EdgeIndices *edges );
@@ -66,9 +47,6 @@ count_stable_indexed( int color, BitBoard col_bits, BitBoard opp_bits, const Edg
 
 void
 init_stable( void );
-
-void
-finalize_stable( void );
 
 
 

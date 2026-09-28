@@ -260,18 +260,6 @@ count_edge_stable_indexed( int color,
 
 
 
-/*
-  COUNT_EDGE_STABLE
-  Computes the number of stable edge discs for COLOR.
-*/
-
-int
-count_edge_stable( int color,
-		   BitBoard col_bits,
-		   BitBoard opp_bits ) {
-  EdgeIndices e;
-  return count_edge_stable_indexed( color, col_bits, opp_bits, &e );
-}
 
 
 
@@ -304,19 +292,6 @@ count_stable_indexed( int color,
 
 
 
-/*
-  COUNT_STABLE
-  Legacy entry point computing edge discs and expanding full stability.
-*/
-
-int
-count_stable( int color,
-	      BitBoard col_bits,
-	      BitBoard opp_bits ) {
-  EdgeIndices e;
-  (void) count_edge_stable_indexed( color, col_bits, opp_bits, &e );
-  return count_stable_indexed( color, col_bits, opp_bits, &e );
-}
 
 
 
