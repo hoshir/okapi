@@ -722,11 +722,32 @@ probe_forced_reply_cutoff( int cand_sq,
 	    *cutoff_score = bound;
 	    return FORCED_CUTOFF;
 	  }
+	  if ( edges.bits != 0 && (cur_opp_bits & CENTRAL_MASK) != 0 ) {
+	    int cnt = non_iterative_popcount( cur_opp_bits );
+	    if ( 2 * cnt - 64 >= beta ) {
+	      int s_full = count_stable_indexed( OPP( cur_side ), cur_opp_bits, cur_my_bits, &edges );
+	      bound = 2 * s_full - 64;
+	      if ( bound >= beta ) {
+		*cutoff_score = bound;
+		return FORCED_CUTOFF;
+	      }
+	    }
+	  }
 	}
 	else {
 	  /* Opponent score is >= bound => side_to_move score is <= -bound */
 	  if ( -bound <= alpha ) {
 	    return FORCED_REFUTED;
+	  }
+	  if ( edges.bits != 0 && (cur_opp_bits & CENTRAL_MASK) != 0 ) {
+	    int cnt = non_iterative_popcount( cur_opp_bits );
+	    if ( -(2 * cnt - 64) <= alpha ) {
+	      int s_full = count_stable_indexed( OPP( cur_side ), cur_opp_bits, cur_my_bits, &edges );
+	      bound = 2 * s_full - 64;
+	      if ( -bound <= alpha ) {
+		return FORCED_REFUTED;
+	      }
+	    }
 	  }
 	}
       }
@@ -1453,6 +1474,18 @@ end_order_moves_presearch( int empties,
 	*etc_tried_ptr = move;
 	*etc_cutoff_score = lower_bound;
 	return TRUE;
+      }
+      if ( edges.bits != 0 && (child_my_bits & CENTRAL_MASK) != 0 ) {
+	int my_cnt = non_iterative_popcount( child_my_bits );
+	if ( 2 * my_cnt - 64 >= beta ) {
+	  int s_full = count_stable_indexed( side_to_move, child_my_bits, new_opp_bits, &edges );
+	  lower_bound = 2 * s_full - 64;
+	  if ( lower_bound >= beta ) {
+	    *etc_tried_ptr = move;
+	    *etc_cutoff_score = lower_bound;
+	    return TRUE;
+	  }
+	}
       }
 
       evals[disks_played][move] = move_score;
