@@ -30,7 +30,7 @@ extern int frozen_ponder_depth;
 
 /* Holds the value of the variable NODES the last time the
    timer module was called to check if a panic abort occured. */
-extern double last_panic_check;
+extern _Thread_local double last_panic_check;
 
 
 

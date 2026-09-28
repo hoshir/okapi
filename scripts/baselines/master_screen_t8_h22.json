@@ -1,43 +1,8 @@
 {
-  "verdict": "NEEDS_FULL",
-  "reason": "Screening showed promising node reduction (-4.52%). Proceed to --mode full.",
-  "tests_passed": true,
-  "all_correct": true,
   "mode": "screen",
   "threads": 8,
   "hash_bits": 22,
-  "simplification_mode": false,
-  "heavy_threshold": 3.0,
-  "totals": {
-    "total_nodes": 1520362325,
-    "total_time": 20.8
-  },
-  "summary": {
-    "total_candidate_nodes": 1520362325,
-    "total_baseline_nodes": 1592397320,
-    "total_node_delta_pct": -4.52,
-    "total_candidate_time": 20.8,
-    "total_baseline_time": 21.8,
-    "total_time_delta_pct": -4.59
-  },
-  "comparison": {
-    "FFO #45": {
-      "candidate_nodes": 361094697,
-      "baseline_nodes": 366333161,
-      "node_delta_pct": -1.43,
-      "candidate_time": 4.6,
-      "baseline_time": 4.7,
-      "time_delta_pct": -2.13
-    },
-    "FFO #50": {
-      "candidate_nodes": 1159267628,
-      "baseline_nodes": 1226064159,
-      "node_delta_pct": -5.45,
-      "candidate_time": 16.2,
-      "baseline_time": 17.1,
-      "time_delta_pct": -5.26
-    }
-  },
+  "created_at": "2026-09-28T13:18:37Z",
   "results": {
     "FFO #45": {
       "correct": true,
@@ -47,9 +12,9 @@
       "expected_moves": [
         "b2"
       ],
-      "nodes": 361094697,
-      "time_sec": 4.6,
-      "nps": 78881267,
+      "nodes": 349751790,
+      "time_sec": 4.5,
+      "nps": 77512372,
       "error": null
     },
     "FFO #50": {
@@ -60,9 +25,9 @@
       "expected_moves": [
         "d8"
       ],
-      "nodes": 1159267628,
-      "time_sec": 16.2,
-      "nps": 71490032,
+      "nodes": 1187472085,
+      "time_sec": 16.7,
+      "nps": 70924199,
       "error": null
     }
   }

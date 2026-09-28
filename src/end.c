@@ -38,6 +38,7 @@
 #include "midgame.h"
 #include "moves.h"
 #include "osfbook.h"
+#include "search.h"
 #include "patterns.h"
 #include "probcut.h"
 #include "search.h"
@@ -1186,9 +1187,8 @@ dispatch_siblings( BitBoard my_bits, BitBoard opp_bits,
 		   int pre_search_done,
 		   int *proven, int *proven_score, int *proven_cutoff ) {
   /* Splits nest, so several batches can be live on one thread at once
-     and the batch cannot be a single static.  It carries a whole
-     SearchState, which is too much to want on the search's own stack
-     several times over, and a split is rare enough that the allocation
+     and the batch cannot be a single static.  It carries the parent's
+     bitboard search state, and a split is rare enough that the allocation
      does not show up. */
   SiblingBatch *batch;
   int move[MAX_ROOT_MOVES];
@@ -1522,7 +1522,7 @@ end_search_pvs( BitBoard my_bits,
 		int selectivity,
 		int *selective_cutoff ) {
   static char buffer[16];
-  HashEntry entry, mid_entry;
+  HashEntry entry;
   int oppcol = OPP( side_to_move );
   int use_hash;
   int hash_hit = FALSE;
@@ -1650,8 +1650,6 @@ end_search_pvs( BitBoard my_bits,
 
   /* 4. Transposition table probing */
   use_hash = USE_HASH_TABLE;
-  mid_entry.draft = NO_HASH_MOVE;
-  mid_entry.flags = 0;
 
   if ( use_hash ) {
     find_hash( &entry, ENDGAME_MODE );
@@ -1685,15 +1683,14 @@ end_search_pvs( BitBoard my_bits,
     hash_hit = (entry.draft != NO_HASH_MOVE) &&
 	       (entry.flags & ENDGAME_SCORE);
 
-    find_hash( &mid_entry, MIDGAME_MODE );
-    if ( (mid_entry.draft != NO_HASH_MOVE) &&
-	 (mid_entry.flags & MIDGAME_SCORE) ) {
-      if ( (level <= 4) || (mid_entry.flags & (EXACT_VALUE | LOWER_BOUND)) ) {
-	if ( (level == 0) && !hash_hit &&
-	     (mid_entry.eval < WIPEOUT_THRESHOLD * 128) ) {
-	  entry = mid_entry;
-	  hash_hit = TRUE;
-	}
+    if ( level == 0 && !hash_hit ) {
+      HashEntry mid_entry;
+      find_hash( &mid_entry, MIDGAME_MODE );
+      if ( (mid_entry.draft != NO_HASH_MOVE) &&
+	   (mid_entry.flags & MIDGAME_SCORE) &&
+	   (mid_entry.eval < WIPEOUT_THRESHOLD * 128) ) {
+	entry = mid_entry;
+	hash_hit = TRUE;
       }
     }
   }
