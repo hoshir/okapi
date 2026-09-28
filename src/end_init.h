@@ -22,10 +22,6 @@ extern BitBoard neighborhood_mask[100];
 /* Quadrant parity mask for each square */
 extern const unsigned int quadrant_mask[100];
 
-/* Fastest-first thresholds and mobility factors */
-extern int fast_first_threshold[61][64];
-extern int ff_mob_factor[61];
-
 /* Endgame solve depths and output mode */
 extern int earliest_wld_solve;
 extern int earliest_full_solve;

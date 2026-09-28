@@ -2267,27 +2267,6 @@ end_search_pvs( BitBoard my_bits,
 	tls.stable_discs[WHITESQ][level + 1] = tls.stable_discs[WHITESQ][level];
       }
 
-      if ( square_mask[move] & BORDER_MASK ) {
-	EdgeIndices edges;
-	int s_edge = count_edge_stable_indexed( side_to_move, new_my_bits, new_opp_bits, &edges );
-	int lower_bound = 2 * s_edge - 64;
-	if ( lower_bound >= beta ) {
-	  best = (empties <= FASTEST_FIRST_DEPTH) ? lower_bound : beta;
-	  best_list[0] = move;
-	  if ( use_hash )
-	    add_hash_extended( ENDGAME_MODE, best, best_list,
-			       ENDGAME_SCORE | LOWER_BOUND, empties,
-			       *selective_cutoff ? selectivity : 0 );
-	  pv_depth[level] = level + 1;
-	  pv[level][level] = move;
-	  if ( level == 0 )
-	    end_best_root_move = move;
-	  end_unmake_move( move, diff1, diff2, pred, succ );
-	  disks_played = saved_disks_played;
-	  return best;
-	}
-      }
-
       int new_disc_diff = -disc_diff - 2 * flipped - 1;
 
       update_pv = FALSE;

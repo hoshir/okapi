@@ -6,16 +6,10 @@
    Contents:      Endgame initialization, statistical tables, and configuration.
 */
 
-#include <math.h>
-
 #include "bitboard.h"
 #include "constant.h"
 #include "end_init.h"
-#include "epcstat.h"
 #include "moves.h"
-
-#define FAST_FIRST_FACTOR            0.45
-#define MOB_FACTOR                   460
 
 BitBoard neighborhood_mask[100];
 
@@ -32,15 +26,9 @@ const unsigned int quadrant_mask[100] = {
   0, 0, 0, 0, 0, 0, 0, 0, 0, 0
 };
 
-int fast_first_threshold[61][64];
-int ff_mob_factor[61];
-
 int earliest_wld_solve = 0;
 int earliest_full_solve = 0;
 int full_output_mode = TRUE;
-
-static double fast_first_mean[61][64];
-static double fast_first_sigma[61][64];
 
 /*
    SETUP_END
@@ -50,9 +38,6 @@ static double fast_first_sigma[61][64];
 
 void
 setup_end( void ) {
-  double last_mean, last_sigma;
-  double ff_threshold[61];
-  double prelim_threshold[61][64];
   int i, j;
   static const int dir_shift[8] = {1, -1, 7, -7, 8, -8, 9, -9};
 
@@ -78,37 +63,6 @@ setup_end( void ) {
 	  neighborhood_mask[pos] |= 1ull << neighbor;
 	}
     }
-
-  /* Set the fastest-first mobility encouragements and thresholds */
-
-  for ( i = 0; i <= 60; i++ )
-    ff_mob_factor[i] = MOB_FACTOR;
-  for ( i = 0; i <= 60; i++ )
-    ff_threshold[i] = FAST_FIRST_FACTOR;
-
-  /* Calculate the alpha thresholds for using fastest-first for
-     each #empty and shallow search depth. */
-
-  for ( j = 0; j <= MAX_END_CORR_DEPTH; j++ ) {
-    last_sigma = 100.0;  /* Infinity in disc difference */
-    last_mean = 0.0;
-    for ( i = 60; i >= 0; i-- ) {
-      if ( end_stats_available[i][j] ) {
-	last_mean = end_mean[i][j];
-	last_sigma = ff_threshold[i] * end_sigma[i][j];
-      }
-      fast_first_mean[i][j] = last_mean;
-      fast_first_sigma[i][j] = last_sigma;
-      prelim_threshold[i][j] = last_mean + last_sigma;
-    }
-  }
-  for ( j = MAX_END_CORR_DEPTH + 1; j < 64; j++ )
-    for ( i = 0; i <= 60; i++ )
-      prelim_threshold[i][j] = prelim_threshold[i][MAX_END_CORR_DEPTH];
-  for ( i = 0; i <= 60; i++ )
-    for ( j = 0; j < 64; j++ )
-      fast_first_threshold[i][j] =
-	(int) ceil( prelim_threshold[i][j] * 128.0 );
 }
 
 /*
