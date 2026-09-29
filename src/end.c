@@ -1577,7 +1577,7 @@ end_search_pvs( BitBoard my_bits,
   int curr_alpha;
   int pre_search_done, etc_tried;
   int best_list_index, best_list_length;
-  int best_list[4];
+  int best_list[8];
   int proven[100], proven_score[100], proven_cutoff[100];
   int siblings_dispatched = FALSE;
   int can_split;
@@ -1634,7 +1634,7 @@ end_search_pvs( BitBoard my_bits,
   /* Initialize move list and check hash table moves */
   move_count[disks_played] = 0;
   best_list_length = 0;
-  for ( i = 0; i < 4; i++ )
+  for ( i = 0; i < 8; i++ )
     best_list[i] = 0;
   if ( hash_hit )
     for ( i = 0; i < 4; i++ ) {
@@ -1698,6 +1698,21 @@ end_search_pvs( BitBoard my_bits,
 	  }
 	}
     }
+
+  if ( level == 0 && end_best_root_move != 0 && bb_valid_move( end_best_root_move, my_bits, opp_bits ) ) {
+    int already_in = FALSE;
+    for ( i = 0; i < best_list_length; i++ ) {
+      if ( best_list[i] == end_best_root_move ) { already_in = TRUE; break; }
+    }
+    if ( !already_in ) {
+      /* Prepend to best_list[0] */
+      for ( i = best_list_length; i > 0; i-- ) {
+        best_list[i] = best_list[i - 1];
+      }
+      best_list[0] = end_best_root_move;
+      best_list_length++;
+    }
+  }
 
   for ( move_index = 0, best_list_index = 0; TRUE;
 	  move_index++, best_list_index++ ) {
@@ -2085,6 +2100,7 @@ send_solve_status( int empties,
 }
 
 
+
 /*
   END_GAME
   Provides an interface to the fast endgame solver.
@@ -2162,6 +2178,13 @@ end_game( int side_to_move,
   last_panic_check = 0.0;
   solve_status = UNKNOWN;
   old_eval = 0;
+
+  BitBoard root_my_bits, root_opp_bits;
+  set_bitboards( board, side_to_move, &root_my_bits, &root_opp_bits );
+  if ( bb_valid_move( pv[0][0], root_my_bits, root_opp_bits ) )
+    end_best_root_move = pv[0][0];
+  else
+    end_best_root_move = 0;
 
   /* Prepare for the shallow searches using the midgame eval */
 
