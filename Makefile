@@ -32,6 +32,7 @@ SRCS = \
 	end.c \
 	end_init.c \
 	end_leaf.c \
+	end_patterns.c \
 	epcstat.c \
 	error.c \
 	eval.c \
