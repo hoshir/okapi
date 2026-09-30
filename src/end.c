@@ -1570,7 +1570,7 @@ end_presearch_ab( BitBoard my_bits, BitBoard opp_bits,
   best_list[3] = 0;
 
   add_hash_extended( ENDGAME_MODE, score_to_store, best_list,
-		     flags | MIDGAME_SCORE, depth, 0 );
+		     flags | MIDGAME_SCORE | HEURISTIC_PRESEARCH_MOVE, depth, 0 );
 
   if ( best_move != NULL )
     *best_move = best_sq;
@@ -3024,12 +3024,12 @@ end_game( int side_to_move,
 
   /* Start non-selective solve */
 
-  if ( !wld && (empties >= 20) ) {
+  if ( !wld && (empties >= 16) ) {
     set_bitboards( board, side_to_move, &root_my_bits, &root_opp_bits );
     prepare_to_solve( root_my_bits | root_opp_bits );
     determine_hash_values( side_to_move, board );
 
-    int max_presearch = MIN( 10, empties - 10 );
+    int max_presearch = MIN( 10, empties - 8 );
     int pre_best = 0;
     int last_eval = 0;
     for ( int d = 4; d <= max_presearch; d += 2 ) {
