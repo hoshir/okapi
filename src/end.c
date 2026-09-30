@@ -1471,14 +1471,21 @@ end_presearch_ab( BitBoard my_bits, BitBoard opp_bits,
     if ( sq == hash_move )
       continue;
 
-    int score = 0;
-    if ( quadrant_mask[sq] & region_parity )
-      score += 100;
+    BitBoard new_my_bits;
+    TestFlips_bitboard_to( sq, my_bits, opp_bits, &new_my_bits );
+    BitBoard flipped = new_my_bits & ~my_bits & ~square_mask[sq];
+    BitBoard new_my = new_my_bits;
+    BitBoard new_opp = opp_bits ^ flipped;
+    BitBoard opp_replies = generate_all_c( new_opp, new_my );
+    int opp_mob = non_iterative_popcount( opp_replies );
+    int opp_corners = non_iterative_popcount( opp_replies & 0x8100000000000081ull );
+
+    int score = - 128 * opp_mob - 256 * opp_corners;
+    if ( opp_mob == 0 ) score += 1024;
+    if ( quadrant_mask[sq] & region_parity ) score += 128;
     BitBoard bb = square_mask[sq];
-    if ( bb & CORNER_MASK )
-      score += 500;
-    else if ( bb & 0x0042000000004200ull )
-      score -= 250;
+    if ( bb & CORNER_MASK ) score += 512;
+    else if ( bb & 0x0042000000004200ull ) score -= 256;
 
     moves_arr[n_moves] = sq;
     scores_arr[n_moves] = score;
@@ -3089,6 +3096,9 @@ end_game( int side_to_move,
     if ( !wld ) {
       int delta = 4;
       while ( (root_eval <= alpha || root_eval >= beta) && !is_panic_abort() && !force_return ) {
+        if ( root_eval >= 64 || root_eval <= -64 )
+          break;
+
         if ( root_eval <= alpha ) {
           /* Fail low: widen lower bound exponentially */
           if ( delta >= 64 ) {
@@ -3110,7 +3120,7 @@ end_game( int side_to_move,
         root_eval = end_tree_wrapper( 0, empties, side_to_move,
                                       alpha, beta, 0, TRUE );
         adjust_counter( &nodes );
-        if ( alpha <= -64 && beta >= 64 )
+        if ( (alpha <= -64 && beta >= 64) || root_eval >= 64 || root_eval <= -64 )
           break;
         delta *= 2;
         if ( delta > 64 ) delta = 64;
