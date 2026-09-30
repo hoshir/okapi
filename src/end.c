@@ -1372,6 +1372,194 @@ end_order_moves_presearch( int level,
 
 
 /*
+  END_PRESEARCH_AB
+  Pure-bitboard alpha-beta pre-search helper using 4-pattern endgame LTR model (ARCH-006).
+  Runs iterative deepening before exact endgame solve to seed Move 0 throughout the top 10 plies.
+*/
+
+static int
+end_presearch_ab( BitBoard my_bits, BitBoard opp_bits,
+		  int side_to_move, int depth, int empties,
+		  int alpha, int beta, int level, int *best_move ) {
+  INCREMENT_COUNTER( nodes );
+  if ( best_move != NULL )
+    *best_move = 0;
+
+  if ( empties <= 7 ) {
+    return (non_iterative_popcount( my_bits ) - non_iterative_popcount( opp_bits )) * 128;
+  }
+
+  if ( depth <= 0 ) {
+    int val = end_pattern_evaluate( my_bits, opp_bits );
+    if ( (region_parity != 0) && (empties & 1) )
+      val += REGION_PARITY_BONUS;
+    return val;
+  }
+
+  /* Move Generation & Pass Handling */
+  BitBoard moves = generate_all_c( my_bits, opp_bits );
+  if ( moves == 0 ) {
+    BitBoard opp_moves = generate_all_c( opp_bits, my_bits );
+    if ( opp_moves == 0 ) {
+      int disc_diff = non_iterative_popcount( my_bits ) - non_iterative_popcount( opp_bits );
+      int final_score = (disc_diff > 0) ? (disc_diff + empties) :
+			((disc_diff < 0) ? (disc_diff - empties) : 0);
+      return final_score * 128;
+    }
+    hash1 ^= hash_flip_color1;
+    hash2 ^= hash_flip_color2;
+    int val = -end_presearch_ab( opp_bits, my_bits, OPP( side_to_move ),
+				 depth, empties, -beta, -alpha, level + 1, NULL );
+    hash1 ^= hash_flip_color1;
+    hash2 ^= hash_flip_color2;
+    return val;
+  }
+
+  /* Transposition Table Probing */
+  HashEntry entry;
+  find_hash( &entry, ENDGAME_MODE );
+  int hash_move = 0;
+  if ( entry.draft != NO_HASH_MOVE && bb_valid_move( entry.move[0], my_bits, opp_bits ) ) {
+    hash_move = entry.move[0];
+  }
+
+  if ( level > 0 && entry.draft != NO_HASH_MOVE && entry.draft >= depth ) {
+    int tt_val = entry.eval * 128;
+    if ( entry.flags & EXACT_VALUE ) {
+      if ( best_move != NULL ) *best_move = hash_move;
+      return tt_val;
+    }
+    if ( (entry.flags & LOWER_BOUND) && tt_val >= beta ) {
+      if ( best_move != NULL ) *best_move = hash_move;
+      return tt_val;
+    }
+    if ( (entry.flags & UPPER_BOUND) && tt_val <= alpha ) {
+      if ( best_move != NULL ) *best_move = hash_move;
+      return tt_val;
+    }
+  }
+
+  /* Move Ordering: Move 0 = hash_move, remaining sorted by quadrant parity & corner/X */
+  int moves_arr[64];
+  int scores_arr[64];
+  int n_moves = 0;
+
+  if ( hash_move != 0 ) {
+    moves_arr[n_moves] = hash_move;
+    scores_arr[n_moves] = 100000;
+    n_moves++;
+  }
+
+  BitBoard rem_moves = moves;
+  while ( rem_moves != 0 ) {
+    int bit = FIRST_BIT( rem_moves );
+    rem_moves &= rem_moves - 1;
+    int sq = square_of_bit[bit];
+    if ( sq == hash_move )
+      continue;
+
+    int score = 0;
+    if ( quadrant_mask[sq] & region_parity )
+      score += 100;
+    BitBoard bb = square_mask[sq];
+    if ( bb & CORNER_MASK )
+      score += 500;
+    else if ( bb & 0x0042000000004200ull )
+      score -= 250;
+
+    moves_arr[n_moves] = sq;
+    scores_arr[n_moves] = score;
+    n_moves++;
+  }
+
+  for ( int i = 1; i < n_moves; i++ ) {
+    int m = moves_arr[i];
+    int s = scores_arr[i];
+    int j = i - 1;
+    while ( j >= 0 && scores_arr[j] < s ) {
+      moves_arr[j + 1] = moves_arr[j];
+      scores_arr[j + 1] = scores_arr[j];
+      j--;
+    }
+    moves_arr[j + 1] = m;
+    scores_arr[j + 1] = s;
+  }
+
+  /* Search Loop */
+  int orig_alpha = alpha;
+  int best_val = -INFINITE_EVAL;
+  int best_sq = moves_arr[0];
+
+  for ( int i = 0; i < n_moves; i++ ) {
+    int sq = moves_arr[i];
+    BitBoard new_my_bits;
+    TestFlips_bitboard_to( sq, my_bits, opp_bits, &new_my_bits );
+
+    unsigned int diff1, diff2;
+    end_hash_diff( new_my_bits, my_bits, side_to_move, sq, &diff1, &diff2 );
+    hash1 ^= diff1;
+    hash2 ^= diff2;
+    region_parity ^= quadrant_mask[sq];
+
+    int child_best = 0;
+    int val = -end_presearch_ab( opp_bits & ~new_my_bits,
+				 new_my_bits,
+				 OPP( side_to_move ),
+				 depth - 1,
+				 empties - 1,
+				 -beta,
+				 -alpha,
+				 level + 1,
+				 &child_best );
+
+    region_parity ^= quadrant_mask[sq];
+    hash1 ^= diff1;
+    hash2 ^= diff2;
+
+    if ( val > best_val ) {
+      best_val = val;
+      best_sq = sq;
+      if ( val > alpha ) {
+	alpha = val;
+	if ( alpha >= beta )
+	  break;
+      }
+    }
+  }
+
+  /* TT Storage */
+  int flags;
+  int score_to_store;
+  if ( best_val >= beta ) {
+    flags = LOWER_BOUND;
+    score_to_store = (best_val >= 0) ? (best_val / 128) : ((best_val - 127) / 128);
+  }
+  else if ( best_val > orig_alpha ) {
+    flags = EXACT_VALUE;
+    score_to_store = (best_val >= 0) ? ((best_val + 64) / 128) : ((best_val - 64) / 128);
+  }
+  else {
+    flags = UPPER_BOUND;
+    score_to_store = (best_val >= 0) ? ((best_val + 127) / 128) : (best_val / 128);
+  }
+
+  int best_list[4];
+  best_list[0] = best_sq;
+  best_list[1] = 0;
+  best_list[2] = 0;
+  best_list[3] = 0;
+
+  add_hash_extended( ENDGAME_MODE, score_to_store, best_list,
+		     flags | MIDGAME_SCORE, depth, 0 );
+
+  if ( best_move != NULL )
+    *best_move = best_sq;
+
+  return best_val;
+}
+
+
+/*
   END_SEARCH_PVS
   Single recursive PVS endgame search core.
   Unifies deep endgame search (>= 13 empties) and middle endgame search (8-12 empties).
@@ -1552,9 +1740,7 @@ end_search_pvs( BitBoard my_bits,
     }
 
     hash_hit = (entry.draft != NO_HASH_MOVE) &&
-	       (entry.flags & ENDGAME_SCORE) &&
-	       ((entry.flags & (EXACT_VALUE | LOWER_BOUND)) ||
-		(entry.draft >= empties));
+	       bb_valid_move( entry.move[0], my_bits, opp_bits );
 
     if ( level == 0 && !hash_hit ) {
       HashEntry mid_entry;
@@ -1700,11 +1886,17 @@ end_search_pvs( BitBoard my_bits,
     }
 
   if ( level == 0 && end_best_root_move != 0 && bb_valid_move( end_best_root_move, my_bits, opp_bits ) ) {
-    int already_in = FALSE;
+    int pos = -1;
     for ( i = 0; i < best_list_length; i++ ) {
-      if ( best_list[i] == end_best_root_move ) { already_in = TRUE; break; }
+      if ( best_list[i] == end_best_root_move ) { pos = i; break; }
     }
-    if ( !already_in ) {
+    if ( pos > 0 ) {
+      for ( i = pos; i > 0; i-- ) {
+        best_list[i] = best_list[i - 1];
+      }
+      best_list[0] = end_best_root_move;
+    }
+    else if ( pos < 0 ) {
       /* Prepend to best_list[0] */
       for ( i = best_list_length; i > 0; i-- ) {
         best_list[i] = best_list[i - 1];
@@ -2374,6 +2566,34 @@ end_game( int side_to_move,
   }
 
   /* Start non-selective solve */
+
+  if ( !wld && (empties >= 20) ) {
+    set_bitboards( board, side_to_move, &root_my_bits, &root_opp_bits );
+    prepare_to_solve( root_my_bits | root_opp_bits );
+    determine_hash_values( side_to_move, board );
+
+    int max_presearch = MIN( 10, empties - 10 );
+    int pre_best = 0;
+    for ( int d = 4; d <= max_presearch; d += 2 ) {
+      int cur_best = 0;
+      (void) end_presearch_ab( root_my_bits, root_opp_bits,
+			       side_to_move, d, empties,
+			       -INFINITE_EVAL, INFINITE_EVAL,
+			       0, &cur_best );
+      if ( is_panic_abort() || force_return )
+	break;
+      if ( cur_best != 0 && bb_valid_move( cur_best, root_my_bits, root_opp_bits ) ) {
+	pre_best = cur_best;
+      }
+    }
+    if ( pre_best != 0 ) {
+      end_best_root_move = pre_best;
+      pv[0][0] = pre_best;
+    }
+    determine_hash_values( side_to_move, board );
+    prepare_to_solve( root_my_bits | root_opp_bits );
+    adjust_counter( &nodes );
+  }
 
   if ( wld ) {
     alpha = -1;
