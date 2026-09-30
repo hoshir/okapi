@@ -1,8 +1,19 @@
 {
+  "verdict": "ACCEPT_NO_BASELINE",
+  "reason": "All correctness checks passed (no baseline comparison provided).",
+  "tests_passed": true,
+  "all_correct": true,
   "mode": "screen",
   "threads": 8,
   "hash_bits": 22,
-  "created_at": "2026-09-29T01:59:15Z",
+  "simplification_mode": false,
+  "heavy_threshold": 3.0,
+  "totals": {
+    "total_nodes": 1272835874,
+    "total_time": 18.5
+  },
+  "summary": null,
+  "comparison": null,
   "results": {
     "FFO #45": {
       "correct": true,
@@ -12,9 +23,9 @@
       "expected_moves": [
         "b2"
       ],
-      "nodes": 319751963,
-      "time_sec": 4.0,
-      "nps": 80860406,
+      "nodes": 315947011,
+      "time_sec": 3.8,
+      "nps": 82124611,
       "error": null
     },
     "FFO #50": {
@@ -25,9 +36,9 @@
       "expected_moves": [
         "d8"
       ],
-      "nodes": 960763840,
-      "time_sec": 14.6,
-      "nps": 65642647,
+      "nodes": 956888863,
+      "time_sec": 14.7,
+      "nps": 64984228,
       "error": null
     }
   }
