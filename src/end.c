@@ -2972,7 +2972,7 @@ end_game( int side_to_move,
 
   check_panic_abort();
 
-  if ( is_panic_abort() || force_return || long_selective_search ) {
+  if ( is_panic_abort() || force_return || (wld && long_selective_search) ) {
 
     /* Don't try non-selective solve. */
 
@@ -3068,6 +3068,7 @@ end_game( int side_to_move,
     if ( pre_best != 0 ) {
       end_best_root_move = pre_best;
       pv[0][0] = pre_best;
+      last_window_center = (last_eval >= 0) ? (last_eval + 64) / 128 : (last_eval - 64) / 128;
     }
     determine_hash_values( side_to_move, board );
     prepare_to_solve( root_my_bits | root_opp_bits );
