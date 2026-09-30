@@ -3024,18 +3024,40 @@ end_game( int side_to_move,
 
     int max_presearch = MIN( 10, empties - 10 );
     int pre_best = 0;
+    int last_eval = 0;
     for ( int d = 4; d <= max_presearch; d += 2 ) {
       int cur_best = 0;
-      (void) end_presearch_ab( root_my_bits, root_opp_bits,
-			       side_to_move, d, empties,
-			       -INFINITE_EVAL, INFINITE_EVAL,
-			       0, &cur_best );
+      int val;
+      if ( d == 4 ) {
+	val = end_presearch_ab( root_my_bits, root_opp_bits,
+				side_to_move, d, empties,
+				-INFINITE_EVAL, INFINITE_EVAL,
+				0, &cur_best );
+      } else {
+	int alpha = last_eval - 256;
+	int beta = last_eval + 256;
+	val = end_presearch_ab( root_my_bits, root_opp_bits,
+				side_to_move, d, empties,
+				alpha, beta,
+				0, &cur_best );
+	if ( !is_panic_abort() && !force_return ) {
+	  if ( val <= alpha || val >= beta ) {
+	    val = end_presearch_ab( root_my_bits, root_opp_bits,
+				    side_to_move, d, empties,
+				    -INFINITE_EVAL, INFINITE_EVAL,
+				    0, &cur_best );
+	  }
+	}
+      }
+      last_eval = val;
+
       if ( is_panic_abort() || force_return )
 	break;
       if ( cur_best != 0 && bb_valid_move( cur_best, root_my_bits, root_opp_bits ) ) {
 	pre_best = cur_best;
       }
     }
+
     if ( pre_best != 0 ) {
       end_best_root_move = pre_best;
       pv[0][0] = pre_best;
