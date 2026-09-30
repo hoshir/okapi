@@ -3071,6 +3071,10 @@ end_game( int side_to_move,
     alpha = -1;
     beta = +1;
   }
+  else if ( empties >= 24 ) {
+    alpha = last_window_center - 2;
+    beta = last_window_center + 2;
+  }
   else {
     alpha = last_window_center - 1;
     beta = last_window_center + 1;
@@ -3083,36 +3087,33 @@ end_game( int side_to_move,
 
   if ( !is_panic_abort() && !force_return ) {
     if ( !wld ) {
-      if ( root_eval <= alpha ) {
-	int ceiling_value = last_window_center - 2;
-	while ( 1 ) {
-	  alpha = ceiling_value - 1;
-	  beta = ceiling_value;
-	  root_eval = end_tree_wrapper( 0, empties, side_to_move,
-					alpha, beta, 0, TRUE );
-	  if ( is_panic_abort() || force_return )
-	    break;
-	  if ( root_eval > alpha )
-	    break;
-	  else
-	    ceiling_value -= 2;
-	}
-      }
-      else if ( root_eval >= beta ) {
-	int floor_value = last_window_center + 2;
-	while ( 1 ) {
-	  alpha = floor_value - 1;
-	  beta = floor_value + 1;
-	  root_eval = end_tree_wrapper( 0, empties, side_to_move,
-					alpha, beta, 0, TRUE );
-	  if ( is_panic_abort() || force_return )
-	    break;
-	  assert( root_eval > alpha );
-	  if ( root_eval < beta )
-	    break;
-	  else
-	    floor_value += 2;
-	}
+      int delta = 4;
+      while ( (root_eval <= alpha || root_eval >= beta) && !is_panic_abort() && !force_return ) {
+        if ( root_eval <= alpha ) {
+          /* Fail low: widen lower bound exponentially */
+          if ( delta >= 64 ) {
+            alpha = -64;
+          } else {
+            alpha = MAX( -64, last_window_center - delta );
+          }
+          beta = MIN( 64, last_window_center + 1 );
+        }
+        else if ( root_eval >= beta ) {
+          /* Fail high: widen upper bound exponentially */
+          alpha = MAX( -64, last_window_center - 1 );
+          if ( delta >= 64 ) {
+            beta = 64;
+          } else {
+            beta = MIN( 64, last_window_center + delta );
+          }
+        }
+        root_eval = end_tree_wrapper( 0, empties, side_to_move,
+                                      alpha, beta, 0, TRUE );
+        adjust_counter( &nodes );
+        if ( alpha <= -64 && beta >= 64 )
+          break;
+        delta *= 2;
+        if ( delta > 64 ) delta = 64;
       }
     }
     if ( !is_panic_abort() && !force_return ) {
