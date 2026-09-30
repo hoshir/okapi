@@ -1,6 +1,6 @@
 {
-  "verdict": "ACCEPT_NO_BASELINE",
-  "reason": "All correctness checks passed (no baseline comparison provided).",
+  "verdict": "NEEDS_FULL",
+  "reason": "Screening showed promising node reduction (-30.20%). Proceed to --mode full.",
   "tests_passed": true,
   "all_correct": true,
   "mode": "screen",
@@ -9,11 +9,35 @@
   "simplification_mode": false,
   "heavy_threshold": 3.0,
   "totals": {
-    "total_nodes": 1272835874,
-    "total_time": 18.5
+    "total_nodes": 888448063,
+    "total_time": 12.3
   },
-  "summary": null,
-  "comparison": null,
+  "summary": {
+    "total_candidate_nodes": 888448063,
+    "total_baseline_nodes": 1272835874,
+    "total_node_delta_pct": -30.2,
+    "total_candidate_time": 12.3,
+    "total_baseline_time": 18.5,
+    "total_time_delta_pct": -33.51
+  },
+  "comparison": {
+    "FFO #45": {
+      "candidate_nodes": 283370484,
+      "baseline_nodes": 315947011,
+      "node_delta_pct": -10.31,
+      "candidate_time": 3.3,
+      "baseline_time": 3.8,
+      "time_delta_pct": -13.16
+    },
+    "FFO #50": {
+      "candidate_nodes": 605077579,
+      "baseline_nodes": 956888863,
+      "node_delta_pct": -36.77,
+      "candidate_time": 9.0,
+      "baseline_time": 14.7,
+      "time_delta_pct": -38.78
+    }
+  },
   "results": {
     "FFO #45": {
       "correct": true,
@@ -23,9 +47,9 @@
       "expected_moves": [
         "b2"
       ],
-      "nodes": 315947011,
-      "time_sec": 3.8,
-      "nps": 82124611,
+      "nodes": 283370484,
+      "time_sec": 3.3,
+      "nps": 86773152,
       "error": null
     },
     "FFO #50": {
@@ -36,9 +60,9 @@
       "expected_moves": [
         "d8"
       ],
-      "nodes": 956888863,
-      "time_sec": 14.7,
-      "nps": 64984228,
+      "nodes": 605077579,
+      "time_sec": 9.0,
+      "nps": 66966696,
       "error": null
     }
   }
