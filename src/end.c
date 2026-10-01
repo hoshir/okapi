@@ -1239,7 +1239,6 @@ end_order_moves_presearch( int level,
 			   const int *proven_score,
 			   int *etc_tried_ptr,
 			   int *etc_cutoff_score ) {
-  int shallow_index;
   int i, j;
   int move;
   int etc_demoted[100];
@@ -1258,18 +1257,19 @@ end_order_moves_presearch( int level,
   CandidateMove candidates[64];
   int candidate_count = 0;
 
-  for ( shallow_index = 0; shallow_index < MOVE_ORDER_SIZE; shallow_index++ ) {
-    int already_checked = FALSE;
+  BitBoard legal_moves = generate_all_c( my_bits, opp_bits );
+  if ( *etc_tried_ptr != 0 )
+    legal_moves &= ~square_mask[*etc_tried_ptr];
+  for ( j = 0; j < best_list_length; j++ ) {
+    legal_moves &= ~square_mask[best_list[j]];
+  }
+
+  for ( int shallow_index = 0; shallow_index < MOVE_ORDER_SIZE; shallow_index++ ) {
+    if ( legal_moves == 0 )
+      break;
     move = sorted_move_order[disks_played][shallow_index];
-    if ( move == *etc_tried_ptr )
-      continue;
-    for ( j = 0; j < best_list_length; j++ ) {
-      if ( move == best_list[j] ) {
-	already_checked = TRUE;
-	break;
-      }
-    }
-    if ( !already_checked && !((my_bits | opp_bits) & square_mask[move]) ) {
+    if ( legal_moves & square_mask[move] ) {
+      legal_moves &= ~square_mask[move];
       int flipped = TestFlips_wrapper( move, my_bits, opp_bits );
       if ( flipped > 0 ) {
 	candidates[candidate_count].sq = move;
@@ -1550,7 +1550,29 @@ end_presearch_ab( BitBoard my_bits, BitBoard opp_bits,
     region_parity ^= quadrant_mask[sq];
 
     int child_best = 0;
-    int val = -end_presearch_ab( opp_bits & ~new_my_bits,
+    int val;
+    if ( i == 0 ) {
+      val = -end_presearch_ab( opp_bits & ~new_my_bits,
+			       new_my_bits,
+			       OPP( side_to_move ),
+			       depth - 1,
+			       empties - 1,
+			       -beta,
+			       -alpha,
+			       level + 1,
+			       &child_best );
+    } else {
+      val = -end_presearch_ab( opp_bits & ~new_my_bits,
+			       new_my_bits,
+			       OPP( side_to_move ),
+			       depth - 1,
+			       empties - 1,
+			       -alpha - 1,
+			       -alpha,
+			       level + 1,
+			       &child_best );
+      if ( val > alpha && val < beta ) {
+	val = -end_presearch_ab( opp_bits & ~new_my_bits,
 				 new_my_bits,
 				 OPP( side_to_move ),
 				 depth - 1,
@@ -1559,6 +1581,8 @@ end_presearch_ab( BitBoard my_bits, BitBoard opp_bits,
 				 -alpha,
 				 level + 1,
 				 &child_best );
+      }
+    }
 
     region_parity ^= quadrant_mask[sq];
     hash1 ^= diff1;
