@@ -63,7 +63,7 @@
 #define EVENT_CHECK_INTERVAL         250000.0
 #endif
 
-#define LOW_LEVEL_DEPTH              7
+#define LOW_LEVEL_DEPTH              8
 #define HASH_DEPTH                   (LOW_LEVEL_DEPTH + 1)
 
 /* The disc difference when special wipeout move ordering is tried.
@@ -427,6 +427,19 @@ solve_parity( BitBoard my_bits,
 	      int disc_diff,
 	      int pass_legal,
 	      int level ) {
+  if ( empties == 8 ) {
+    int sq1 = end_move_list[END_MOVE_LIST_HEAD].succ;
+    int sq2 = end_move_list[sq1].succ;
+    int sq3 = end_move_list[sq2].succ;
+    int sq4 = end_move_list[sq3].succ;
+    int sq5 = end_move_list[sq4].succ;
+    int sq6 = end_move_list[sq5].succ;
+    int sq7 = end_move_list[sq6].succ;
+    int sq8 = end_move_list[sq7].succ;
+    return solve_eight_empty( my_bits, opp_bits, sq1, sq2, sq3, sq4, sq5, sq6, sq7, sq8,
+			      alpha, beta, color, disc_diff, pass_legal );
+  }
+
   if ( empties == 7 ) {
     int sq1 = end_move_list[END_MOVE_LIST_HEAD].succ;
     int sq2 = end_move_list[sq1].succ;
@@ -581,7 +594,7 @@ end_unmake_move( int sq,
 #define ETC_2PLY_CUTOFF   2
 
 #ifndef MIN_2PLY_ETC_DEPTH
-#define MIN_2PLY_ETC_DEPTH 10
+#define MIN_2PLY_ETC_DEPTH 11
 #endif
 
 #ifndef MAX_2PLY_ETC_MOB

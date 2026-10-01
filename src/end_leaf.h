@@ -151,6 +151,23 @@ solve_seven_empty( BitBoard my_bits,
 		   int disc_diff,
 		   int pass_legal );
 
+int
+solve_eight_empty( BitBoard my_bits,
+		   BitBoard opp_bits,
+		   int sq1,
+		   int sq2,
+		   int sq3,
+		   int sq4,
+		   int sq5,
+		   int sq6,
+		   int sq7,
+		   int sq8,
+		   int alpha,
+		   int beta,
+		   int color,
+		   int disc_diff,
+		   int pass_legal );
+
 #ifdef __cplusplus
 }
 #endif
