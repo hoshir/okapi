@@ -41,9 +41,9 @@ TOTAL_WEIGHTS = CORNER33_COUNT + EDGE2X_COUNT + RECT24_COUNT + DIAG8_COUNT  # 91
 class EndgameLTRDataset(Dataset):
     """Pre-processed tensor dataset for fast batched training."""
 
-    def __init__(self, samples: List[dict], label_smoothing: float = 0.05):
+    def __init__(self, samples: List[dict], scores: Optional[List[float]] = None, label_smoothing: float = 0.05):
         self.items = []
-        for s in samples:
+        for i, s in enumerate(samples):
             child_feats = s["child_features"]
             k = len(child_feats)
             if k < 2:
@@ -70,10 +70,13 @@ class EndgameLTRDataset(Dataset):
             targets = torch.full((k,), label_smoothing / (k - 1), dtype=torch.float32)
             targets[best_idx] = 1.0 - label_smoothing
 
+            score_val = float(scores[i]) if scores is not None else 0.0
+
             self.items.append((
                 torch.tensor(move_indices, dtype=torch.long),  # (k, 18)
                 targets,                                       # (k,)
                 best_idx,
+                score_val,
             ))
 
     def __len__(self):
@@ -92,19 +95,21 @@ def collate_fn(batch):
     padded_targets = torch.zeros((batch_size, max_k), dtype=torch.float32)
     mask = torch.zeros((batch_size, max_k), dtype=torch.bool)
     best_indices = torch.zeros(batch_size, dtype=torch.long)
+    target_scores = torch.zeros(batch_size, dtype=torch.float32)
 
-    for i, (indices, targets, best_idx) in enumerate(batch):
+    for i, (indices, targets, best_idx, score_val) in enumerate(batch):
         k = indices.shape[0]
         padded_indices[i, :k] = indices
         padded_targets[i, :k] = targets
         mask[i, :k] = True
         best_indices[i] = best_idx
+        target_scores[i] = score_val
 
-    return padded_indices, padded_targets, mask, best_indices
+    return padded_indices, padded_targets, mask, best_indices, target_scores
 
 
 class EndgamePatternModel(nn.Module):
-    """Ultra-lightweight 4-pattern move ordering model."""
+    """Ultra-lightweight 4-pattern move ordering model with exact color anti-symmetry."""
 
     def __init__(self):
         super().__init__()
@@ -119,53 +124,76 @@ class EndgamePatternModel(nn.Module):
         nn.init.zeros_(self.r24_emb.weight)
         nn.init.zeros_(self.d8_emb.weight)
 
-    def forward(self, indices: torch.Tensor) -> torch.Tensor:
-        """indices: (batch_size, max_k, 18)
-        c33: indices[:, :, 0:4]
-        e2x: indices[:, :, 4:8]
-        r24: indices[:, :, 8:16]
-        d8:  indices[:, :, 16:18]
-        """
+    def _eval_raw(self, indices: torch.Tensor) -> torch.Tensor:
         c33_scores = self.c33_emb(indices[:, :, 0:4]).squeeze(-1).sum(dim=-1)
         e2x_scores = self.e2x_emb(indices[:, :, 4:8]).squeeze(-1).sum(dim=-1)
         r24_scores = self.r24_emb(indices[:, :, 8:16]).squeeze(-1).sum(dim=-1)
         d8_scores = self.d8_emb(indices[:, :, 16:18]).squeeze(-1).sum(dim=-1)
         return c33_scores + e2x_scores + r24_scores + d8_scores
 
+    def forward(self, indices: torch.Tensor) -> torch.Tensor:
+        """indices: (batch_size, max_k, 18)
+        Enforces mathematically exact color anti-symmetry: f(x) = 0.5 * (f_raw(x) - f_raw(inv(x))).
+        """
+        inv_indices = indices.clone()
+        inv_indices[:, :, 0:4] = 19682 - inv_indices[:, :, 0:4]
+        inv_indices[:, :, 4:8] = 59048 - inv_indices[:, :, 4:8]
+        inv_indices[:, :, 8:16] = 6560 - inv_indices[:, :, 8:16]
+        inv_indices[:, :, 16:18] = 6560 - inv_indices[:, :, 16:18]
+        return 0.5 * (self._eval_raw(indices) - self._eval_raw(inv_indices))
 
-def evaluate_model(model: nn.Module, loader: DataLoader, device: torch.device, temp: float = 1.0) -> Tuple[float, float, float]:
+
+def evaluate_model(model: nn.Module, loader: DataLoader, device: torch.device, temp: float = 1.0, mse_weight: float = 0.02) -> Tuple[float, float, float, float, float, float]:
     model.eval()
     correct_top1 = 0
     correct_top2 = 0
     total = 0
-    total_loss = 0.0
+    total_ltr_loss = 0.0
+    total_mse_loss = 0.0
+    total_abs_err = 0.0
 
     with torch.no_grad():
-        for padded_indices, padded_targets, mask, best_indices in loader:
+        for padded_indices, padded_targets, mask, best_indices, target_scores in loader:
             padded_indices = padded_indices.to(device)
             padded_targets = padded_targets.to(device)
             mask = mask.to(device)
             best_indices = best_indices.to(device)
+            target_scores = target_scores.to(device)
 
-            scores = model(padded_indices)  # (B, max_k)
-            scores = scores.masked_fill(~mask, -1e9)
+            scores = model(padded_indices)  # (B, max_k) in discs
+            best_scores = scores.gather(1, best_indices.unsqueeze(-1)).squeeze(-1)
 
-            log_probs = nn.functional.log_softmax(scores / temp, dim=-1)
-            loss = -(padded_targets * log_probs).sum(dim=-1).mean()
-            total_loss += loss.item() * len(best_indices)
+            # MSE and MAE in discs
+            mse = nn.functional.mse_loss(best_scores, target_scores)
+            mae = (best_scores - target_scores).abs().mean()
+            total_mse_loss += mse.item() * len(best_indices)
+            total_abs_err += mae.item() * len(best_indices)
+
+            # LTR cross entropy
+            masked_scores = scores.masked_fill(~mask, -1e9)
+            log_probs = nn.functional.log_softmax(masked_scores / temp, dim=-1)
+            ltr_loss = -(padded_targets * log_probs).sum(dim=-1).mean()
+            total_ltr_loss += ltr_loss.item() * len(best_indices)
 
             # Top-1 accuracy
-            pred_top1 = torch.argmax(scores, dim=-1)
+            pred_top1 = torch.argmax(masked_scores, dim=-1)
             correct_top1 += (pred_top1 == best_indices).sum().item()
 
             # Top-2 accuracy
-            top2_preds = torch.topk(scores, k=min(2, scores.shape[1]), dim=-1).indices
+            top2_preds = torch.topk(masked_scores, k=min(2, masked_scores.shape[1]), dim=-1).indices
             best_expanded = best_indices.unsqueeze(-1)
             correct_top2 += (top2_preds == best_expanded).any(dim=-1).sum().item()
 
             total += len(best_indices)
 
-    return total_loss / max(1, total), (correct_top1 / max(1, total)) * 100.0, (correct_top2 / max(1, total)) * 100.0
+    avg_ltr = total_ltr_loss / max(1, total)
+    avg_mse = total_mse_loss / max(1, total)
+    avg_mae = total_abs_err / max(1, total)
+    top1_pct = (correct_top1 / max(1, total)) * 100.0
+    top2_pct = (correct_top2 / max(1, total)) * 100.0
+    total_loss = avg_ltr + mse_weight * avg_mse
+
+    return total_loss, avg_ltr, avg_mse, avg_mae, top1_pct, top2_pct
 
 
 def export_c_header(model: EndgamePatternModel, output_path: Path, weight_scale: float = 128.0):
@@ -174,18 +202,23 @@ def export_c_header(model: EndgamePatternModel, output_path: Path, weight_scale:
     m8x2 = _MIRROR_MAPS["mirror8x2"]
     m8 = _MIRROR_MAPS["mirror8"]
 
-    c33_weights = model.c33_emb.weight.detach().cpu().squeeze(-1).numpy()
-    e2x_weights = model.e2x_emb.weight.detach().cpu().squeeze(-1).numpy()
-    r24_weights = model.r24_emb.weight.detach().cpu().squeeze(-1).numpy()
-    d8_weights = model.d8_emb.weight.detach().cpu().squeeze(-1).numpy()
+    w_c33 = model.c33_emb.weight.detach().cpu().squeeze(-1).numpy()
+    w_e2x = model.e2x_emb.weight.detach().cpu().squeeze(-1).numpy()
+    w_r24 = model.r24_emb.weight.detach().cpu().squeeze(-1).numpy()
+    w_d8  = model.d8_emb.weight.detach().cpu().squeeze(-1).numpy()
 
-    # Symmetrize tables
-    full_c33 = [int(round(float(c33_weights[m33[i]]) * weight_scale)) for i in range(CORNER33_COUNT)]
-    full_e2x = [int(round(float(e2x_weights[m8x2[i]]) * weight_scale)) for i in range(EDGE2X_COUNT)]
-    full_r24 = [int(round(float(r24_weights[i]) * weight_scale)) for i in range(RECT24_COUNT)]
-    full_d8 = [int(round(float(d8_weights[m8[i]]) * weight_scale)) for i in range(DIAG8_COUNT)]
+    # Pre-symmetrize color anti-symmetry: w = 0.5 * (w - w_inv)
+    w_c33_sym = 0.5 * (w_c33 - w_c33[::-1])
+    w_e2x_sym = 0.5 * (w_e2x - w_e2x[::-1])
+    w_r24_sym = 0.5 * (w_r24 - w_r24[::-1])
+    w_d8_sym  = 0.5 * (w_d8  - w_d8[::-1])
 
-    # Clamp to int16 range
+    # Symmetrize tables with spatial maps and ensure 100% color anti-symmetry
+    full_c33 = [int(round(float(0.5 * (w_c33_sym[m33[i]] - w_c33_sym[m33[19682 - i]])) * weight_scale)) for i in range(CORNER33_COUNT)]
+    full_e2x = [int(round(float(0.5 * (w_e2x_sym[m8x2[i]] - w_e2x_sym[m8x2[59048 - i]])) * weight_scale)) for i in range(EDGE2X_COUNT)]
+    full_r24 = [int(round(float(0.5 * (w_r24_sym[i] - w_r24_sym[6560 - i])) * weight_scale)) for i in range(RECT24_COUNT)]
+    full_d8  = [int(round(float(0.5 * (w_d8_sym[m8[i]] - w_d8_sym[m8[6560 - i]])) * weight_scale)) for i in range(DIAG8_COUNT)]
+
     def clamp_i16(v):
         return max(-32767, min(32767, v))
 
@@ -197,7 +230,7 @@ def export_c_header(model: EndgamePatternModel, output_path: Path, weight_scale:
         f.write("/*\n")
         f.write("  File:       end_patterns_data.h\n")
         f.write("  Generated:  scripts/train_ltr_endgame.py\n")
-        f.write("  Model:      Ultra-Lightweight 4-Pattern Move Ordering Model (EVAL-009)\n")
+        f.write("  Model:      Calibrated 4-Pattern Move Ordering & Disc Evaluator (EVAL-010 / Reform 3)\n")
         f.write("  Geometry:   Corner 3x3 (19683), Edge+2X (59049), 2x4 Rect (6561), Diag 8 (6561)\n")
         f.write(f"  Total:      {TOTAL_WEIGHTS} entries (183.7 KB), 100% L2 cache resident\n")
         f.write(f"  Scale:      1 disc = {weight_scale} fixed-point units\n")
@@ -224,14 +257,16 @@ def export_c_header(model: EndgamePatternModel, output_path: Path, weight_scale:
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Train 4-pattern endgame move ordering model via LTR distillation.")
+    parser = argparse.ArgumentParser(description="Train 4-pattern endgame move ordering model via hybrid Texel MSE + LTR distillation.")
     parser.add_argument("--data", type=Path, default=Path("data/ltr_exact_solved_15yr.pt"), help="Path to exact solved LTR dataset")
+    parser.add_argument("--scores", type=Path, default=Path("data/ltr_exact_solved_15yr_scores.pt"), help="Path to exact solved scores tensor")
     parser.add_argument("--stages", type=str, default="7,8,9,10", help="Stages to include (default: 7,8,9,10 covering discs 40-58, 6-24 empties)")
     parser.add_argument("--epochs", type=int, default=10, help="Training epochs (default: 10)")
     parser.add_argument("--lr", type=float, default=0.01, help="Learning rate (default: 0.01)")
     parser.add_argument("--batch-size", type=int, default=512, help="Batch size (default: 512)")
     parser.add_argument("--label-smoothing", type=float, default=0.05, help="Label smoothing (default: 0.05)")
     parser.add_argument("--temp", type=float, default=1.0, help="Student temperature (default: 1.0)")
+    parser.add_argument("--mse-weight", type=float, default=0.02, help="Weight for Texel MSE disc difference loss (default: 0.02)")
     parser.add_argument("--weight-scale", type=float, default=128.0, help="Fixed-point scaling factor (default: 128.0)")
     parser.add_argument("--val-split", type=float, default=0.10, help="Validation fraction (default: 0.10)")
     parser.add_argument("--out-header", type=Path, default=Path("src/end_patterns_data.h"), help="Output C header file")
@@ -256,20 +291,37 @@ def main():
     raw_data = torch.load(args.data, weights_only=False)
     print(f"Loaded {len(raw_data)} total samples in {time.time() - t0:.2f}s")
 
+    scores_data = None
+    if args.scores and args.scores.exists():
+        print(f"Loading scores from {args.scores}...")
+        scores_data = torch.load(args.scores, weights_only=False)
+        assert len(scores_data) == len(raw_data), f"Scores length {len(scores_data)} != data length {len(raw_data)}"
+
     target_stages = set(int(s.strip()) for s in args.stages.split(",") if s.strip())
-    filtered_samples = [s for s in raw_data if s["stage"] in target_stages]
+    filtered_samples = []
+    filtered_scores = []
+    for i, s in enumerate(raw_data):
+        if s["stage"] in target_stages:
+            filtered_samples.append(s)
+            if scores_data is not None:
+                filtered_scores.append(scores_data[i].item() if hasattr(scores_data[i], "item") else float(scores_data[i]))
+            else:
+                filtered_scores.append(0.0)
+
     print(f"Filtered {len(filtered_samples)} samples in stages {sorted(target_stages)}")
 
     # Train / Val split
     split_idx = int((1.0 - args.val_split) * len(filtered_samples))
     train_samples = filtered_samples[:split_idx]
+    train_scores = filtered_scores[:split_idx]
     val_samples = filtered_samples[split_idx:]
+    val_scores = filtered_scores[split_idx:]
     print(f"Train samples: {len(train_samples)}, Val samples: {len(val_samples)}")
 
     print("Building tensor datasets...")
     t0 = time.time()
-    train_dataset = EndgameLTRDataset(train_samples, label_smoothing=args.label_smoothing)
-    val_dataset = EndgameLTRDataset(val_samples, label_smoothing=args.label_smoothing)
+    train_dataset = EndgameLTRDataset(train_samples, scores=train_scores, label_smoothing=args.label_smoothing)
+    val_dataset = EndgameLTRDataset(val_samples, scores=val_scores, label_smoothing=args.label_smoothing)
     print(f"Dataset tensors built in {time.time() - t0:.2f}s")
 
     train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True, collate_fn=collate_fn)
@@ -280,8 +332,8 @@ def main():
     scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.epochs, eta_min=1e-3)
 
     # Initial evaluation
-    val_loss, val_top1, val_top2 = evaluate_model(model, val_loader, device, temp=args.temp)
-    print(f"Epoch  0/{args.epochs} | Val Loss: {val_loss:.4f} | Val Top-1: {val_top1:.2f}% | Val Top-2: {val_top2:.2f}% (Untrained baseline)")
+    val_loss, val_ltr, val_mse, val_mae, val_top1, val_top2 = evaluate_model(model, val_loader, device, temp=args.temp, mse_weight=args.mse_weight)
+    print(f"Epoch  0/{args.epochs} | Val Loss: {val_loss:.4f} (LTR: {val_ltr:.4f}, MSE: {val_mse:.2f}, MAE: {val_mae:.2f}d) | Val Top-1: {val_top1:.2f}% | Val Top-2: {val_top2:.2f}% (Untrained baseline)")
 
     best_val_top1 = 0.0
     start_train_time = time.time()
@@ -292,17 +344,26 @@ def main():
         total_samples = 0
         ep_start = time.time()
 
-        for padded_indices, padded_targets, mask, best_indices in train_loader:
+        for padded_indices, padded_targets, mask, best_indices, target_scores in train_loader:
             padded_indices = padded_indices.to(device)
             padded_targets = padded_targets.to(device)
             mask = mask.to(device)
+            best_indices = best_indices.to(device)
+            target_scores = target_scores.to(device)
 
             optimizer.zero_grad()
             scores = model(padded_indices)
-            scores = scores.masked_fill(~mask, -1e9)
+            best_scores = scores.gather(1, best_indices.unsqueeze(-1)).squeeze(-1)
 
-            log_probs = nn.functional.log_softmax(scores / args.temp, dim=-1)
-            loss = -(padded_targets * log_probs).sum(dim=-1).mean()
+            # MSE disc calibration loss
+            mse_loss = nn.functional.mse_loss(best_scores, target_scores)
+
+            # LTR ranking loss
+            masked_scores = scores.masked_fill(~mask, -1e9)
+            log_probs = nn.functional.log_softmax(masked_scores / args.temp, dim=-1)
+            ltr_loss = -(padded_targets * log_probs).sum(dim=-1).mean()
+
+            loss = ltr_loss + args.mse_weight * mse_loss
 
             loss.backward()
             optimizer.step()
@@ -314,9 +375,9 @@ def main():
         train_loss = total_loss / max(1, total_samples)
 
         # Validation
-        val_loss, val_top1, val_top2 = evaluate_model(model, val_loader, device, temp=args.temp)
+        val_loss, val_ltr, val_mse, val_mae, val_top1, val_top2 = evaluate_model(model, val_loader, device, temp=args.temp, mse_weight=args.mse_weight)
         elapsed = time.time() - ep_start
-        print(f"Epoch {epoch:2d}/{args.epochs} | Train Loss: {train_loss:.4f} | Val Loss: {val_loss:.4f} | Val Top-1: {val_top1:.2f}% | Val Top-2: {val_top2:.2f}% | Time: {elapsed:.1f}s")
+        print(f"Epoch {epoch:2d}/{args.epochs} | Train Loss: {train_loss:.4f} | Val Loss: {val_loss:.4f} (LTR: {val_ltr:.4f}, MSE: {val_mse:.2f}, MAE: {val_mae:.2f}d) | Val Top-1: {val_top1:.2f}% | Val Top-2: {val_top2:.2f}% | Time: {elapsed:.1f}s")
 
         if val_top1 > best_val_top1:
             best_val_top1 = val_top1
