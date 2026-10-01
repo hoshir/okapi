@@ -1417,11 +1417,22 @@ end_order_moves_presearch( int level,
   Runs iterative deepening before exact endgame solve to seed Move 0 throughout the top 10 plies.
 */
 
+static int presearch_nodes = 0;
+static int presearch_budget = 0;
+static int presearch_aborted = FALSE;
+
 static int
 end_presearch_ab( BitBoard my_bits, BitBoard opp_bits,
 		  int side_to_move, int depth, int empties,
 		  int alpha, int beta, int level, int *best_move ) {
+  if ( presearch_aborted || is_panic_abort() || force_return )
+    return alpha;
+
   INCREMENT_COUNTER( nodes );
+  if ( ++presearch_nodes > presearch_budget ) {
+    presearch_aborted = TRUE;
+    return alpha;
+  }
   if ( best_move != NULL )
     *best_move = 0;
 
@@ -1588,6 +1599,9 @@ end_presearch_ab( BitBoard my_bits, BitBoard opp_bits,
     hash1 ^= diff1;
     hash2 ^= diff2;
 
+    if ( presearch_aborted || is_panic_abort() || force_return )
+      break;
+
     if ( val > best_val ) {
       best_val = val;
       best_sq = sq;
@@ -1598,6 +1612,9 @@ end_presearch_ab( BitBoard my_bits, BitBoard opp_bits,
       }
     }
   }
+
+  if ( presearch_aborted || is_panic_abort() || force_return )
+    return alpha;
 
   /* TT Storage */
   int flags;
@@ -1621,8 +1638,10 @@ end_presearch_ab( BitBoard my_bits, BitBoard opp_bits,
   best_list[2] = 0;
   best_list[3] = 0;
 
-  add_hash_extended( ENDGAME_MODE, score_to_store, best_list,
-		     flags | MIDGAME_SCORE | HEURISTIC_PRESEARCH_MOVE, depth, 0 );
+  if ( !presearch_aborted ) {
+    add_hash_extended( ENDGAME_MODE, score_to_store, best_list,
+		       flags | MIDGAME_SCORE | HEURISTIC_PRESEARCH_MOVE, depth, 0 );
+  }
 
   if ( best_move != NULL )
     *best_move = best_sq;
@@ -1757,7 +1776,7 @@ end_search_nws( BitBoard my_bits,
 
     hash_hit = (entry.draft != NO_HASH_MOVE) &&
 	       bb_valid_move( entry.move[0], my_bits, opp_bits ) &&
-	       (entry.flags & ENDGAME_SCORE);
+	       ((entry.flags & ENDGAME_SCORE) || (entry.flags & HEURISTIC_PRESEARCH_MOVE));
   }
 
   /* 4. Setup and MPC */
@@ -2272,7 +2291,7 @@ end_search_pvs( BitBoard my_bits,
 
     hash_hit = (entry.draft != NO_HASH_MOVE) &&
 	       bb_valid_move( entry.move[0], my_bits, opp_bits ) &&
-	       (entry.flags & ENDGAME_SCORE);
+	       ((entry.flags & ENDGAME_SCORE) || (entry.flags & HEURISTIC_PRESEARCH_MOVE));
   }
 
   /* 5. Recursive PVS search loop */
@@ -3136,9 +3155,13 @@ end_game( int side_to_move,
     prepare_to_solve( root_my_bits | root_opp_bits );
     determine_hash_values( side_to_move, board );
 
-    int max_presearch = MIN( 10, empties - 8 );
+    int max_presearch = MIN( 14, empties - 8 );
     int pre_best = 0;
     int last_eval = 0;
+    presearch_nodes = 0;
+    presearch_budget = 100000;
+    presearch_aborted = FALSE;
+
     for ( int d = 4; d <= max_presearch; d += 2 ) {
       int cur_best = 0;
       int val;
@@ -3154,19 +3177,26 @@ end_game( int side_to_move,
 				side_to_move, d, empties,
 				alpha, beta,
 				0, &cur_best );
-	if ( !is_panic_abort() && !force_return ) {
-	  if ( val <= alpha || val >= beta ) {
+	if ( !presearch_aborted && !is_panic_abort() && !force_return ) {
+	  int delta = 256;
+	  while ( (val <= alpha || val >= beta) && !presearch_aborted && !is_panic_abort() && !force_return ) {
+	    if ( val <= alpha )
+	      alpha = MAX( -INFINITE_EVAL, alpha - delta );
+	    if ( val >= beta )
+	      beta = MIN( INFINITE_EVAL, beta + delta );
+	    delta = 2 * delta + 256;
 	    val = end_presearch_ab( root_my_bits, root_opp_bits,
 				    side_to_move, d, empties,
-				    -INFINITE_EVAL, INFINITE_EVAL,
+				    alpha, beta,
 				    0, &cur_best );
 	  }
 	}
       }
-      last_eval = val;
 
-      if ( is_panic_abort() || force_return )
+      if ( presearch_aborted || is_panic_abort() || force_return )
 	break;
+
+      last_eval = val;
       if ( cur_best != 0 && bb_valid_move( cur_best, root_my_bits, root_opp_bits ) ) {
 	pre_best = cur_best;
       }
