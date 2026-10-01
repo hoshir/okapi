@@ -570,6 +570,9 @@ add_hash_extended( int reverse_mode, int score, int *best, int flags,
     if ( (flags & ENDGAME_SCORE) && !(entry_flags & ENDGAME_SCORE) ) {
       priority -= 512;
     }
+    if ( !(flags & ENDGAME_SCORE) && (entry_flags & ENDGAME_SCORE) ) {
+      priority += 512;
+    }
 
     if ( priority < min_priority ) {
       min_priority = priority;
@@ -585,6 +588,8 @@ add_hash_extended( int reverse_mode, int score, int *best, int flags,
   if ( hit ) {
     int old_is_endgame = (old_flags & ENDGAME_SCORE) != 0;
     int new_is_endgame = (flags & ENDGAME_SCORE) != 0;
+    if ( old_is_endgame && !new_is_endgame )
+      return;
     if ( !old_is_old && (!new_is_endgame || old_is_endgame) &&
          (old_draft > draft + change_encouragment + 2) )
       return;
