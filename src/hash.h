@@ -94,9 +94,9 @@ prefetch_hash_endgame_key( unsigned int h2 ) {
 }
 
 static INLINE void
-prefetch_hash_midgame_key( unsigned int h1 ) {
+prefetch_hash_midgame_key( unsigned int h2 ) {
   if ( hash_table != NULL ) {
-    unsigned int code1 = h1 ^ hash_trans1;
+    unsigned int code1 = h2 ^ hash_trans2;
     __builtin_prefetch( &hash_table[code1 & (hash_mask & ~3)], 0, 3 );
   }
 }

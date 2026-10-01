@@ -1460,7 +1460,12 @@ end_presearch_ab( BitBoard my_bits, BitBoard opp_bits,
   }
 
   if ( level > 0 && entry.draft != NO_HASH_MOVE && entry.draft >= depth ) {
-    int tt_val = entry.eval * 128;
+    int tt_val;
+    if ( (entry.flags & MIDGAME_SCORE) && !(entry.flags & HEURISTIC_PRESEARCH_MOVE) ) {
+      tt_val = entry.eval;
+    } else {
+      tt_val = entry.eval * 128;
+    }
     if ( entry.flags & EXACT_VALUE ) {
       if ( best_move != NULL ) *best_move = hash_move;
       return tt_val;
@@ -1727,7 +1732,8 @@ end_search_nws( BitBoard my_bits,
     }
 
     hash_hit = (entry.draft != NO_HASH_MOVE) &&
-	       bb_valid_move( entry.move[0], my_bits, opp_bits );
+	       bb_valid_move( entry.move[0], my_bits, opp_bits ) &&
+	       (entry.flags & ENDGAME_SCORE);
   }
 
   /* 4. Setup and MPC */
@@ -2241,18 +2247,8 @@ end_search_pvs( BitBoard my_bits,
     }
 
     hash_hit = (entry.draft != NO_HASH_MOVE) &&
-	       bb_valid_move( entry.move[0], my_bits, opp_bits );
-
-    if ( level == 0 && !hash_hit ) {
-      HashEntry mid_entry;
-      find_hash( &mid_entry, MIDGAME_MODE );
-      if ( (mid_entry.draft != NO_HASH_MOVE) &&
-	   (mid_entry.flags & MIDGAME_SCORE) &&
-	   (mid_entry.eval < WIPEOUT_THRESHOLD * 128) ) {
-	entry = mid_entry;
-	hash_hit = TRUE;
-      }
-    }
+	       bb_valid_move( entry.move[0], my_bits, opp_bits ) &&
+	       (entry.flags & ENDGAME_SCORE);
   }
 
   /* 5. Recursive PVS search loop */
@@ -2844,7 +2840,7 @@ end_game( int side_to_move,
   EvaluationType book_eval_info;
 
   smp_clear_stop();
-  increment_hash_generation();
+  /* increment_hash_generation(); */
 
   empties = 64 - disc_count( BLACKSQ ) - disc_count( WHITESQ );
 
@@ -3152,7 +3148,7 @@ end_game( int side_to_move,
       }
     }
 
-    if ( pre_best != 0 ) {
+    if ( !any_search_result && pre_best != 0 ) {
       end_best_root_move = pre_best;
       pv[0][0] = pre_best;
       int center = (last_eval >= 0) ? (last_eval + 64) / 128 : (last_eval - 64) / 128;

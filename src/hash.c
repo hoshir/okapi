@@ -434,6 +434,7 @@ add_hash( int reverse_mode,
   int hit = FALSE;
   int old_draft = 0;
   int old_is_old = FALSE;
+  int old_flags = 0;
   int min_priority = 999999;
   int change_encouragment;
   unsigned int base, target_slot, victim_slot;
@@ -443,14 +444,9 @@ add_hash( int reverse_mode,
 
   assert( abs( score ) != SEARCH_ABORT );
 
-  if ( reverse_mode ) {
-    code1 = hash2 ^ hash_trans2;
-    code2 = hash1 ^ hash_trans1;
-  }
-  else {
-    code1 = hash1 ^ hash_trans1;
-    code2 = hash2 ^ hash_trans2;
-  }
+  (void) reverse_mode;
+  code1 = hash2 ^ hash_trans2;
+  code2 = hash1 ^ hash_trans1;
 
   base = BUCKET_MASK( code1 & hash_mask );
   victim_slot = base;
@@ -468,6 +464,7 @@ add_hash( int reverse_mode,
       target_slot = idx;
       old_draft = k1_p & DRAFT_VALUE_MASK;
       old_is_old = (((k1_p & DRAFT_GEN_MASK) >> DRAFT_GEN_SHIFT) != curr_gen);
+      old_flags = (k1_p >> 8) & 0xFF;
       break;
     }
 
@@ -475,7 +472,11 @@ add_hash( int reverse_mode,
     int entry_draft = k1_p & DRAFT_VALUE_MASK;
     int entry_gen = (k1_p & DRAFT_GEN_MASK) >> DRAFT_GEN_SHIFT;
     int age = (curr_gen - entry_gen) & 0x03;
+    int entry_flags = (k1_p >> 8) & 0xFF;
     int priority = is_empty ? -999999 : (entry_draft - (age << 5));
+    if ( (flags & ENDGAME_SCORE) && !(entry_flags & ENDGAME_SCORE) ) {
+      priority -= 512;
+    }
 
     if ( priority < min_priority ) {
       min_priority = priority;
@@ -489,7 +490,10 @@ add_hash( int reverse_mode,
     change_encouragment = 0;
 
   if ( hit ) {
-    if ( !old_is_old && (old_draft > draft + change_encouragment + 2) )
+    int old_is_endgame = (old_flags & ENDGAME_SCORE) != 0;
+    int new_is_endgame = (flags & ENDGAME_SCORE) != 0;
+    if ( !old_is_old && (!new_is_endgame || old_is_endgame) &&
+         (old_draft > draft + change_encouragment + 2) )
       return;
   }
   else {
@@ -525,6 +529,7 @@ add_hash_extended( int reverse_mode, int score, int *best, int flags,
   int hit = FALSE;
   int old_draft = 0;
   int old_is_old = FALSE;
+  int old_flags = 0;
   int min_priority = 999999;
   int change_encouragment;
   unsigned int base, target_slot, victim_slot;
@@ -532,14 +537,9 @@ add_hash_extended( int reverse_mode, int score, int *best, int flags,
   unsigned char curr_gen;
   HashEntry entry;
 
-  if ( reverse_mode ) {
-    code1 = hash2 ^ hash_trans2;
-    code2 = hash1 ^ hash_trans1;
-  }
-  else {
-    code1 = hash1 ^ hash_trans1;
-    code2 = hash2 ^ hash_trans2;
-  }
+  (void) reverse_mode;
+  code1 = hash2 ^ hash_trans2;
+  code2 = hash1 ^ hash_trans1;
 
   base = BUCKET_MASK( code1 & hash_mask );
   victim_slot = base;
@@ -557,6 +557,7 @@ add_hash_extended( int reverse_mode, int score, int *best, int flags,
       target_slot = idx;
       old_draft = k1_p & DRAFT_VALUE_MASK;
       old_is_old = (((k1_p & DRAFT_GEN_MASK) >> DRAFT_GEN_SHIFT) != curr_gen);
+      old_flags = (k1_p >> 8) & 0xFF;
       break;
     }
 
@@ -564,7 +565,11 @@ add_hash_extended( int reverse_mode, int score, int *best, int flags,
     int entry_draft = k1_p & DRAFT_VALUE_MASK;
     int entry_gen = (k1_p & DRAFT_GEN_MASK) >> DRAFT_GEN_SHIFT;
     int age = (curr_gen - entry_gen) & 0x03;
+    int entry_flags = (k1_p >> 8) & 0xFF;
     int priority = is_empty ? -999999 : (entry_draft - (age << 5));
+    if ( (flags & ENDGAME_SCORE) && !(entry_flags & ENDGAME_SCORE) ) {
+      priority -= 512;
+    }
 
     if ( priority < min_priority ) {
       min_priority = priority;
@@ -578,7 +583,10 @@ add_hash_extended( int reverse_mode, int score, int *best, int flags,
     change_encouragment = 0;
 
   if ( hit ) {
-    if ( !old_is_old && (old_draft > draft + change_encouragment + 2) )
+    int old_is_endgame = (old_flags & ENDGAME_SCORE) != 0;
+    int new_is_endgame = (flags & ENDGAME_SCORE) != 0;
+    if ( !old_is_old && (!new_is_endgame || old_is_endgame) &&
+         (old_draft > draft + change_encouragment + 2) )
       return;
   }
   else {
@@ -611,14 +619,9 @@ find_hash( HashEntry *entry, int reverse_mode ) {
   unsigned int base;
   unsigned int code1, code2;
 
-  if ( reverse_mode ) {
-    code1 = hash2 ^ hash_trans2;
-    code2 = hash1 ^ hash_trans1;
-  }
-  else {
-    code1 = hash1 ^ hash_trans1;
-    code2 = hash2 ^ hash_trans2;
-  }
+  (void) reverse_mode;
+  code1 = hash2 ^ hash_trans2;
+  code2 = hash1 ^ hash_trans1;
 
   base = BUCKET_MASK( code1 & hash_mask );
 
