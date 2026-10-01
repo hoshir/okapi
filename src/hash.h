@@ -34,6 +34,8 @@ extern "C" {
 #define MIDGAME_SCORE             8
 #define ENDGAME_SCORE             16
 #define SELECTIVE                 32
+#define HEURISTIC_PRESEARCH_MOVE  64
+
 
 #define ENDGAME_MODE              TRUE
 #define MIDGAME_MODE              FALSE
