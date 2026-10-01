@@ -2927,8 +2927,20 @@ end_game( int side_to_move,
 
   last_window_center = 0;
 
+  if ( !wld && (empties >= 16) ) {
+    set_bitboards( board, side_to_move, &root_my_bits, &root_opp_bits );
+    int est = end_pattern_evaluate( root_my_bits, root_opp_bits );
+    int center = (est >= 0) ? (est + 64) / 128 : (est - 64) / 128;
+    if ( (empties & 1) != (abs(center) & 1) ) {
+      center += (center >= 0) ? 1 : -1;
+    }
+    if ( center < -60 ) center = -60;
+    if ( center > 60 ) center = 60;
+    last_window_center = center;
+  }
+
   if ( empties > DISABLE_SELECTIVITY ) {
-    if ( wld )
+    if ( wld ) {
       for ( selectivity = MAX_SELECTIVITY; (selectivity > 0) &&
 	      !is_panic_abort() && !force_return; selectivity-- ) {
 	unsigned int flags;
@@ -2967,9 +2979,13 @@ end_game( int side_to_move,
 	  send_solve_status( empties, side_to_move, eval_info );
 	}
       }
-    else
-      for ( selectivity = MAX_SELECTIVITY; (selectivity > 0) &&
-	      !is_panic_abort() && !force_return; selectivity-- ) {
+    }
+    else {
+      static const int sel_schedule[] = { 6, 3, 2, 1 };
+      int pass_idx;
+      for ( pass_idx = 0; pass_idx < 4 &&
+	      !is_panic_abort() && !force_return; pass_idx++ ) {
+	selectivity = sel_schedule[pass_idx];
 	alpha = last_window_center - 1;
 	beta = last_window_center + 1;
 
@@ -2977,11 +2993,12 @@ end_game( int side_to_move,
 				      alpha, beta, selectivity, TRUE );
 
 	if ( root_eval <= alpha ) {
+	  int steps = 0;
 	  do {
 	    last_window_center -= 2;
 	    alpha = last_window_center - 1;
 	    beta = last_window_center + 1;
-	    if ( is_panic_abort() || force_return )
+	    if ( is_panic_abort() || force_return || ++steps >= 32 )
 	      break;
 	    root_eval = end_tree_wrapper( 0, empties, side_to_move,
 					  alpha, beta, selectivity, TRUE );
@@ -2989,11 +3006,12 @@ end_game( int side_to_move,
 	  root_eval = last_window_center;
 	}
 	else if ( root_eval >= beta ) {
+	  int steps = 0;
 	  do {
 	    last_window_center += 2;
 	    alpha = last_window_center - 1;
 	    beta = last_window_center + 1;
-	    if ( is_panic_abort() || force_return )
+	    if ( is_panic_abort() || force_return || ++steps >= 32 )
 	      break;
 	    root_eval = end_tree_wrapper( 0, empties, side_to_move,
 					  alpha, beta, selectivity, TRUE );
@@ -3024,6 +3042,7 @@ end_game( int side_to_move,
 	  }
 	}
       }
+    }
   }
   else
     selectivity = 0;
@@ -3146,6 +3165,8 @@ end_game( int side_to_move,
     adjust_counter( &nodes );
   }
 
+
+
   if ( wld ) {
     alpha = -1;
     beta = +1;
@@ -3167,23 +3188,24 @@ end_game( int side_to_move,
         if ( root_eval >= 64 || root_eval <= -64 )
           break;
 
+        if ( delta >= 64 ) {
+          alpha = -64;
+          beta = 64;
+          root_eval = end_tree_wrapper( 0, empties, side_to_move,
+                                        alpha, beta, 0, TRUE );
+          adjust_counter( &nodes );
+          break;
+        }
+
         if ( root_eval <= alpha ) {
           /* Fail low: widen lower bound exponentially */
-          if ( delta >= 64 ) {
-            alpha = -64;
-          } else {
-            alpha = MAX( -64, last_window_center - delta );
-          }
+          alpha = MAX( -64, last_window_center - delta );
           beta = MIN( 64, last_window_center + 1 );
         }
         else if ( root_eval >= beta ) {
           /* Fail high: widen upper bound exponentially */
           alpha = MAX( -64, last_window_center - 1 );
-          if ( delta >= 64 ) {
-            beta = 64;
-          } else {
-            beta = MIN( 64, last_window_center + delta );
-          }
+          beta = MIN( 64, last_window_center + delta );
         }
         root_eval = end_tree_wrapper( 0, empties, side_to_move,
                                       alpha, beta, 0, TRUE );
