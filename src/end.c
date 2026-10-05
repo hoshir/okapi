@@ -1922,79 +1922,8 @@ end_search_nws( BitBoard my_bits,
     best_list[i] = 0;
 
   if ( hash_hit ) {
-    for ( i = 0; i < 4; i++ ) {
-      int cand_sq = entry.move[i];
-      if ( bb_valid_move( cand_sq, my_bits, opp_bits ) ) {
-	if ( use_hash ) {
-	  BitBoard child_my_bits;
-	  int flipped = TestFlips_wrapper( cand_sq, my_bits, opp_bits );
-	  if ( flipped != 0 ) {
-	    child_my_bits = my_bits | square_mask[cand_sq] | bb_flips;
-	    if ( level <= MAX_SEARCH_DEPTH ) {
-	      cached_flipped[level][cand_sq] = flipped;
-	      cached_flips[level][cand_sq] = bb_flips;
-	    }
-	    unsigned int diff1, diff2;
-	    end_hash_diff( child_my_bits, my_bits, side_to_move, cand_sq, &diff1, &diff2 );
-	    hash1 ^= diff1;
-	    hash2 ^= diff2;
-	    prefetch_hash_endgame_key( hash2 );
-	    HashEntry etc_entry;
-	    find_hash( &etc_entry, ENDGAME_MODE );
-	    hash1 ^= diff1;
-	    hash2 ^= diff2;
-
-	    /* 1-ply ETC Cutoff */
-	    if ( (etc_entry.flags & ENDGAME_SCORE) &&
-		 (etc_entry.draft >= empties - 1) &&
-		 (etc_entry.selectivity <= selectivity) &&
-		 (etc_entry.flags & (UPPER_BOUND | EXACT_VALUE)) &&
-		 (etc_entry.eval <= -beta) ) {
-	      int score = -etc_entry.eval;
-	      best_list[0] = cand_sq;
-	      if ( etc_entry.selectivity > 0 )
-		*selective_cutoff = TRUE;
-	      if ( use_hash )
-		add_hash_extended( ENDGAME_MODE, score, best_list,
-				   ENDGAME_SCORE | LOWER_BOUND, empties,
-				   *selective_cutoff ? selectivity : 0 );
-	      disks_played = saved_disks_played;
-	      return score;
-	    }
-
-	    /* Active refutation skipping in NWS: candidate proven <= alpha */
-	    if ( (etc_entry.flags & ENDGAME_SCORE) &&
-		 (etc_entry.draft >= empties - 1) &&
-		 (etc_entry.selectivity <= selectivity) &&
-		 (etc_entry.flags & (LOWER_BOUND | EXACT_VALUE)) &&
-		 (etc_entry.eval >= -alpha) ) {
-	      continue;
-	    }
-
-	    /* 2-ply ETC probe on hash candidate move */
-	    int cutoff_score;
-	    int etc2_res = end_probe_2ply_etc( cand_sq, child_my_bits, opp_bits & ~child_my_bits,
-					       diff1, diff2, side_to_move, empties,
-					       alpha, beta, selectivity, &cutoff_score );
-	    if ( etc2_res == ETC_2PLY_CUTOFF ) {
-	      best_list[0] = cand_sq;
-	      if ( selectivity > 0 )
-		*selective_cutoff = TRUE;
-	      if ( use_hash )
-		add_hash_extended( ENDGAME_MODE, cutoff_score, best_list,
-				   ENDGAME_SCORE | LOWER_BOUND, empties,
-				   *selective_cutoff ? selectivity : 0 );
-	      disks_played = saved_disks_played;
-	      return cutoff_score;
-	    }
-	    if ( etc2_res == ETC_2PLY_REFUTED ) {
-	      continue;
-	    }
-	  }
-	}
-	best_list[best_list_length++] = cand_sq;
-      }
-    }
+    best_list[0] = entry.move[0];
+    best_list_length = 1;
   }
 
   /* 5. NWS Move loop */
@@ -2437,68 +2366,10 @@ end_search_pvs( BitBoard my_bits,
   best_list_length = 0;
   for ( i = 0; i < 8; i++ )
     best_list[i] = 0;
-  if ( hash_hit )
-    for ( i = 0; i < 4; i++ ) {
-	int cand_sq = entry.move[i];
-	if ( bb_valid_move( cand_sq, my_bits, opp_bits ) ) {
-	  best_list[best_list_length++] = cand_sq;
-
-	  if ( use_hash ) {
-	    BitBoard child_my_bits;
-	    int flipped = TestFlips_wrapper( cand_sq, my_bits, opp_bits );
-	    if ( flipped != 0 ) {
-	      child_my_bits = my_bits | square_mask[cand_sq] | bb_flips;
-	      if ( level <= MAX_SEARCH_DEPTH ) {
-		cached_flipped[level][cand_sq] = flipped;
-		cached_flips[level][cand_sq] = bb_flips;
-	      }
-	      unsigned int diff1, diff2;
-	      end_hash_diff( child_my_bits, my_bits, side_to_move, cand_sq, &diff1, &diff2 );
-	      hash1 ^= diff1;
-	      hash2 ^= diff2;
-	      prefetch_hash_endgame_key( hash2 );
-	      HashEntry etc_entry;
-	      find_hash( &etc_entry, ENDGAME_MODE );
-	      hash1 ^= diff1;
-	      hash2 ^= diff2;
-
-	      if ( (etc_entry.flags & ENDGAME_SCORE) &&
-		   (etc_entry.draft >= empties - 1) &&
-		   (etc_entry.selectivity <= selectivity) &&
-		   (etc_entry.flags & (UPPER_BOUND | EXACT_VALUE)) &&
-		   (etc_entry.eval <= -beta) ) {
-		int score = -etc_entry.eval;
-		best_list[0] = cand_sq;
-		if ( use_hash )
-		  add_hash_extended( ENDGAME_MODE, score, best_list,
-				     ENDGAME_SCORE | LOWER_BOUND, empties,
-				     *selective_cutoff ? selectivity : 0 );
-		if ( level == 0 )
-		  end_best_root_move = cand_sq;
-		disks_played = saved_disks_played;
-		return score;
-	      }
-
-	      /* 2-ply ETC probe on hash candidate move */
-	      int cutoff_score;
-	      int etc2_res = end_probe_2ply_etc( cand_sq, child_my_bits, opp_bits & ~child_my_bits,
-						 diff1, diff2, side_to_move, empties,
-						 alpha, beta, selectivity, &cutoff_score );
-	      if ( etc2_res == ETC_2PLY_CUTOFF ) {
-		best_list[0] = cand_sq;
-		if ( use_hash )
-		  add_hash_extended( ENDGAME_MODE, cutoff_score, best_list,
-				     ENDGAME_SCORE | LOWER_BOUND, empties,
-				     *selective_cutoff ? selectivity : 0 );
-		if ( level == 0 )
-		  end_best_root_move = cand_sq;
-		disks_played = saved_disks_played;
-		return cutoff_score;
-	      }
-	    }
-	  }
-	}
-    }
+  if ( hash_hit ) {
+    best_list[0] = entry.move[0];
+    best_list_length = 1;
+  }
 
   if ( level == 0 && end_best_root_move != 0 && bb_valid_move( end_best_root_move, my_bits, opp_bits ) ) {
     int pos = -1;
