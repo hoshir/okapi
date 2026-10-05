@@ -1706,51 +1706,49 @@ end_search_nws( BitBoard my_bits,
     }
   }
 
-  if ( ((my_bits | opp_bits) & CORNER_MASK) != 0 ) {
-    if ( (opp_bits & BORDER_MASK) != 0 ) {
-      int opp_cnt = non_iterative_popcount( opp_bits );
-      int min_upper = 64 - 2 * opp_cnt;
-      if ( min_upper <= alpha ) {
-        EdgeIndices edges;
-        int s_edge = count_edge_stable_indexed( oppcol, opp_bits, my_bits, &edges );
+  if ( (opp_bits & BORDER_MASK) != 0 ) {
+    int opp_cnt = non_iterative_popcount( opp_bits );
+    int min_upper = 64 - 2 * opp_cnt;
+    if ( min_upper <= alpha ) {
+      EdgeIndices edges;
+      int s_edge = count_edge_stable_indexed( oppcol, opp_bits, my_bits, &edges );
+      if ( level <= MAX_SEARCH_DEPTH )
+        tls.stable_discs[oppcol][level] |= edges.bits;
+      int upper_bound = 64 - 2 * s_edge;
+      if ( upper_bound <= alpha ) {
+        return alpha;
+      }
+      if ( edges.bits != 0 && (opp_bits & CENTRAL_MASK) != 0 ) {
+        int s_full = count_stable_indexed( oppcol, opp_bits, my_bits, &edges );
         if ( level <= MAX_SEARCH_DEPTH )
-          tls.stable_discs[oppcol][level] |= edges.bits;
-        int upper_bound = 64 - 2 * s_edge;
+          tls.stable_discs[oppcol][level] |= (oppcol == BLACKSQ ? last_black_stable : last_white_stable);
+        upper_bound = 64 - 2 * s_full;
         if ( upper_bound <= alpha ) {
           return alpha;
         }
-        if ( edges.bits != 0 && (opp_bits & CENTRAL_MASK) != 0 ) {
-          int s_full = count_stable_indexed( oppcol, opp_bits, my_bits, &edges );
-          if ( level <= MAX_SEARCH_DEPTH )
-            tls.stable_discs[oppcol][level] |= (oppcol == BLACKSQ ? last_black_stable : last_white_stable);
-          upper_bound = 64 - 2 * s_full;
-          if ( upper_bound <= alpha ) {
-            return alpha;
-          }
-        }
       }
     }
+  }
 
-    if ( (my_bits & BORDER_MASK) != 0 ) {
-      int my_cnt = non_iterative_popcount( my_bits );
-      int max_lower = 2 * my_cnt - 64;
-      if ( max_lower >= beta ) {
-        EdgeIndices edges;
-        int s_edge = count_edge_stable_indexed( side_to_move, my_bits, opp_bits, &edges );
+  if ( (my_bits & BORDER_MASK) != 0 ) {
+    int my_cnt = non_iterative_popcount( my_bits );
+    int max_lower = 2 * my_cnt - 64;
+    if ( max_lower >= beta ) {
+      EdgeIndices edges;
+      int s_edge = count_edge_stable_indexed( side_to_move, my_bits, opp_bits, &edges );
+      if ( level <= MAX_SEARCH_DEPTH )
+        tls.stable_discs[side_to_move][level] |= edges.bits;
+      int lower_bound = 2 * s_edge - 64;
+      if ( lower_bound >= beta ) {
+        return lower_bound;
+      }
+      if ( edges.bits != 0 && (my_bits & CENTRAL_MASK) != 0 ) {
+        int s_full = count_stable_indexed( side_to_move, my_bits, opp_bits, &edges );
         if ( level <= MAX_SEARCH_DEPTH )
-          tls.stable_discs[side_to_move][level] |= edges.bits;
-        int lower_bound = 2 * s_edge - 64;
+          tls.stable_discs[side_to_move][level] |= (side_to_move == BLACKSQ ? last_black_stable : last_white_stable);
+        lower_bound = 2 * s_full - 64;
         if ( lower_bound >= beta ) {
           return lower_bound;
-        }
-        if ( edges.bits != 0 && (my_bits & CENTRAL_MASK) != 0 ) {
-          int s_full = count_stable_indexed( side_to_move, my_bits, opp_bits, &edges );
-          if ( level <= MAX_SEARCH_DEPTH )
-            tls.stable_discs[side_to_move][level] |= (side_to_move == BLACKSQ ? last_black_stable : last_white_stable);
-          lower_bound = 2 * s_full - 64;
-          if ( lower_bound >= beta ) {
-            return lower_bound;
-          }
         }
       }
     }
@@ -2180,72 +2178,70 @@ end_search_pvs( BitBoard my_bits,
     }
   }
 
-  if ( ((my_bits | opp_bits) & CORNER_MASK) != 0 ) {
-    if ( (opp_bits & BORDER_MASK) != 0 ) {
-      int opp_cnt = non_iterative_popcount( opp_bits );
-      int min_upper = 64 - 2 * opp_cnt;
-      if ( min_upper <= alpha || min_upper < beta ) {
-        EdgeIndices edges;
-        int s_edge = count_edge_stable_indexed( oppcol, opp_bits, my_bits, &edges );
+  if ( (opp_bits & BORDER_MASK) != 0 ) {
+    int opp_cnt = non_iterative_popcount( opp_bits );
+    int min_upper = 64 - 2 * opp_cnt;
+    if ( min_upper <= alpha || min_upper < beta ) {
+      EdgeIndices edges;
+      int s_edge = count_edge_stable_indexed( oppcol, opp_bits, my_bits, &edges );
+      if ( level <= MAX_SEARCH_DEPTH )
+        tls.stable_discs[oppcol][level] |= edges.bits;
+      int upper_bound = 64 - 2 * s_edge;
+      if ( upper_bound <= alpha ) {
+        pv_depth[level] = level;
+        return alpha;
+      }
+      if ( upper_bound < beta )
+        beta = upper_bound + 1;
+      if ( edges.bits != 0 && (opp_bits & CENTRAL_MASK) != 0 ) {
+        int s_full = count_stable_indexed( oppcol, opp_bits, my_bits, &edges );
         if ( level <= MAX_SEARCH_DEPTH )
-          tls.stable_discs[oppcol][level] |= edges.bits;
-        int upper_bound = 64 - 2 * s_edge;
+          tls.stable_discs[oppcol][level] |= (oppcol == BLACKSQ ? last_black_stable : last_white_stable);
+        upper_bound = 64 - 2 * s_full;
         if ( upper_bound <= alpha ) {
           pv_depth[level] = level;
           return alpha;
         }
         if ( upper_bound < beta )
           beta = upper_bound + 1;
-        if ( edges.bits != 0 && (opp_bits & CENTRAL_MASK) != 0 ) {
-          int s_full = count_stable_indexed( oppcol, opp_bits, my_bits, &edges );
-          if ( level <= MAX_SEARCH_DEPTH )
-            tls.stable_discs[oppcol][level] |= (oppcol == BLACKSQ ? last_black_stable : last_white_stable);
-          upper_bound = 64 - 2 * s_full;
-          if ( upper_bound <= alpha ) {
-            pv_depth[level] = level;
-            return alpha;
-          }
-          if ( upper_bound < beta )
-            beta = upper_bound + 1;
-        }
-        if ( alpha >= beta ) {
-          pv_depth[level] = level;
-          return alpha;
-        }
+      }
+      if ( alpha >= beta ) {
+        pv_depth[level] = level;
+        return alpha;
       }
     }
+  }
 
-    if ( (my_bits & BORDER_MASK) != 0 ) {
-      int my_cnt = non_iterative_popcount( my_bits );
-      int max_lower = 2 * my_cnt - 64;
-      if ( max_lower >= beta || max_lower > alpha ) {
-        EdgeIndices edges;
-        int s_edge = count_edge_stable_indexed( side_to_move, my_bits, opp_bits, &edges );
+  if ( (my_bits & BORDER_MASK) != 0 ) {
+    int my_cnt = non_iterative_popcount( my_bits );
+    int max_lower = 2 * my_cnt - 64;
+    if ( max_lower >= beta || max_lower > alpha ) {
+      EdgeIndices edges;
+      int s_edge = count_edge_stable_indexed( side_to_move, my_bits, opp_bits, &edges );
+      if ( level <= MAX_SEARCH_DEPTH )
+        tls.stable_discs[side_to_move][level] |= edges.bits;
+      int lower_bound = 2 * s_edge - 64;
+      if ( lower_bound >= beta ) {
+        pv_depth[level] = level;
+        return lower_bound;
+      }
+      if ( lower_bound > alpha )
+        alpha = lower_bound;
+      if ( edges.bits != 0 && (my_bits & CENTRAL_MASK) != 0 ) {
+        int s_full = count_stable_indexed( side_to_move, my_bits, opp_bits, &edges );
         if ( level <= MAX_SEARCH_DEPTH )
-          tls.stable_discs[side_to_move][level] |= edges.bits;
-        int lower_bound = 2 * s_edge - 64;
+          tls.stable_discs[side_to_move][level] |= (side_to_move == BLACKSQ ? last_black_stable : last_white_stable);
+        lower_bound = 2 * s_full - 64;
         if ( lower_bound >= beta ) {
           pv_depth[level] = level;
           return lower_bound;
         }
         if ( lower_bound > alpha )
           alpha = lower_bound;
-        if ( edges.bits != 0 && (my_bits & CENTRAL_MASK) != 0 ) {
-          int s_full = count_stable_indexed( side_to_move, my_bits, opp_bits, &edges );
-          if ( level <= MAX_SEARCH_DEPTH )
-            tls.stable_discs[side_to_move][level] |= (side_to_move == BLACKSQ ? last_black_stable : last_white_stable);
-          lower_bound = 2 * s_full - 64;
-          if ( lower_bound >= beta ) {
-            pv_depth[level] = level;
-            return lower_bound;
-          }
-          if ( lower_bound > alpha )
-            alpha = lower_bound;
-        }
-        if ( alpha >= beta ) {
-          pv_depth[level] = level;
-          return alpha;
-        }
+      }
+      if ( alpha >= beta ) {
+        pv_depth[level] = level;
+        return alpha;
       }
     }
   }

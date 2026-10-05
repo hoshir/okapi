@@ -21,11 +21,7 @@
 
 #include <stdio.h>
 
-#if defined( __ARM_NEON )
-#include <arm_neon.h>
-#elif defined( __AVX2__ )
-#include <immintrin.h>
-#endif
+
 
 #include "bitboard.h"
 #include "bitbtest.h"
@@ -64,93 +60,37 @@ static uint8_t edge_stable_table[256 * 256];
 
 
 /*
-  FILLED_DIAGONALS
-  Computes full lines along the two diagonal directions:
-  NE-SW (step 7) into *daf_out and NW-SE (step 9) into *dbf_out.
+  GET_FULL_LINES
+  Computes the bitboard of squares whose line along DIR is completely filled
+  with occupied discs from border to border using Kogge-Stone parallel prefix.
 */
 
-#if defined( __ARM_NEON )
-INLINE static void
-filled_diagonals( BitBoard occupied, BitBoard *daf_out, BitBoard *dbf_out ) {
-  const uint64x2_t edge = vdupq_n_u64( occupied & BORDER_MASK );
-  const int64x2_t shift_r = vcombine_s64( vcreate_s64( -7 ), vcreate_s64( -9 ) );
-  const int64x2_t shift_l = vcombine_s64( vcreate_s64(  7 ), vcreate_s64(  9 ) );
-  uint64x2_t full = vdupq_n_u64( occupied );
+static INLINE BitBoard
+get_full_lines( BitBoard line, int dir ) {
+  BitBoard full_l = line, full_r = line;
+  BitBoard edge_l = line & BORDER_MASK, edge_r = line & BORDER_MASK;
+  int d = dir;
 
-  uint64x2_t nb;
-  #define NEON_ROUND() do { \
-    nb = vandq_u64( vshlq_u64( full, shift_r ), vshlq_u64( full, shift_l ) ); \
-    full = vandq_u64( full, vorrq_u64( nb, edge ) ); \
-  } while (0)
+  full_l &= edge_l | (full_l >> d); full_r &= edge_r | (full_r << d);
+  edge_l |= edge_l >> d;            edge_r |= edge_r << d;
+  d <<= 1;
 
-  NEON_ROUND();
-  NEON_ROUND();
-  NEON_ROUND();
-  NEON_ROUND();
-  NEON_ROUND();
-  #undef NEON_ROUND
+  full_l &= edge_l | (full_l >> d); full_r &= edge_r | (full_r << d);
+  edge_l |= edge_l >> d;            edge_r |= edge_r << d;
+  d <<= 1;
 
-  nb = vandq_u64( vshlq_u64( full, shift_r ), vshlq_u64( full, shift_l ) );
-  uint64x2_t res = vorrq_u64( vdupq_n_u64( BORDER_MASK ), nb );
-  *daf_out = vgetq_lane_u64( res, 0 );
-  *dbf_out = vgetq_lane_u64( res, 1 );
-}
-#elif defined( __AVX2__ )
-INLINE static void
-filled_diagonals( BitBoard occupied, BitBoard *daf_out, BitBoard *dbf_out ) {
-  const __m128i edge = _mm_set_epi64x( occupied & BORDER_MASK, occupied & BORDER_MASK );
-  const __m128i shift_r_counts = _mm_set_epi64x( 9, 7 );
-  const __m128i shift_l_counts = _mm_set_epi64x( 9, 7 );
-  __m128i full = _mm_set_epi64x( occupied, occupied );
+  full_l &= edge_l | (full_l >> d); full_r &= edge_r | (full_r << d);
 
-  #define AVX2_ROUND() do { \
-    __m128i sr = _mm_srlv_epi64( full, shift_r_counts ); \
-    __m128i sl = _mm_sllv_epi64( full, shift_l_counts ); \
-    __m128i nb = _mm_and_si128( sr, sl ); \
-    full = _mm_and_si128( full, _mm_or_si128( nb, edge ) ); \
-  } while (0)
-
-  AVX2_ROUND();
-  AVX2_ROUND();
-  AVX2_ROUND();
-  AVX2_ROUND();
-  AVX2_ROUND();
-  #undef AVX2_ROUND
-
-  __m128i sr = _mm_srlv_epi64( full, shift_r_counts );
-  __m128i sl = _mm_sllv_epi64( full, shift_l_counts );
-  __m128i res = _mm_or_si128( _mm_set_epi64x( BORDER_MASK, BORDER_MASK ), _mm_and_si128( sr, sl ) );
-
-  *daf_out = (BitBoard)_mm_cvtsi128_si64( res );
-  *dbf_out = (BitBoard)_mm_extract_epi64( res, 1 );
-}
-#else
-INLINE static BitBoard
-filled_lines( BitBoard occupied, int dir ) {
-  const BitBoard edge = occupied & BORDER_MASK;
-  BitBoard full;
-
-  full  = occupied & (((occupied >> dir) & (occupied << dir)) | edge);
-  full &= (((full >> dir) & (full << dir)) | edge);
-  full &= (((full >> dir) & (full << dir)) | edge);
-  full &= (((full >> dir) & (full << dir)) | edge);
-  full &= (((full >> dir) & (full << dir)) | edge);
-
-  return (full >> dir) & (full << dir);
+  return full_r & full_l;
 }
 
-INLINE static void
-filled_diagonals( BitBoard occupied, BitBoard *daf_out, BitBoard *dbf_out ) {
-  *daf_out = BORDER_MASK | filled_lines( occupied, 7 );
-  *dbf_out = BORDER_MASK | filled_lines( occupied, 9 );
-}
-#endif
 
 
 /*
   EDGE_ZARDOZ_STABLE
-  Determines the bit mask for (a subset of) the stable discs in a position.
-  Zardoz' algorithm + edge tables is used.
+  Determines the bit mask for the full set of transitive stable discs.
+  Expands from stable edge discs and filled line intersections into
+  the central board using bit-parallel propagation across all 4 axes.
 */
 
 INLINE static void
@@ -161,51 +101,25 @@ edge_zardoz_stable( BitBoard *ss,
   if ( central_mask == 0 )
     return;
 
-  BitBoard ost, fb, lrf, udf, daf, dbf;
-  BitBoard expand_ss;
-  BitBoard t;
+  const BitBoard disc = dd | od;
+  const BitBoard full_h = get_full_lines( disc, 1 );
+  const BitBoard full_v = get_full_lines( disc, 8 );
+  const BitBoard full_d7 = get_full_lines( disc, 7 );
+  const BitBoard full_d9 = get_full_lines( disc, 9 );
 
-  fb = dd | od;
+  BitBoard new_stable = *ss | (full_h & full_v & full_d7 & full_d9 & central_mask);
 
-  /* A filled row protects its squares from horizontal flips; the a-
-     and h-files never flip horizontally. */
+  BitBoard stable = 0;
+  while ( (new_stable & ~stable) != 0 ) {
+    stable |= new_stable;
+    BitBoard stable_h = (stable >> 1) | (stable << 1) | full_h;
+    BitBoard stable_v = (stable >> 8) | (stable << 8) | full_v;
+    BitBoard stable_d7 = (stable >> 7) | (stable << 7) | full_d7;
+    BitBoard stable_d9 = (stable >> 9) | (stable << 9) | full_d9;
+    new_stable = stable_h & stable_v & stable_d7 & stable_d9 & central_mask;
+  }
 
-  t = fb;
-  t &= t >> 4;
-  t &= t >> 2;
-  t &= t >> 1;
-  lrf = ((t & 0x0101010101010101ull) * 255) | 0x8181818181818181ull;
-
-  /* Filled columns, by folding the rotations: afterwards a bit is set
-     iff its whole column is.  Rows 1 and 8 never flip vertically. */
-
-  t = fb;
-  t &= (t >> 32) | (t << 32);
-  t &= (t >> 16) | (t << 48);
-  t &= (t >> 8) | (t << 56);
-  udf = t | 0xFF000000000000FFull;
-
-  /* Filled diagonals.  The border squares need no diagonal
-     protection, which also covers the short diagonals. */
-
-  filled_diagonals( fb, &daf, &dbf );
-
-  *ss |= lrf & udf & daf & dbf & dd;
-
-  if ( *ss == 0 )
-    return;
-
-  do {
-    ost = *ss;
-
-    BitBoard d1 = lrf | (ost << 1) | (ost >> 1);
-    BitBoard d8 = udf | (ost << 8) | (ost >> 8);
-    BitBoard d7 = daf | (ost << 7) | (ost >> 7);
-    BitBoard d9 = dbf | (ost << 9) | (ost >> 9);
-
-    expand_ss = d1 & d8 & d7 & d9;
-    *ss = ost | (expand_ss & central_mask);
-  } while ( ost != *ss );	/* changing */
+  *ss = stable;
 }
 
 
@@ -276,7 +190,7 @@ count_stable_indexed( int color,
   BitBoard col_stable = edges->bits;
 
   /* Expand the stable edge discs into a full set of stable discs */
-  if ( (col_bits & CENTRAL_MASK) != 0 && col_stable != 0 )
+  if ( (col_bits & CENTRAL_MASK) != 0 )
     edge_zardoz_stable( &col_stable, col_bits, opp_bits );
 
   if ( color == BLACKSQ )
@@ -284,10 +198,7 @@ count_stable_indexed( int color,
   else
     last_white_stable = col_stable;
 
-  if ( col_stable != 0 )
-    return non_iterative_popcount( col_stable );
-  else
-    return 0;
+  return non_iterative_popcount( col_stable );
 }
 
 
