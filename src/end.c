@@ -809,6 +809,52 @@ end_probe_2ply_etc( int sq,
     return ETC_2PLY_NONE;
   }
 
+  if ( opp_mob == 0 ) {
+    BitBoard my_replies = bitboard_moves( child_my_bits, child_opp_bits );
+    if ( my_replies == 0 ) {
+      /* Terminal double pass: game over */
+      int my_cnt = non_iterative_popcount( child_my_bits );
+      int opp_cnt = non_iterative_popcount( child_opp_bits );
+      int term_diff = my_cnt - opp_cnt;
+      int rem_empties = empties - 1;
+      int term_score = (term_diff > 0) ? (term_diff + rem_empties)
+		     : (term_diff < 0) ? (term_diff - rem_empties) : 0;
+      if ( term_score >= beta ) {
+	*cutoff_score = term_score;
+	return ETC_2PLY_CUTOFF;
+      }
+      if ( term_score <= alpha ) {
+	return ETC_2PLY_REFUTED;
+      }
+      return ETC_2PLY_NONE;
+    }
+    else {
+      /* Single pass: opponent passes, probe TT at post-pass state (mover to play) */
+      unsigned int pass_d1 = diff1_my ^ hash_flip_color1;
+      unsigned int pass_d2 = diff2_my ^ hash_flip_color2;
+      hash1 ^= pass_d1;
+      hash2 ^= pass_d2;
+      prefetch_hash_endgame_key( hash2 );
+      HashEntry p_entry;
+      find_hash( &p_entry, ENDGAME_MODE );
+      hash1 ^= pass_d1;
+      hash2 ^= pass_d2;
+
+      if ( (p_entry.flags & ENDGAME_SCORE) &&
+	   (p_entry.draft >= empties - 1) &&
+	   (p_entry.selectivity <= selectivity) ) {
+	if ( (p_entry.flags & (LOWER_BOUND | EXACT_VALUE)) && (p_entry.eval >= beta) ) {
+	  *cutoff_score = p_entry.eval;
+	  return ETC_2PLY_CUTOFF;
+	}
+	if ( (p_entry.flags & (UPPER_BOUND | EXACT_VALUE)) && (p_entry.eval <= alpha) ) {
+	  return ETC_2PLY_REFUTED;
+	}
+      }
+      return ETC_2PLY_NONE;
+    }
+  }
+
   if ( empties < MIN_2PLY_ETC_DEPTH )
     return ETC_2PLY_NONE;
 
@@ -1342,6 +1388,12 @@ end_order_moves_presearch( int level,
   int refuted_moves[64];
   int refuted_count = 0;
 
+  BitBoard stable_both = 0;
+  if ( level <= MAX_SEARCH_DEPTH )
+    stable_both = tls.stable_discs[BLACKSQ][level] | tls.stable_discs[WHITESQ][level];
+  BitBoard dead = find_dead_squares( ~(my_bits | opp_bits), stable_both );
+  unsigned int effective_parity = region_parity ^ dead_quadrant_parity( dead );
+
   for ( i = 0; i < candidate_count; i++ ) {
     move = candidates[i].sq;
     if ( move == *etc_tried_ptr )
@@ -1389,12 +1441,39 @@ end_order_moves_presearch( int level,
 
     BitBoard opp_moves = generate_all_c( new_opp_bits, child_my_bits );
     int raw_opp_mob = non_iterative_popcount( opp_moves );
+
+    if ( raw_opp_mob == 0 ) {
+      BitBoard my_replies = generate_all_c( child_my_bits, new_opp_bits );
+      if ( my_replies == 0 ) {
+	int my_cnt = non_iterative_popcount( child_my_bits );
+	int opp_cnt = non_iterative_popcount( new_opp_bits );
+	int term_diff = my_cnt - opp_cnt;
+	int rem_empties = empties - 1;
+	int term_score = (term_diff > 0) ? (term_diff + rem_empties)
+		       : (term_diff < 0) ? (term_diff - rem_empties) : 0;
+	if ( term_score >= beta ) {
+	  *etc_tried_ptr = move;
+	  *etc_cutoff_score = term_score;
+	  return TRUE;
+	}
+	else if ( term_score <= curr_alpha ) {
+	  if ( beta == curr_alpha + 1 ) {
+	    refuted_moves[refuted_count++] = move;
+	    continue;
+	  }
+	  evals[disks_played][move] = -INFINITE_EVAL;
+	  move_list[disks_played][move_count[disks_played]++] = move;
+	  continue;
+	}
+      }
+    }
+
     int opp_corner_moves = non_iterative_popcount( opp_moves & 0x8100000000000081ull );
 
-    int quadrant_parity = (quadrant_mask[move] & region_parity) != 0;
+    int quadrant_parity = (quadrant_mask[move] & effective_parity) != 0;
     int move_score = end_pattern_evaluate( child_my_bits, new_opp_bits ) -
 		     128 * (raw_opp_mob + opp_corner_moves) +
-		     (raw_opp_mob == 0 ? 512 : 0) +
+		     (raw_opp_mob == 0 ? 4096 : 0) +
 		     (quadrant_parity ? REGION_PARITY_BONUS : 0);
 
     evals[disks_played][move] = move_score;
