@@ -1,0 +1,22 @@
+name: hygiene
+
+on:
+  pull_request:
+  push:
+    branches: [master]
+
+jobs:
+  tree-hygiene:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Reject jj conflict artifacts and agent files
+        run: |
+          bad=$(git ls-files | grep -E '(^|/)\.jjconflict-|(^|/)JJ-CONFLICT-README$|^\.agent/|^AGENTS\.md$' || true)
+          if [ -n "$bad" ]; then
+            echo "Forbidden files tracked in the tree:"
+            echo "$bad"
+            exit 1
+          fi
+      - name: Harness unit tests
+        run: python3 tests/test_eval_candidate.py
