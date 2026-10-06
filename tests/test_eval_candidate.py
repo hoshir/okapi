@@ -461,5 +461,22 @@ class TestBaselineMissingPositions(unittest.TestCase):
         self.assertEqual(results["FFO #54"]["nodes"], 6_000_000_000)
 
 
+class TestProvenance(unittest.TestCase):
+    def test_fields_present_and_argv_recorded(self):
+        prov = eval_candidate.collect_provenance(
+            os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+            argv=["eval_candidate.py", "--mode", "screen"],
+        )
+        for key in ("commit", "src_dirty", "binary_mtime", "written_at", "argv"):
+            self.assertIn(key, prov)
+        self.assertEqual(prov["argv"], ["eval_candidate.py", "--mode", "screen"])
+
+    def test_unknown_repo_gives_none_not_missing(self):
+        prov = eval_candidate.collect_provenance("/nonexistent-dir-xyz", argv=[])
+        self.assertIsNone(prov["commit"])
+        self.assertIsNone(prov["binary_mtime"])
+        self.assertIn("src_dirty", prov)
+
+
 if __name__ == "__main__":
     unittest.main()

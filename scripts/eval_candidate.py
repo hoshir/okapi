@@ -581,6 +581,37 @@ def is_baseline_stale(src_commit_ts, baseline_commit_ts):
     return src_commit_ts > baseline_commit_ts
 
 
+def collect_provenance(repo_root, argv=None):
+    """Provenance record embedded in every saved JSON (--save-json / --save-baseline).
+
+    A number without provenance cannot be audited: the coordinator checks that
+    `commit`, `src_dirty`, `binary_mtime` and `argv` match the claimed run.
+    Fields that cannot be determined are None, never omitted.
+    """
+    def _git(*cmd):
+        try:
+            out = subprocess.run(
+                ["git", *cmd], cwd=repo_root, capture_output=True, text=True, timeout=15,
+            )
+            return out.stdout.strip() if out.returncode == 0 else None
+        except (OSError, subprocess.SubprocessError):
+            return None
+
+    binary = os.path.join(repo_root, "build", "bin", "scrzebra")
+    try:
+        binary_mtime = os.path.getmtime(binary)
+    except OSError:
+        binary_mtime = None
+    porcelain = _git("status", "--porcelain", "--", "src")
+    return {
+        "commit": _git("rev-parse", "HEAD"),
+        "src_dirty": None if porcelain is None else bool(porcelain),
+        "binary_mtime": binary_mtime,
+        "written_at": time.time(),
+        "argv": list(sys.argv if argv is None else argv),
+    }
+
+
 def _last_commit_ts(repo_root, rel_path):
     try:
         out = subprocess.run(
@@ -974,6 +1005,7 @@ def main():
                 "threads": threads,
                 "hash_bits": args.hash_bits,
                 "simplification_mode": args.simplification_mode,
+                "provenance": collect_provenance(repo_root),
                 "heavy_threshold": heavy_threshold,
                 "totals": None,
                 "summary": None,
@@ -1093,6 +1125,7 @@ def main():
             "threads": threads,
             "hash_bits": args.hash_bits,
             "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            "provenance": collect_provenance(repo_root),
             "results": candidate_results
         }
         with open(args.save_baseline, "w") as f:
@@ -1111,6 +1144,7 @@ def main():
         "hash_bits": args.hash_bits,
         "simplification_mode": args.simplification_mode,
         "baseline_stale": baseline_stale,
+        "provenance": collect_provenance(repo_root),
         "heavy_threshold": heavy_threshold,
         "totals": totals,
         "summary": summary,
