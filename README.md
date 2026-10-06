@@ -49,7 +49,7 @@ Run the test suite with:
 make test
 ```
 
-It takes about 3-5 seconds and runs four tests:
+It takes about 3-5 seconds and runs five tests:
 
 * `tests/fliptest.c` — differential test verifying that the two
   independent disc-flipping implementations (bitboard `TestFlips_bitboard`
@@ -61,6 +61,11 @@ It takes about 3-5 seconds and runs four tests:
 * `tests/hashtest.c` — concurrent stress test verifying that simultaneous
   reads and writes across multiple threads in the transposition table do not
   produce torn reads (mixed keys and payloads).
+* `tests/aspirationtest.c` — checks that the root aspiration window of the
+  endgame search is always centered on an even score. Exact endgame scores
+  are even, so a window `(c-1, c+1)` around an odd `c` contains no reachable
+  score and forces an expensive wide re-search in the exact solve (this cost
+  up to 71% of the nodes on positions with an odd number of empties).
 * `tests/check_ffo.sh` — solves a fast subset of the FFO endgame test
   suite (`tests/ffo-quick.scr`: positions #40-#44, #46, #47 and #59) with
   `scrzebra` and checks the exact scores and best moves against the
