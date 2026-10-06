@@ -417,7 +417,7 @@ def evaluate_suite(repo_root, positions, threads, hash_bits, verbose=False, base
         }
 
         # Real-time early regression halt on heavy positions (anti-masking guard)
-        if early_halt and baseline_results and is_correct and name in HEAVY_POSITIONS:
+        if early_halt and baseline_results and is_correct and name in HEAVY_POSITIONS and name in baseline_results:
             b_nodes = baseline_results[name].get("nodes", 0)
             if b_nodes > 0:
                 n_delta = ((res["nodes"] - b_nodes) / b_nodes) * 100.0
@@ -570,10 +570,66 @@ def generate_markdown_table(comparison, summary, mode, threads, hash_bits, early
     return "\n".join(md)
 
 
+def is_baseline_stale(src_commit_ts, baseline_commit_ts):
+    """True when engine sources changed in a later commit than the baseline file.
+
+    Both arguments are unix commit timestamps, or None when unknown (untracked
+    baseline, no git history). Unknown never counts as stale.
+    """
+    if src_commit_ts is None or baseline_commit_ts is None:
+        return False
+    return src_commit_ts > baseline_commit_ts
+
+
+def _last_commit_ts(repo_root, rel_path):
+    try:
+        out = subprocess.run(
+            ["git", "log", "-1", "--format=%ct", "--", rel_path],
+            cwd=repo_root, capture_output=True, text=True, timeout=15,
+        ).stdout.strip()
+        return int(out) if out else None
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return None
+
+
+def check_baseline_staleness(repo_root, baseline_path):
+    """Compare the baseline's last commit against the last commit touching src/.
+
+    A baseline generated before a later engine change (e.g. a merged search
+    PR) makes every comparison meaningless: the candidate is blamed for the
+    earlier change. Returns True when the baseline is known to be stale.
+    """
+    rel = os.path.relpath(os.path.abspath(baseline_path), repo_root)
+    if rel.startswith(".."):
+        return False
+    return is_baseline_stale(_last_commit_ts(repo_root, "src"), _last_commit_ts(repo_root, rel))
+
+
 def determine_verdict(mode, test_passed, all_correct, summary, timed_out_positions=None,
-                       early_halted=None,
-                       comparison=None, heavy_threshold=None,
-                       simplification_mode=False):
+                      early_halted=None,
+                      comparison=None, heavy_threshold=None,
+                      simplification_mode=False, baseline_stale=False):
+    """Verdict wrapper: a regression measured against a stale baseline is not
+    attributable to the candidate, so it is reported as STALE_BASELINE."""
+    verdict, reason = _determine_verdict_impl(
+        mode, test_passed, all_correct, summary,
+        timed_out_positions=timed_out_positions, early_halted=early_halted,
+        comparison=comparison, heavy_threshold=heavy_threshold,
+        simplification_mode=simplification_mode)
+    if baseline_stale and verdict == "REJECT_REGRESSION":
+        return (
+            "STALE_BASELINE",
+            "Regression vs a baseline that predates the latest src/ change; re-sync "
+            "baselines on the parent commit (sync-baseline) and re-run before judging. "
+            f"Underlying result: {reason}"
+        )
+    return verdict, reason
+
+
+def _determine_verdict_impl(mode, test_passed, all_correct, summary, timed_out_positions=None,
+                            early_halted=None,
+                            comparison=None, heavy_threshold=None,
+                            simplification_mode=False):
     """
     Automated decision engine for agents:
     - REJECT_TIMEOUT: search process exceeded runtime ceiling (e.g. 2.5x baseline) and was forcibly killed.
@@ -989,6 +1045,15 @@ def main():
 
     baseline_results = baseline_data.get("results") if (baseline_data and "results" in baseline_data) else None
 
+    baseline_stale = False
+    if baseline_data and baseline_path:
+        baseline_stale = check_baseline_staleness(repo_root, baseline_path)
+        if baseline_stale and progress != "none":
+            sys.stderr.write(
+                f"WARNING: baseline '{os.path.relpath(baseline_path, repo_root)}' predates the latest "
+                f"commit touching src/. Comparisons are unreliable; re-sync baselines first.\n")
+            sys.stderr.flush()
+
     # 4. Evaluate target positions with live progress, fast-first ordering, and dynamic timeout
     candidate_results, all_correct, timed_out_positions, early_halted = evaluate_suite(
         repo_root, target_positions, threads, args.hash_bits,
@@ -1008,7 +1073,8 @@ def main():
         timed_out_positions=timed_out_positions,
         early_halted=early_halted,
         comparison=comparison, heavy_threshold=heavy_threshold,
-        simplification_mode=args.simplification_mode
+        simplification_mode=args.simplification_mode,
+        baseline_stale=baseline_stale
     )
 
     # 6. Compute raw totals across evaluated positions
@@ -1044,6 +1110,7 @@ def main():
         "threads": threads,
         "hash_bits": args.hash_bits,
         "simplification_mode": args.simplification_mode,
+        "baseline_stale": baseline_stale,
         "heavy_threshold": heavy_threshold,
         "totals": totals,
         "summary": summary,
@@ -1073,7 +1140,9 @@ def main():
             print()
         print(f"Verdict: {verdict} — {reason}")
 
-    # Exit code: 0 for ACCEPT / NEEDS_FULL / NEUTRAL / ACCEPT_NO_BASELINE; 1 for REJECT_*
+    # Exit code: 0 for ACCEPT / NEEDS_FULL / NEUTRAL / ACCEPT_NO_BASELINE; 1 for REJECT_*; 2 for STALE_BASELINE
+    if verdict == "STALE_BASELINE":
+        sys.exit(2)
     if verdict.startswith("REJECT"):
         sys.exit(1)
     else:

@@ -119,6 +119,15 @@ python3 scripts/eval_candidate.py --init-baseline all
 # (or python3 scripts/eval_candidate.py --init-baseline screen / standard / full)
 ```
 
+Baselines in `scripts/baselines/` must be regenerated whenever a change to
+`src/` is merged. The harness compares the last commit touching each baseline
+file with the last commit touching `src/`; a regression measured against an
+older baseline is reported as `STALE_BASELINE` (exit status 2) instead of
+`REJECT_REGRESSION`, because the candidate would be blamed for engine changes
+it did not make. Re-run `--init-baseline` on the parent commit and measure
+again. The harness's own unit tests run with
+`python3 tests/test_eval_candidate.py`.
+
 ## Evaluation Coefficient Tooling & Tuning
 
 Tools for inspecting, verifying, and tuning Zebra's evaluation pattern coefficients (`data/coeffs2.bin`):
