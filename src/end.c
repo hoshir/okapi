@@ -1471,9 +1471,23 @@ end_order_moves_presearch( int level,
 
     int opp_corner_moves = non_iterative_popcount( opp_moves & 0x8100000000000081ull );
 
+    /* ORDR-008: Penalize open C-square move if adjacent corner is empty and opponent gets immediate reply */
+    int c_square_penalty = 0;
+    if ( empties >= 15 && (square_mask[move] & 0x4281000000008142ull) != 0 ) {
+      int bit = bit_position[move];
+      int corner_bit = (bit == 1 || bit == 8) ? 0 :
+                       (bit == 6 || bit == 15) ? 7 :
+                       (bit == 48 || bit == 57) ? 56 : 63;
+      if ( ((child_my_bits | new_opp_bits) & (1ull << corner_bit)) == 0 &&
+           (opp_moves & (1ull << corner_bit)) != 0 ) {
+        c_square_penalty = 128;
+      }
+    }
+
     int quadrant_parity = (quadrant_mask[move] & effective_parity) != 0;
     int move_score = end_pattern_evaluate( child_my_bits, new_opp_bits ) -
-		     128 * (raw_opp_mob + opp_corner_moves) +
+		     128 * (raw_opp_mob + opp_corner_moves) -
+		     c_square_penalty +
 		     (raw_opp_mob == 0 ? 4096 : 0) +
 		     (quadrant_parity ? REGION_PARITY_BONUS : 0);
 
