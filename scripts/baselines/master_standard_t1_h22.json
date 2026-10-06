@@ -1,89 +1,90 @@
 {
   "verdict": "ACCEPT",
-  "reason": "Full suite confirmed node reduction of -1.35% with correct evaluations.",
+  "reason": "Full suite confirmed node reduction of -2.81% with correct evaluations.",
   "tests_passed": true,
   "all_correct": true,
   "mode": "standard",
   "threads": 1,
   "hash_bits": 22,
   "simplification_mode": false,
+  "baseline_stale": true,
   "heavy_threshold": 3.0,
   "totals": {
-    "total_nodes": 1691441637,
-    "total_time": 89.3
+    "total_nodes": 1643897652,
+    "total_time": 90.7
   },
   "summary": {
-    "total_candidate_nodes": 1691441637,
-    "total_baseline_nodes": 1714566110,
-    "total_node_delta_pct": -1.35,
-    "total_candidate_time": 89.3,
-    "total_baseline_time": 93.3,
-    "total_time_delta_pct": -4.29
+    "total_candidate_nodes": 1643897652,
+    "total_baseline_nodes": 1691441637,
+    "total_node_delta_pct": -2.81,
+    "total_candidate_time": 90.7,
+    "total_baseline_time": 89.3,
+    "total_time_delta_pct": 1.57
   },
   "comparison": {
     "FFO #40": {
-      "candidate_nodes": 13247891,
-      "baseline_nodes": 13247862,
+      "candidate_nodes": 13247943,
+      "baseline_nodes": 13247891,
       "node_delta_pct": 0.0,
       "candidate_time": 0.4,
       "baseline_time": 0.4,
       "time_delta_pct": 0.0
     },
     "FFO #42": {
-      "candidate_nodes": 16378724,
+      "candidate_nodes": 16307824,
       "baseline_nodes": 16378724,
-      "node_delta_pct": 0.0,
+      "node_delta_pct": -0.43,
       "candidate_time": 0.8,
       "baseline_time": 0.8,
       "time_delta_pct": 0.0
     },
     "FFO #41": {
-      "candidate_nodes": 21345908,
+      "candidate_nodes": 21587618,
       "baseline_nodes": 21345908,
-      "node_delta_pct": 0.0,
+      "node_delta_pct": 1.13,
       "candidate_time": 1.1,
-      "baseline_time": 1.0,
-      "time_delta_pct": 10.0
+      "baseline_time": 1.1,
+      "time_delta_pct": 0.0
     },
     "FFO #48": {
-      "candidate_nodes": 122439163,
-      "baseline_nodes": 141347701,
-      "node_delta_pct": -13.38,
-      "candidate_time": 6.4,
-      "baseline_time": 8.1,
-      "time_delta_pct": -20.99
+      "candidate_nodes": 119986578,
+      "baseline_nodes": 122439163,
+      "node_delta_pct": -2.0,
+      "candidate_time": 6.7,
+      "baseline_time": 6.4,
+      "time_delta_pct": 4.69
     },
     "FFO #45": {
-      "candidate_nodes": 262789150,
+      "candidate_nodes": 262431689,
       "baseline_nodes": 262789150,
-      "node_delta_pct": 0.0,
-      "candidate_time": 12.0,
-      "baseline_time": 12.2,
-      "time_delta_pct": -1.64
+      "node_delta_pct": -0.14,
+      "candidate_time": 12.4,
+      "baseline_time": 12.0,
+      "time_delta_pct": 3.33
     },
     "FFO #49": {
-      "candidate_nodes": 340446528,
+      "candidate_nodes": 322591974,
       "baseline_nodes": 340446528,
-      "node_delta_pct": 0.0,
-      "candidate_time": 13.9,
-      "baseline_time": 14.3,
-      "time_delta_pct": -2.8
+      "node_delta_pct": -5.24,
+      "candidate_time": 14.0,
+      "baseline_time": 13.9,
+      "time_delta_pct": 0.72
     },
     "FFO #52": {
-      "candidate_nodes": 298781151,
-      "baseline_nodes": 302997115,
-      "node_delta_pct": -1.39,
-      "candidate_time": 15.3,
-      "baseline_time": 16.0,
-      "time_delta_pct": -4.37
+      "candidate_nodes": 295680199,
+      "baseline_nodes": 298781151,
+      "node_delta_pct": -1.04,
+      "candidate_time": 15.8,
+      "baseline_time": 15.3,
+      "time_delta_pct": 3.27
     },
     "FFO #50": {
-      "candidate_nodes": 616013122,
+      "candidate_nodes": 592063827,
       "baseline_nodes": 616013122,
-      "node_delta_pct": 0.0,
-      "candidate_time": 39.4,
-      "baseline_time": 40.5,
-      "time_delta_pct": -2.72
+      "node_delta_pct": -3.89,
+      "candidate_time": 39.5,
+      "baseline_time": 39.4,
+      "time_delta_pct": 0.25
     }
   },
   "results": {
@@ -95,9 +96,9 @@
       "expected_moves": [
         "a2"
       ],
-      "nodes": 13247891,
+      "nodes": 13247943,
       "time_sec": 0.4,
-      "nps": 30139736,
+      "nps": 30322459,
       "error": null
     },
     "FFO #42": {
@@ -108,9 +109,9 @@
       "expected_moves": [
         "g2"
       ],
-      "nodes": 16378724,
+      "nodes": 16307824,
       "time_sec": 0.8,
-      "nps": 20562544,
+      "nps": 20128618,
       "error": null
     },
     "FFO #41": {
@@ -121,9 +122,9 @@
       "expected_moves": [
         "h4"
       ],
-      "nodes": 21345908,
+      "nodes": 21587618,
       "time_sec": 1.1,
-      "nps": 20286950,
+      "nps": 20124300,
       "error": null
     },
     "FFO #48": {
@@ -134,9 +135,9 @@
       "expected_moves": [
         "f6"
       ],
-      "nodes": 122439163,
-      "time_sec": 6.4,
-      "nps": 18999076,
+      "nodes": 119986578,
+      "time_sec": 6.7,
+      "nps": 18009953,
       "error": null
     },
     "FFO #45": {
@@ -147,9 +148,9 @@
       "expected_moves": [
         "b2"
       ],
-      "nodes": 262789150,
-      "time_sec": 12.0,
-      "nps": 21919547,
+      "nodes": 262431689,
+      "time_sec": 12.4,
+      "nps": 21220421,
       "error": null
     },
     "FFO #49": {
@@ -160,9 +161,9 @@
       "expected_moves": [
         "e1"
       ],
-      "nodes": 340446528,
-      "time_sec": 13.9,
-      "nps": 24554256,
+      "nodes": 322591974,
+      "time_sec": 14.0,
+      "nps": 22961832,
       "error": null
     },
     "FFO #52": {
@@ -173,9 +174,9 @@
       "expected_moves": [
         "a3"
       ],
-      "nodes": 298781151,
-      "time_sec": 15.3,
-      "nps": 19517120,
+      "nodes": 295680199,
+      "time_sec": 15.8,
+      "nps": 18662079,
       "error": null
     },
     "FFO #50": {
@@ -186,9 +187,9 @@
       "expected_moves": [
         "d8"
       ],
-      "nodes": 616013122,
-      "time_sec": 39.4,
-      "nps": 15634839,
+      "nodes": 592063827,
+      "time_sec": 39.5,
+      "nps": 14992316,
       "error": null
     }
   }
