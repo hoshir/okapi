@@ -1,0 +1,103 @@
+{
+  "description": "Learning-to-Rank trained static move ordering weights for Okapi endgame search (ORDR-002)",
+  "dataset_positions": 90590,
+  "dataset_candidate_moves": 499999,
+  "loss_function": "ListNet (Plackett-Luce Softmax Cross-Entropy)",
+  "features": [
+    "corner",
+    "open_x",
+    "open_c",
+    "safe_x",
+    "parity",
+    "opp_mob",
+    "opp_corner_moves",
+    "frontier",
+    "flips",
+    "edge_stable"
+  ],
+  "base_weights_a": {
+    "corner": 29.0,
+    "open_x": -62.0,
+    "open_c": -37.6,
+    "safe_x": -0.0,
+    "parity": 71.7,
+    "opp_mob": -128.0,
+    "opp_corner_moves": -45.9,
+    "frontier": 0.0,
+    "flips": -3.5,
+    "edge_stable": 8.4
+  },
+  "empties_sensitivity_b": {
+    "corner": -0.0,
+    "open_x": -0.0,
+    "open_c": 0.0,
+    "safe_x": 0.0,
+    "parity": 0.0,
+    "opp_mob": -16.6,
+    "opp_corner_moves": -0.0,
+    "frontier": -1.1,
+    "flips": 0.7,
+    "edge_stable": -0.0
+  },
+  "static_order_weights_table": {
+    "E_08": [29, -62, -38, 0, 72, -111, -46, 1, -4, 8],
+    "E_09": [29, -62, -38, 0, 72, -117, -46, 1, -4, 8],
+    "E_10": [29, -62, -38, 0, 72, -122, -46, 0, -4, 8],
+    "E_11": [29, -62, -38, 0, 72, -128, -46, 0, -3, 8],
+    "E_12": [29, -62, -38, 0, 72, -134, -46, 0, -3, 8],
+    "E_13": [29, -62, -38, 0, 72, -139, -46, -1, -3, 8],
+    "E_14": [29, -62, -38, 0, 72, -145, -46, -1, -3, 8]
+  },
+  "top1_ablation_study": {
+    "baseline_top1_acc": 0.79523,
+    "open_x_penalty_sweep": {
+      "-32": 0.79542,
+      "-64": 0.80316,
+      "-128": 0.81201,
+      "-256": 0.80583,
+      "-512": 0.80348,
+      "-1024": 0.80338,
+      "-4096": 0.80338
+    },
+    "edge_stable_bonus_sweep": {
+      "0": 0.81201,
+      "8": 0.75367,
+      "16": 0.72554,
+      "32": 0.66867,
+      "64": 0.60312,
+      "128": 0.54721
+    },
+    "frontier_penalty_sweep": {
+      "0": 0.81201,
+      "-4": 0.75709,
+      "-8": 0.75709,
+      "-16": 0.75614,
+      "-32": 0.74476
+    },
+    "open_c_penalty_sweep": {
+      "0": 0.81201,
+      "-16": 0.80645,
+      "-32": 0.79881,
+      "-64": 0.78922,
+      "-128": 0.76215,
+      "-256": 0.74459
+    },
+    "corner_bonus_sweep": {
+      "0": 0.81201,
+      "16": 0.81201,
+      "32": 0.81201,
+      "64": 0.76695,
+      "128": 0.68687,
+      "256": 0.60684,
+      "512": 0.56527,
+      "1024": 0.56334,
+      "2048": 0.56334
+    }
+  },
+  "adopted_engine_parameters": {
+    "FASTEST_FIRST_DEPTH": 14,
+    "REGION_PARITY_BONUS": 64,
+    "X_SQUARE_PENALTY": 128,
+    "HASH_MOVE_BONUS": 65536
+  }
+}

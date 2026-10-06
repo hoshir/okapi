@@ -1,0 +1,64 @@
+/*
+   File:            safemem.c
+
+   Created:         August 30, 1998
+
+   Author:          Gunnar Andersson (gunnar@radagast.se)
+
+   Contents:        Provides safer memory allocation than malloc().
+*/
+
+
+
+#include <stdlib.h>
+#include "error.h"
+#include "macros.h"
+#include "safemem.h"
+#include "texts.h"
+
+
+
+INLINE void *
+safe_malloc( size_t size ) {
+  void * block;
+
+  block = malloc( size );
+  if ( block == NULL )
+    fatal_error( "%s %zu\n", SAFEMEM_FAILURE, size );
+
+  return block;
+}
+
+void *
+safe_calloc( size_t count, size_t size ) {
+  void * block;
+
+  block = calloc( count, size );
+  if ( block == NULL )
+    fatal_error( "%s %zu\n", SAFEMEM_FAILURE, count * size );
+
+  return block;
+}
+
+void *
+safe_realloc( void *ptr, size_t size ) {
+  void * block;
+
+  block = realloc( ptr, size );
+  if ( block == NULL )
+    fatal_error( "%s %zu\n", SAFEMEM_FAILURE, size );
+
+  return block;
+}
+
+void *
+safe_memalign( size_t alignment, size_t size ) {
+  void * block = NULL;
+  int res;
+
+  res = posix_memalign( &block, alignment, size );
+  if ( res != 0 || block == NULL )
+    fatal_error( "%s %zu\n", SAFEMEM_FAILURE, size );
+
+  return block;
+}

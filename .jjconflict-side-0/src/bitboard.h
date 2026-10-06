@@ -1,0 +1,129 @@
+/*
+   File:          bitboard.h
+
+   Created:       November 21, 1999
+
+   Author:        Gunnar Andersson (gunnar@radagast.se)
+                  Toshihiko Okuhara
+
+   Contents:      The bitboard is a single 64-bit word.  Bit 0 is a1,
+                  bit 7 is h1 and bit 63 is h8: the bit for row i,
+                  column j (both 1-based) is 8*(i-1) + (j-1).
+*/
+
+
+
+#ifndef BITBOARD_H
+#define BITBOARD_H
+
+#include "macros.h"
+
+
+typedef unsigned long long BitBoard;
+
+
+/* The index of the lowest set bit.  Undefined for zero, so the loops
+   that use it test the word first. */
+
+#if defined( __GNUC__ )
+#define FIRST_BIT( x )  __builtin_ctzll( x )
+#else
+static INLINE int
+FIRST_BIT( BitBoard x ) {
+  int n = 0;
+  while ( (x & 1) == 0 ) {
+    x >>= 1;
+    n++;
+  }
+  return n;
+}
+#endif
+
+
+/* The operation macros predate the 64-bit representation, when every
+   one of them took two statements.  Kept so their call sites read the
+   same as they always have. */
+
+#define APPLY_NOT( a )          ((a) = ~(a))
+
+#define APPLY_XOR( a, b )       ((a) ^= (b))
+
+#define APPLY_OR( a, b )        ((a) |= (b))
+
+#define APPLY_AND( a, b )       ((a) &= (b))
+
+#define APPLY_ANDNOT( a, b )    ((a) &= ~(b))
+
+#define FULL_XOR( a, b, c )     ((a) = (b) ^ (c))
+
+#define FULL_OR( a, b, c )      ((a) = (b) | (c))
+
+#define FULL_AND( a, b, c )     ((a) = (b) & (c))
+
+#define FULL_ANDNOT( a, b, c )  ((a) = (b) & ~(c))
+
+#define CLEAR( a )              ((a) = 0)
+
+
+extern BitBoard square_mask[100];
+
+/* Conversion from a board coordinate (11..88) to the bit index, and
+   back again. */
+extern int bit_position[100];
+extern int square_of_bit[64];
+
+/* The squares a flip line through a given square can run over,
+   one mask per ray.  The "down" rays run towards higher bit indices
+   (E, S, SE, SW), the "up" rays towards lower ones (W, N, NW, NE). */
+
+typedef struct {
+  BitBoard dn[4];
+  BitBoard up[4];
+} FlipRays;
+
+extern FlipRays flip_rays[64];
+
+
+
+static INLINE unsigned int REGPARM(1)
+non_iterative_popcount( BitBoard b ) {
+#if defined( __GNUC__ )
+  /* Single hardware instruction on arm64 (cnt) and x86-64 (popcnt) */
+  return __builtin_popcountll( b );
+#else
+  b = b - ((b >> 1) & 0x5555555555555555ull);
+  b = (b & 0x3333333333333333ull) + ((b >> 2) & 0x3333333333333333ull);
+  b = (b + (b >> 4)) & 0x0F0F0F0F0F0F0F0Full;
+  return (b * 0x0101010101010101ull) >> 56;
+#endif
+}
+
+static INLINE unsigned int REGPARM(1)
+iterative_popcount( BitBoard b ) {
+#if defined( __GNUC__ )
+  return __builtin_popcountll( b );
+#else
+  unsigned int n;
+  n = 0;
+  for ( ; b != 0; n++, b &= (b - 1) )
+    ;
+
+  return n;
+#endif
+}
+
+
+unsigned int REGPARM(1)
+bit_reverse_32( unsigned int val );
+
+void
+set_bitboards( int *in_board, int side_to_move,
+	       BitBoard *my_out, BitBoard *opp_out );
+
+void
+init_bitboard( void );
+
+
+
+
+#endif  /* BITBOARD_H */
