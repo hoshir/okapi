@@ -12,13 +12,16 @@ import unittest
 # Add scripts/ to path so we can import eval_candidate
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "scripts"))
 
+import eval_candidate
 from eval_candidate import (
     HEAVY_POSITIONS,
     HEAVY_REGRESSION_THRESHOLD_PCT,
     SIMPLIFICATION_THRESHOLD_PCT,
     determine_verdict,
+    evaluate_suite,
     generate_markdown_table,
     generate_text_table,
+    is_baseline_stale,
 )
 
 
@@ -305,12 +308,20 @@ class TestSimplificationMode(unittest.TestCase):
         self.assertEqual(verdict, "NEEDS_FULL")
         self.assertIn("Proceed to --mode full", reason)
 
-    def test_simplification_mode_rejects_aggregate_regression_over_half_pct(self):
-        """Even in simplification mode, aggregate regression > +0.5% must reject."""
-        summary = _make_summary(+0.8)
+    def test_simplification_mode_rejects_aggregate_regression_over_budget(self):
+        """Simplification mode tolerates up to +5.0% aggregate; beyond it must reject."""
+        summary = _make_summary(+5.5)
         verdict, reason = determine_verdict("full", True, True, summary, simplification_mode=True)
         self.assertEqual(verdict, "REJECT_REGRESSION")
-        self.assertIn("+0.80%", reason)
+        self.assertIn("+5.50%", reason)
+
+    def test_simplification_mode_tolerates_regression_within_budget(self):
+        """+0.8% is inside the +5.0% simplification budget (rejected without the flag)."""
+        summary = _make_summary(+0.8)
+        verdict, _ = determine_verdict("full", True, True, summary, simplification_mode=True)
+        self.assertEqual(verdict, "ACCEPT")
+        verdict, _ = determine_verdict("full", True, True, summary)
+        self.assertEqual(verdict, "REJECT_REGRESSION")
 
     def test_simplification_mode_preserves_correctness_invariant(self):
         """Correctness failure must still reject in simplification mode."""
@@ -376,6 +387,78 @@ class TestTableGeneration(unittest.TestCase):
         # At 1.0% threshold: warning emoji present
         md_1pct = generate_markdown_table(comparison, summary, "full", 1, 22, heavy_threshold=1.0)
         self.assertIn("⚠️", md_1pct)
+
+
+class TestStaleBaselineGuard(unittest.TestCase):
+    """A regression against a baseline older than the latest src/ change is not
+    attributable to the candidate (the SRCH-031 post-mortem: a 9/26 baseline
+    was compared against a master that had since merged five search PRs, and
+    the candidate was rejected for +19% nodes it did not cause)."""
+
+    def test_is_baseline_stale(self):
+        self.assertTrue(is_baseline_stale(200, 100))     # src newer than baseline
+        self.assertFalse(is_baseline_stale(100, 200))    # baseline newer
+        self.assertFalse(is_baseline_stale(100, 100))    # synced in the same commit
+        self.assertFalse(is_baseline_stale(None, 100))   # unknown never counts
+        self.assertFalse(is_baseline_stale(100, None))
+        self.assertFalse(is_baseline_stale(None, None))
+
+    def test_regression_on_stale_baseline_is_not_a_rejection(self):
+        verdict, reason = determine_verdict(
+            "full", True, True, _make_summary(19.34), baseline_stale=True)
+        self.assertEqual(verdict, "STALE_BASELINE")
+        self.assertIn("sync-baseline", reason)
+        self.assertIn("19.34", reason)  # underlying result is preserved
+
+    def test_heavy_regression_on_stale_baseline_is_not_a_rejection(self):
+        verdict, _ = determine_verdict(
+            "full", True, True, _make_summary(-1.0),
+            comparison=_make_comparison(ffo53=40.0), baseline_stale=True)
+        self.assertEqual(verdict, "STALE_BASELINE")
+
+    def test_fresh_baseline_still_rejects(self):
+        verdict, _ = determine_verdict(
+            "full", True, True, _make_summary(19.34), baseline_stale=False)
+        self.assertEqual(verdict, "REJECT_REGRESSION")
+
+    def test_stale_baseline_never_hides_correctness_or_timeouts(self):
+        v, _ = determine_verdict("full", True, False, _make_summary(0.0), baseline_stale=True)
+        self.assertEqual(v, "REJECT_CORRECTNESS")
+        v, _ = determine_verdict("full", True, True, _make_summary(0.0),
+                                 timed_out_positions=["FFO #53"], baseline_stale=True)
+        self.assertEqual(v, "REJECT_TIMEOUT")
+
+    def test_stale_baseline_does_not_alter_improvements(self):
+        v, _ = determine_verdict("full", True, True, _make_summary(-3.0), baseline_stale=True)
+        self.assertEqual(v, "ACCEPT")
+
+
+class TestBaselineMissingPositions(unittest.TestCase):
+    """HEAVY_POSITIONS may contain positions a baseline never measured
+    (e.g. FFO #54 in the full baseline); evaluate_suite crashed with KeyError."""
+
+    def test_heavy_position_missing_from_baseline_does_not_crash(self):
+        board = "-" * 64
+        positions = [("FFO #54", board, 31, 33, ["c7"])]
+        baseline = {"FFO #40": {"correct": True, "nodes": 100, "time_sec": 1.0}}
+
+        def fake_solve(repo_root, pos_str, threads, hash_bits, timeout=None):
+            return {"success": True, "score_black": 31, "score_white": 33,
+                    "first_move": "c7", "nodes": 6_000_000_000,
+                    "time_sec": 60.0, "nps": 100_000_000}
+
+        original = eval_candidate.solve_position
+        eval_candidate.solve_position = fake_solve
+        try:
+            results, all_correct, timed_out, early_halted = evaluate_suite(
+                ".", positions, 8, 22, baseline_results=baseline,
+                progress="none", early_halt=True)
+        finally:
+            eval_candidate.solve_position = original
+        self.assertTrue(all_correct)
+        self.assertEqual(timed_out, [])
+        self.assertIsNone(early_halted)  # nothing to compare against
+        self.assertEqual(results["FFO #54"]["nodes"], 6_000_000_000)
 
 
 if __name__ == "__main__":
