@@ -28,6 +28,7 @@
 #include "display.h"
 #include "doflip.h"
 #include "end.h"
+#include "end_aspiration.h"
 #include "end_leaf.h"
 #include "end_patterns.h"
 #include "epcstat.h"
@@ -2915,13 +2916,7 @@ end_game( int side_to_move,
   if ( !wld && (empties >= 16) ) {
     set_bitboards( board, side_to_move, &root_my_bits, &root_opp_bits );
     int est = end_pattern_evaluate( root_my_bits, root_opp_bits );
-    int center = (est >= 0) ? (est + 64) / 128 : (est - 64) / 128;
-    if ( (empties & 1) != (abs(center) & 1) ) {
-      center += (center >= 0) ? 1 : -1;
-    }
-    if ( center < -60 ) center = -60;
-    if ( center > 60 ) center = 60;
-    last_window_center = center;
+    last_window_center = end_aspiration_center( est, 60 );
   }
 
   if ( empties > DISABLE_SELECTIVITY ) {
@@ -3151,10 +3146,7 @@ end_game( int side_to_move,
     if ( !any_search_result && pre_best != 0 ) {
       end_best_root_move = pre_best;
       pv[0][0] = pre_best;
-      int center = (last_eval >= 0) ? (last_eval + 64) / 128 : (last_eval - 64) / 128;
-      if ( center < -62 ) center = -62;
-      if ( center > 62 ) center = 62;
-      last_window_center = center;
+      last_window_center = end_aspiration_center( last_eval, 62 );
     }
     determine_hash_values( side_to_move, board );
     prepare_to_solve( root_my_bits | root_opp_bits );
