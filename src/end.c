@@ -794,6 +794,7 @@ end_probe_2ply_etc( int sq,
 		    int alpha,
 		    int beta,
 		    int selectivity,
+		    int child_best_reply,
 		    int *cutoff_score ) {
   BitBoard opp_moves = bitboard_moves( child_opp_bits, child_my_bits );
   int opp_mob = non_iterative_popcount( opp_moves );
@@ -859,10 +860,46 @@ end_probe_2ply_etc( int sq,
   if ( empties < MIN_2PLY_ETC_DEPTH )
     return ETC_2PLY_NONE;
 
+  int oppcol = OPP( side_to_move );
+  int child_best_ge_beta = FALSE;
+  int child_best_eval = INFINITE_EVAL;
+
+  /* Priority check: probe opponent's known TT best reply if available */
+  if ( child_best_reply != 0 ) {
+    BitBoard opp_flips_new_bits;
+    int flipped = TestFlips_bitboard_to( child_best_reply, child_opp_bits, child_my_bits, &opp_flips_new_bits );
+    if ( flipped > 0 ) {
+      unsigned int diff1_opp, diff2_opp;
+      end_hash_diff( opp_flips_new_bits, child_opp_bits, oppcol, child_best_reply, &diff1_opp, &diff2_opp );
+      unsigned int g_diff1 = diff1_my ^ diff1_opp;
+      unsigned int g_diff2 = diff2_my ^ diff2_opp;
+      hash1 ^= g_diff1;
+      hash2 ^= g_diff2;
+      prefetch_hash_endgame_key( hash2 );
+      HashEntry g_entry;
+      find_hash( &g_entry, ENDGAME_MODE );
+      hash1 ^= g_diff1;
+      hash2 ^= g_diff2;
+
+      if ( (g_entry.flags & ENDGAME_SCORE) &&
+	   (g_entry.draft >= empties - 2) &&
+	   (g_entry.selectivity <= selectivity) ) {
+	if ( (g_entry.flags & (UPPER_BOUND | EXACT_VALUE)) &&
+	     (g_entry.eval <= alpha) ) {
+	  return ETC_2PLY_REFUTED;
+	}
+	if ( (g_entry.flags & (LOWER_BOUND | EXACT_VALUE)) &&
+	     (g_entry.eval >= beta) ) {
+	  child_best_ge_beta = TRUE;
+	  child_best_eval = g_entry.eval;
+	}
+      }
+    }
+  }
+
   if ( opp_mob < 1 || opp_mob > MAX_2PLY_ETC_MOB )
     return ETC_2PLY_NONE;
 
-  int oppcol = OPP( side_to_move );
   BitBoard moves_bb = opp_moves;
   int all_ge_beta = TRUE;
   int min_g_eval = INFINITE_EVAL;
@@ -871,6 +908,17 @@ end_probe_2ply_etc( int sq,
     int bit = FIRST_BIT( moves_bb );
     moves_bb &= moves_bb - 1;
     int opp_sq = square_of_bit[bit];
+
+    if ( opp_sq == child_best_reply ) {
+      if ( child_best_ge_beta ) {
+	if ( child_best_eval < min_g_eval )
+	  min_g_eval = child_best_eval;
+      }
+      else {
+	all_ge_beta = FALSE;
+      }
+      continue;
+    }
 
     BitBoard opp_flips_new_bits;
     int flipped = TestFlips_bitboard_to( opp_sq, child_opp_bits, child_my_bits, &opp_flips_new_bits );
@@ -1370,9 +1418,15 @@ end_order_moves_presearch( int level,
 
       if ( !etc1_demoted ) {
 	int cutoff_score;
+	int child_best_reply = 0;
+	if ( (etc_entry.draft != NO_HASH_MOVE) && (etc_entry.move[0] != 0) &&
+	     bb_valid_move( etc_entry.move[0], opp_bits & ~child_my_bits, child_my_bits ) ) {
+	  child_best_reply = etc_entry.move[0];
+	}
 	int etc2_res = end_probe_2ply_etc( move, child_my_bits, opp_bits & ~child_my_bits,
 					   diff1, diff2, side_to_move, empties,
-					   curr_alpha, beta, selectivity, &cutoff_score );
+					   curr_alpha, beta, selectivity,
+					   child_best_reply, &cutoff_score );
 	if ( etc2_res == ETC_2PLY_CUTOFF ) {
 	  *etc_tried_ptr = move;
 	  *etc_cutoff_score = cutoff_score;
