@@ -1574,24 +1574,122 @@ end_order_moves_presearch( int level,
 static int presearch_nodes = 0;
 static int presearch_budget = 0;
 static int presearch_aborted = FALSE;
+static long long presearch_tt_probes = 0;
+static long long presearch_tt_hits = 0;
+static long long presearch_tt_cutoffs = 0;
+static long long presearch_mpc_probes = 0;
+static long long presearch_mpc_cutoffs = 0;
+static int presearch_mpc_margin = 384;
+
+static int
+solve_leaf_bitboard( BitBoard my_bits,
+		     BitBoard opp_bits,
+		     int alpha,
+		     int beta,
+		     int color,
+		     int empties,
+		     int disc_diff,
+		     int pass_legal ) {
+  BitBoard empty_bb = ~(my_bits | opp_bits);
+  int sq[8];
+  int n = 0;
+  while ( empty_bb != 0 ) {
+    int bit = FIRST_BIT( empty_bb );
+    empty_bb &= empty_bb - 1;
+    sq[n++] = square_of_bit[bit];
+  }
+
+  if ( n == 8 ) {
+    return solve_eight_empty( my_bits, opp_bits, sq[0], sq[1], sq[2], sq[3],
+			      sq[4], sq[5], sq[6], sq[7],
+			      alpha, beta, color, disc_diff, pass_legal );
+  }
+  if ( n == 7 ) {
+    return solve_seven_empty( my_bits, opp_bits, sq[0], sq[1], sq[2], sq[3],
+			      sq[4], sq[5], sq[6],
+			      alpha, beta, color, disc_diff, pass_legal );
+  }
+  if ( n == 6 ) {
+    return solve_six_empty( my_bits, opp_bits, sq[0], sq[1], sq[2], sq[3],
+			    sq[4], sq[5],
+			    alpha, beta, color, disc_diff, pass_legal );
+  }
+  if ( n == 5 ) {
+    return solve_five_empty( my_bits, opp_bits, sq[0], sq[1], sq[2], sq[3],
+			     sq[4],
+			     alpha, beta, color, disc_diff, pass_legal );
+  }
+  if ( n == 4 ) {
+    return solve_four_empty( my_bits, opp_bits, sq[0], sq[1], sq[2], sq[3],
+			     alpha, beta, disc_diff, pass_legal );
+  }
+  if ( n == 3 ) {
+    return solve_three_empty( my_bits, opp_bits, sq[0], sq[1], sq[2],
+			      alpha, beta, disc_diff, pass_legal );
+  }
+  if ( n == 2 ) {
+    return solve_two_empty( my_bits, opp_bits, sq[0], sq[1],
+			    alpha, beta, disc_diff, pass_legal );
+  }
+  if ( n == 1 ) {
+    int sq1 = sq[0];
+    int flipped = TestFlips_wrapper( sq1, my_bits, opp_bits );
+    if ( flipped != 0 )
+      return disc_diff + 2 * flipped + 1;
+    if ( !pass_legal ) {
+      if ( disc_diff > 0 ) return disc_diff + 1;
+      if ( disc_diff < 0 ) return disc_diff - 1;
+      return 0;
+    }
+    flipped = TestFlips_wrapper( sq1, opp_bits, my_bits );
+    if ( flipped != 0 )
+      return disc_diff - 2 * flipped - 1;
+    if ( disc_diff > 0 ) return disc_diff + 1;
+    if ( disc_diff < 0 ) return disc_diff - 1;
+    return 0;
+  }
+  if ( disc_diff > 0 ) return disc_diff;
+  if ( disc_diff < 0 ) return disc_diff;
+  return 0;
+}
+
+static int presearch_use_2a = 1; /* Hypothesis 2-A: Proof Tree Complexity */
+static int presearch_use_2b = 1; /* Hypothesis 2-B: Leaf Solver Dispatch at <= 8 empties */
 
 static int
 end_presearch_ab( BitBoard my_bits, BitBoard opp_bits,
 		  int side_to_move, int depth, int empties,
-		  int alpha, int beta, int level, int *best_move ) {
+		  int alpha, int beta, int level, int *best_move,
+		  int allow_mpc ) {
   if ( presearch_aborted || is_panic_abort() || force_return )
     return alpha;
 
   INCREMENT_COUNTER( nodes );
-  if ( ++presearch_nodes > presearch_budget ) {
+  ++presearch_nodes;
+  if ( presearch_budget > 0 && presearch_nodes > presearch_budget ) {
     presearch_aborted = TRUE;
     return alpha;
   }
   if ( best_move != NULL )
     *best_move = 0;
 
+  /* Terminal leaf solver dispatch (Hypothesis 2-B) */
+  if ( presearch_use_2b && empties <= LOW_LEVEL_DEPTH ) {
+    int disc_diff = non_iterative_popcount( my_bits ) - non_iterative_popcount( opp_bits );
+    int a = (alpha >= 0) ? (alpha / 128) : ((alpha - 127) / 128);
+    int b = (beta >= 0) ? ((beta + 127) / 128) : (beta / 128);
+    if ( a >= b ) b = a + 1;
+    int score = solve_leaf_bitboard( my_bits, opp_bits, a, b, side_to_move,
+				     empties, disc_diff, TRUE );
+    return score * 128;
+  }
+
   if ( depth <= 0 ) {
-    int val = end_pattern_evaluate( my_bits, opp_bits );
+    BitBoard opp_moves = generate_all_c( opp_bits, my_bits );
+    int opp_mob = non_iterative_popcount( opp_moves );
+    BitBoard my_moves = generate_all_c( my_bits, opp_bits );
+    int my_mob = non_iterative_popcount( my_moves );
+    int val = 128 * (my_mob - opp_mob);
     if ( (region_parity != 0) && (empties & 1) )
       val += REGION_PARITY_BONUS;
     return val;
@@ -1610,7 +1708,8 @@ end_presearch_ab( BitBoard my_bits, BitBoard opp_bits,
     hash1 ^= hash_flip_color1;
     hash2 ^= hash_flip_color2;
     int val = -end_presearch_ab( opp_bits, my_bits, OPP( side_to_move ),
-				 depth, empties, -beta, -alpha, level + 1, NULL );
+				 depth, empties, -beta, -alpha, level + 1, NULL,
+				 allow_mpc );
     hash1 ^= hash_flip_color1;
     hash2 ^= hash_flip_color2;
     return val;
@@ -1619,9 +1718,11 @@ end_presearch_ab( BitBoard my_bits, BitBoard opp_bits,
   /* Transposition Table Probing */
   HashEntry entry;
   find_hash( &entry, ENDGAME_MODE );
+  presearch_tt_probes++;
   int hash_move = 0;
   if ( entry.draft != NO_HASH_MOVE && bb_valid_move( entry.move[0], my_bits, opp_bits ) ) {
     hash_move = entry.move[0];
+    presearch_tt_hits++;
   }
 
   if ( level > 0 && entry.draft != NO_HASH_MOVE && entry.draft >= depth &&
@@ -1633,16 +1734,35 @@ end_presearch_ab( BitBoard my_bits, BitBoard opp_bits,
       tt_val = entry.eval * 128;
     }
     if ( entry.flags & EXACT_VALUE ) {
+      presearch_tt_cutoffs++;
       if ( best_move != NULL ) *best_move = hash_move;
       return tt_val;
     }
     if ( (entry.flags & LOWER_BOUND) && tt_val >= beta ) {
+      presearch_tt_cutoffs++;
       if ( best_move != NULL ) *best_move = hash_move;
       return tt_val;
     }
     if ( (entry.flags & UPPER_BOUND) && tt_val <= alpha ) {
+      presearch_tt_cutoffs++;
       if ( best_move != NULL ) *best_move = hash_move;
       return tt_val;
+    }
+  }
+
+  /* Multi-ProbCut in Presearch (PRUN-018) */
+  if ( allow_mpc && (beta == alpha + 1) && (depth >= 6) && (level > 0) ) {
+    presearch_mpc_probes++;
+    int shallow_depth = depth - 4;
+    int bound = beta + presearch_mpc_margin;
+    int shallow_val = end_presearch_ab( my_bits, opp_bits, side_to_move,
+					shallow_depth, empties,
+					bound - 1, bound,
+					level, NULL, FALSE );
+    if ( !presearch_aborted && shallow_val >= bound ) {
+      presearch_mpc_cutoffs++;
+      if ( best_move != NULL ) *best_move = hash_move;
+      return beta;
     }
   }
 
@@ -1703,6 +1823,7 @@ end_presearch_ab( BitBoard my_bits, BitBoard opp_bits,
   int orig_alpha = alpha;
   int best_val = -INFINITE_EVAL;
   int best_sq = moves_arr[0];
+  int best_nodes = 0;
 
   for ( int i = 0; i < n_moves; i++ ) {
     int sq = moves_arr[i];
@@ -1717,7 +1838,8 @@ end_presearch_ab( BitBoard my_bits, BitBoard opp_bits,
 
     int child_best = 0;
     int val;
-    if ( i == 0 ) {
+    int start_move_nodes = presearch_nodes;
+    if ( level == 0 || i == 0 ) {
       val = -end_presearch_ab( opp_bits & ~new_my_bits,
 			       new_my_bits,
 			       OPP( side_to_move ),
@@ -1726,7 +1848,8 @@ end_presearch_ab( BitBoard my_bits, BitBoard opp_bits,
 			       -beta,
 			       -alpha,
 			       level + 1,
-			       &child_best );
+			       &child_best,
+			       allow_mpc );
     } else {
       val = -end_presearch_ab( opp_bits & ~new_my_bits,
 			       new_my_bits,
@@ -1736,7 +1859,8 @@ end_presearch_ab( BitBoard my_bits, BitBoard opp_bits,
 			       -alpha - 1,
 			       -alpha,
 			       level + 1,
-			       &child_best );
+			       &child_best,
+			       allow_mpc );
       if ( val > alpha && val < beta ) {
 	val = -end_presearch_ab( opp_bits & ~new_my_bits,
 				 new_my_bits,
@@ -1746,8 +1870,13 @@ end_presearch_ab( BitBoard my_bits, BitBoard opp_bits,
 				 -beta,
 				 -alpha,
 				 level + 1,
-				 &child_best );
+				 &child_best,
+				 allow_mpc );
       }
+    }
+    int move_nodes = presearch_nodes - start_move_nodes;
+    if ( level == 0 && depth >= 10 ) {
+      fprintf( stderr, "  [ROOT_NODES d=%d] sq=%c%c val=%d nodes=%d\n", depth, TO_SQUARE(sq), val, move_nodes );
     }
 
     region_parity ^= quadrant_mask[sq];
@@ -1757,13 +1886,26 @@ end_presearch_ab( BitBoard my_bits, BitBoard opp_bits,
     if ( presearch_aborted || is_panic_abort() || force_return )
       break;
 
-    if ( val > best_val ) {
-      best_val = val;
-      best_sq = sq;
-      if ( val > alpha ) {
-	alpha = val;
-	if ( alpha >= beta )
-	  break;
+    if ( level == 0 ) {
+      /* Hypothesis 2-A: Proof Tree Complexity Selection among optimal moves */
+      if ( i == 0 || val > best_val ) {
+	best_val = val;
+	best_sq = sq;
+	best_nodes = move_nodes;
+	if ( val > alpha ) alpha = val;
+      } else if ( presearch_use_2a && val == best_val && move_nodes < best_nodes ) {
+	best_sq = sq;
+	best_nodes = move_nodes;
+      }
+    } else {
+      if ( val > best_val ) {
+	best_val = val;
+	best_sq = sq;
+	if ( val > alpha ) {
+	  alpha = val;
+	  if ( alpha >= beta )
+	    break;
+	}
       }
     }
   }
@@ -3050,11 +3192,28 @@ end_game( int side_to_move,
       }
     }
     else {
-      static const int sel_schedule[] = { 6, 3, 2, 1 };
-      int pass_idx;
-      for ( pass_idx = 0; pass_idx < 4 &&
-	      !is_panic_abort() && !force_return; pass_idx++ ) {
-	selectivity = sel_schedule[pass_idx];
+      char *env_skip_sel = getenv( "SKIP_SELECTIVE_SCHEDULE" );
+      char *env_pre_only = getenv( "PRESEARCH_ONLY" );
+      if ( (env_pre_only == NULL || !atoi( env_pre_only )) &&
+	   (env_skip_sel == NULL || !atoi( env_skip_sel )) ) {
+	int sel_schedule[4] = { 6, 3, 2, 1 };
+	int n_passes = 4;
+	char *env_sched = getenv( "SELECTIVE_SCHEDULE" );
+	if ( env_sched != NULL && strlen( env_sched ) > 0 ) {
+	  n_passes = 0;
+	  char buf[64];
+	  strncpy( buf, env_sched, sizeof(buf) - 1 );
+	  buf[sizeof(buf) - 1] = '\0';
+	  char *tok = strtok( buf, "," );
+	  while ( tok != NULL && n_passes < 4 ) {
+	    sel_schedule[n_passes++] = atoi( tok );
+	    tok = strtok( NULL, "," );
+	  }
+	}
+	int pass_idx;
+	for ( pass_idx = 0; pass_idx < n_passes &&
+		!is_panic_abort() && !force_return; pass_idx++ ) {
+	  selectivity = sel_schedule[pass_idx];
 	alpha = last_window_center - 1;
 	beta = last_window_center + 1;
 
@@ -3109,6 +3268,7 @@ end_game( int side_to_move,
 	    hash_expand_pv( side_to_move, ENDGAME_MODE, EXACT_VALUE, selectivity );
 	    send_solve_status( empties, side_to_move, eval_info );
 	  }
+	}
 	}
       }
     }
@@ -3185,28 +3345,62 @@ end_game( int side_to_move,
     prepare_to_solve( root_my_bits | root_opp_bits );
     determine_hash_values( side_to_move, board );
 
-    int max_presearch = MIN( 14, empties - 8 );
+    int max_presearch = MIN( 19, empties - 8 );
+    char *env_max = getenv( "PRESEARCH_MAX_DEPTH" );
+    if ( env_max != NULL ) max_presearch = atoi( env_max );
+
+    char *env_opt = getenv( "PRESEARCH_OPT" );
+    if ( env_opt != NULL ) {
+      if ( strcmp( env_opt, "2a" ) == 0 || strcmp( env_opt, "a" ) == 0 ) {
+        presearch_use_2a = 1;
+        presearch_use_2b = 0;
+      } else if ( strcmp( env_opt, "2b" ) == 0 || strcmp( env_opt, "b" ) == 0 ) {
+        presearch_use_2a = 0;
+        presearch_use_2b = 1;
+      } else if ( strcmp( env_opt, "2c" ) == 0 || strcmp( env_opt, "c" ) == 0 ) {
+        presearch_use_2a = 1;
+        presearch_use_2b = 1;
+      } else if ( strcmp( env_opt, "base" ) == 0 || strcmp( env_opt, "0" ) == 0 ) {
+        presearch_use_2a = 0;
+        presearch_use_2b = 0;
+      }
+    }
+
+    char *env_margin = getenv( "PRESEARCH_MPC_MARGIN" );
+    if ( env_margin != NULL ) presearch_mpc_margin = atoi( env_margin );
+
+    char *env_budget = getenv( "PRESEARCH_BUDGET" );
+    if ( env_budget != NULL ) presearch_budget = atoi( env_budget );
+    else presearch_budget = 0; /* 0 = unlimited nodes, no cumulative guard */
+
     int pre_best = 0;
     int last_eval = 0;
     presearch_nodes = 0;
-    presearch_budget = 100000;
     presearch_aborted = FALSE;
+    presearch_tt_probes = 0;
+    presearch_tt_hits = 0;
+    presearch_tt_cutoffs = 0;
+    presearch_mpc_probes = 0;
+    presearch_mpc_cutoffs = 0;
 
-    for ( int d = 4; d <= max_presearch; d += 2 ) {
+    double last_time = get_elapsed_time();
+    int last_nodes = 0;
+
+    for ( int d = 4; d <= max_presearch; d += (d == max_presearch - 1 ? 1 : 2) ) {
       int cur_best = 0;
       int val;
       if ( d == 4 ) {
 	val = end_presearch_ab( root_my_bits, root_opp_bits,
 				side_to_move, d, empties,
 				-INFINITE_EVAL, INFINITE_EVAL,
-				0, &cur_best );
+				0, &cur_best, TRUE );
       } else {
 	int alpha = last_eval - 256;
 	int beta = last_eval + 256;
 	val = end_presearch_ab( root_my_bits, root_opp_bits,
 				side_to_move, d, empties,
 				alpha, beta,
-				0, &cur_best );
+				0, &cur_best, TRUE );
 	if ( !presearch_aborted && !is_panic_abort() && !force_return ) {
 	  int delta = 256;
 	  while ( (val <= alpha || val >= beta) && !presearch_aborted && !is_panic_abort() && !force_return ) {
@@ -3218,18 +3412,40 @@ end_game( int side_to_move,
 	    val = end_presearch_ab( root_my_bits, root_opp_bits,
 				    side_to_move, d, empties,
 				    alpha, beta,
-				    0, &cur_best );
+				    0, &cur_best, TRUE );
 	  }
 	}
       }
+
+      if ( cur_best != 0 && bb_valid_move( cur_best, root_my_bits, root_opp_bits ) ) {
+	pre_best = cur_best;
+      }
+      double cur_time = get_elapsed_time();
+      double dt = cur_time - last_time;
+      last_time = cur_time;
+      int d_nodes = presearch_nodes - last_nodes;
+      last_nodes = presearch_nodes;
+
+      double tt_hit_pct = presearch_tt_probes > 0 ? (100.0 * presearch_tt_hits / presearch_tt_probes) : 0.0;
+      double mpc_cut_pct = presearch_mpc_probes > 0 ? (100.0 * presearch_mpc_cutoffs / presearch_mpc_probes) : 0.0;
+
+      fprintf( stderr, "[PRESEARCH_DEPTH] d=%d dt=%.3fs nodes=%d (cumul=%d) best=%c%c val=%d tt_hits=%lld/%lld (%.1f%%, cut=%lld) mpc_cuts=%lld/%lld (%.1f%%) aborted=%d\n",
+	       d, dt, d_nodes, presearch_nodes, TO_SQUARE( cur_best ), val,
+	       presearch_tt_hits, presearch_tt_probes, tt_hit_pct, presearch_tt_cutoffs,
+	       presearch_mpc_cutoffs, presearch_mpc_probes, mpc_cut_pct, presearch_aborted );
 
       if ( presearch_aborted || is_panic_abort() || force_return )
 	break;
 
       last_eval = val;
-      if ( cur_best != 0 && bb_valid_move( cur_best, root_my_bits, root_opp_bits ) ) {
-	pre_best = cur_best;
-      }
+    }
+
+    char *env_pre_only = getenv( "PRESEARCH_ONLY" );
+    if ( env_pre_only != NULL && atoi( env_pre_only ) ) {
+      fprintf( stderr, "[PRESEARCH_ONLY] finished at max_d=%d best=%c%c nodes=%d\n",
+	       max_presearch, TO_SQUARE( pre_best ), presearch_nodes );
+      *eval_info = create_eval_info( EXACT_EVAL, DRAWN_POSITION, 0, 1.0, empties, FALSE );
+      return pre_best;
     }
 
     if ( !any_search_result && pre_best != 0 ) {
@@ -3427,6 +3643,15 @@ end_game( int side_to_move,
   if ( !wld && !incomplete_search && !force_return &&
        (empties <= PV_EXPANSION) )
     full_expand_pv( side_to_move, 0 );
+
+  if ( presearch_tt_probes > 0 ) {
+    double tt_pct = 100.0 * presearch_tt_hits / presearch_tt_probes;
+    double mpc_pct = presearch_mpc_probes > 0 ? (100.0 * presearch_mpc_cutoffs / presearch_mpc_probes) : 0.0;
+    fprintf( stderr, "[POS_TELEMETRY] empties=%d move=%c%c eval=%d time=%.2fs tt_hits=%.1f%% (%lld/%lld) tt_cuts=%lld mpc_cuts=%.1f%% (%lld/%lld)\n",
+	     empties, TO_SQUARE( pv[0][0] ), root_eval, get_elapsed_time(),
+	     tt_pct, presearch_tt_hits, presearch_tt_probes, presearch_tt_cutoffs,
+	     mpc_pct, presearch_mpc_cutoffs, presearch_mpc_probes );
+  }
 
   return pv[0][0];
 }
