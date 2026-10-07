@@ -71,6 +71,7 @@
    This means more aggressive use of fastest first. */
 #define WIPEOUT_THRESHOLD            60
 #define REGION_PARITY_BONUS          64
+#define PRESEARCH_ORDER_BONUS        0
 
 
 
@@ -1332,6 +1333,7 @@ end_order_moves_presearch( int level,
 			   int can_split,
 			   const int *proven,
 			   const int *proven_score,
+			   int presearch_move,
 			   int *etc_tried_ptr,
 			   int *etc_cutoff_score ) {
   int i, j;
@@ -1545,6 +1547,10 @@ end_order_moves_presearch( int level,
 		     (raw_opp_mob == 0 ? 4096 : 0) +
 		     (quadrant_parity ? REGION_PARITY_BONUS : 0);
 
+    if ( presearch_move != 0 && move == presearch_move ) {
+      move_score += PRESEARCH_ORDER_BONUS;
+    }
+
     evals[disks_played][move] = move_score;
     move_list[disks_played][move_count[disks_played]++] = move;
   }
@@ -1618,7 +1624,8 @@ end_presearch_ab( BitBoard my_bits, BitBoard opp_bits,
     hash_move = entry.move[0];
   }
 
-  if ( level > 0 && entry.draft != NO_HASH_MOVE && entry.draft >= depth ) {
+  if ( level > 0 && entry.draft != NO_HASH_MOVE && entry.draft >= depth &&
+       (entry.flags & HEURISTIC_PRESEARCH_MOVE) ) {
     int tt_val;
     if ( (entry.flags & MIDGAME_SCORE) && !(entry.flags & HEURISTIC_PRESEARCH_MOVE) ) {
       tt_val = entry.eval;
@@ -1820,6 +1827,7 @@ end_search_nws( BitBoard my_bits,
   int oppcol = OPP( side_to_move );
   int use_hash;
   int hash_hit = FALSE;
+  int presearch_move = 0;
   HashEntry entry;
 
   *selective_cutoff = FALSE;
@@ -1922,7 +1930,12 @@ end_search_nws( BitBoard my_bits,
 
     hash_hit = (entry.draft != NO_HASH_MOVE) &&
 	       bb_valid_move( entry.move[0], my_bits, opp_bits ) &&
-	       ((entry.flags & ENDGAME_SCORE) || (entry.flags & HEURISTIC_PRESEARCH_MOVE));
+	       (entry.flags & ENDGAME_SCORE);
+    if ( !hash_hit && (entry.draft != NO_HASH_MOVE) &&
+	 bb_valid_move( entry.move[0], my_bits, opp_bits ) &&
+	 (entry.flags & HEURISTIC_PRESEARCH_MOVE) ) {
+      presearch_move = entry.move[0];
+    }
   }
 
   /* 4. Setup and MPC */
@@ -2014,6 +2027,7 @@ end_search_nws( BitBoard my_bits,
 					selectivity, use_hash,
 					best_list, best_list_length,
 					can_split, proven, proven_score,
+					presearch_move,
 					&etc_tried,
 					&etc_cutoff_score ) ) {
 	  best_list[0] = etc_tried;
@@ -2201,6 +2215,7 @@ end_search_pvs( BitBoard my_bits,
   int oppcol = OPP( side_to_move );
   int use_hash;
   int hash_hit = FALSE;
+  int presearch_move = 0;
 
   *selective_cutoff = FALSE;
 
@@ -2364,7 +2379,12 @@ end_search_pvs( BitBoard my_bits,
 
     hash_hit = (entry.draft != NO_HASH_MOVE) &&
 	       bb_valid_move( entry.move[0], my_bits, opp_bits ) &&
-	       ((entry.flags & ENDGAME_SCORE) || (entry.flags & HEURISTIC_PRESEARCH_MOVE));
+	       (entry.flags & ENDGAME_SCORE);
+    if ( !hash_hit && (entry.draft != NO_HASH_MOVE) &&
+	 bb_valid_move( entry.move[0], my_bits, opp_bits ) &&
+	 (entry.flags & HEURISTIC_PRESEARCH_MOVE) ) {
+      presearch_move = entry.move[0];
+    }
   }
 
   /* 5. Recursive PVS search loop */
@@ -2479,6 +2499,7 @@ end_search_pvs( BitBoard my_bits,
 					  selectivity, use_hash,
 					  best_list, best_list_length,
 					  can_split, proven, proven_score,
+					  presearch_move,
 					  &etc_tried,
 					  &etc_cutoff_score ) ) {
 	    best_list[0] = etc_tried;
