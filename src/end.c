@@ -3209,10 +3209,13 @@ end_game( int side_to_move,
       }
     }
     else {
+      /* By default, skip the outer selective schedule: selective pruning is concentrated in presearch */
       char *env_skip_sel = getenv( "SKIP_SELECTIVE_SCHEDULE" );
+      int skip_sel = 1;
+      if ( env_skip_sel != NULL )
+	skip_sel = atoi( env_skip_sel );
       char *env_pre_only = getenv( "PRESEARCH_ONLY" );
-      if ( (env_pre_only == NULL || !atoi( env_pre_only )) &&
-	   (env_skip_sel == NULL || !atoi( env_skip_sel )) ) {
+      if ( (env_pre_only == NULL || !atoi( env_pre_only )) && !skip_sel ) {
 	int sel_schedule[4] = { 6, 3, 2, 1 };
 	int n_passes = 4;
 	char *env_sched = getenv( "SELECTIVE_SCHEDULE" );
