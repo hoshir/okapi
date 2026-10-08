@@ -658,7 +658,7 @@ solve_eight_empty( BitBoard my_bits,
   int n_corner = 0, n_odd = 0, n_even = 0;
   for ( i = 0; i < 8; i++ ) {
     int sq = orig_sq[i];
-    if ( (1ULL << sq) & CORNER_MASK )
+    if ( square_mask[sq] & CORNER_MASK )
       corners[n_corner++] = sq;
     else if ( quadrant_mask[sq] & region_parity )
       odds[n_odd++] = sq;

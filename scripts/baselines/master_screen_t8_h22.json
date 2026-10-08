@@ -2,7 +2,7 @@
   "mode": "screen",
   "threads": 8,
   "hash_bits": 22,
-  "created_at": "2026-10-07T01:06:18Z",
+  "created_at": "2026-10-08T15:30:32Z",
   "results": {
     "FFO #45": {
       "correct": true,
@@ -12,9 +12,9 @@
       "expected_moves": [
         "b2"
       ],
-      "nodes": 277197971,
-      "time_sec": 3.0,
-      "nps": 93630724,
+      "nodes": 2031053187,
+      "time_sec": 43.6,
+      "nps": 46600387,
       "error": null
     },
     "FFO #50": {
@@ -25,9 +25,9 @@
       "expected_moves": [
         "d8"
       ],
-      "nodes": 621276964,
-      "time_sec": 8.6,
-      "nps": 72592967,
+      "nodes": 1449070925,
+      "time_sec": 381.7,
+      "nps": 3796477,
       "error": null
     }
   }
