@@ -69,7 +69,7 @@ FFO_POSITIONS = [
     ("FFO #41", "-OOOOO----OOOOX--OOOOOO-XXXXXOO--XXOOX--OOXOXX----OXXO---OOO--O- X", 32, 32, ["h4"]),
     ("FFO #42", "--OOO-------XX-OOOOOOXOO-OOOOXOOX-OOOXXO---OOXOO---OOOXO--OOOO-- X", 35, 29, ["g2"]),
     ("FFO #43", "--XXXXX---XXXX---OOOXX---OOXXXX--OOXXXO-OOOOXOO----XOX----XXXXX- O", 38, 26, ["c7", "g3"]),
-    ("FFO #44", "--O-X-O---O-XO-O-OOXXXOOOOOOXXXOOOOOXX--XXOOXO----XXXX-----XXX-- O", 39, 25, ["d2", "b8"]),
+    ("FFO #44", "--O-X-O---O-XO-O-OOXXXOOOOOOXXXOOOOOXX--XXOOXO----XXXX-----XXX-- O", 39, 25, ["d2"]),
     ("FFO #45", "---XXXX-X-XXXO--XXOXOO--XXXOXO--XXOXXO---OXXXOO-O-OOOO------OO-- X", 35, 29, ["b2"]),
     ("FFO #46", "---XXX----OOOX----OOOXX--OOOOXXX--OOOOXX--OXOXXX--XXOO---XXXX-O- X", 28, 36, ["b3"]),
     ("FFO #47", "-OOOOO----OOOO---OOOOX--XXXXXX---OXOOX--OOOXOX----OOXX----XXXX-- O", 30, 34, ["g2"]),
@@ -80,7 +80,7 @@ FFO_POSITIONS = [
     ("FFO #52", "---X-------OX--X--XOOXXXXXXOXXXXXXXOOXXXXXXOOOXX--XO---X-------- O", 32, 32, ["a3"]),
     ("FFO #53", "----OO-----OOO---XXXXOOO--XXOOXO-XXXXXOO--OOOXOO--X-OX-O-----X-- X", 31, 33, ["d8"]),
     ("FFO #54", "--OOO---XXOO----XXXXOOOOXXXXOX--XXXOXX--XXOOO------OOO-----O---- X", 31, 33, ["c7"]),
-    ("FFO #55", "--------X-X------XXXXOOOOOXOXX--OOOXXXX-OOXXXX--O-OOOX-----OO--- O", 32, 32, ["g6", "b7", "g4", "e2"]),
+    ("FFO #55", "--------X-X------XXXXOOOOOXOXX--OOOXXXX-OOXXXX--O-OOOX-----OO--- O", 32, 32, ["g6"]),
     ("FFO #56", "--XXXXX---XXXX---OOOXX---OOXOX---OXXXXX-OOOOOXO----OXX---------- O", 31, 33, ["h5"]),
     ("FFO #57", "-------------------XXOOO--XXXOOO--XXOXOO-OOOXXXO--OXOO-O-OOOOO-- X", 27, 37, ["a6"]),
     ("FFO #58", "--XOOO----OOO----OOOXOO--OOOOXO--OXOXXX-OOXXXX----X-XX---------- X", 34, 30, ["g1"]),
@@ -298,7 +298,7 @@ def check_concurrency_scaling(repo_root, target_threads, hash_bits):
 
 
 
-def evaluate_suite(repo_root, positions, threads, hash_bits, verbose=False, baseline_results=None, progress="compact", quiet=None, timeout_factor=2.5, timeout_floor=30.0, timeout_ceiling=600.0, fast_first=True, early_halt=True, heavy_threshold=HEAVY_REGRESSION_THRESHOLD_PCT):
+def evaluate_suite(repo_root, positions, threads, hash_bits, verbose=False, baseline_results=None, progress="compact", quiet=None, timeout_factor=2.5, timeout_floor=30.0, timeout_ceiling=180.0, fast_first=True, early_halt=True, heavy_threshold=HEAVY_REGRESSION_THRESHOLD_PCT):
     """Evaluate a set of positions and verify correctness with real-time progress, fast-first ordering, and early halt guards."""
     if quiet is True:
         progress = "none"
@@ -844,8 +844,8 @@ def main():
     parser.add_argument(
         "--timeout-ceiling",
         type=float,
-        default=600.0,
-        help="Maximum fallback timeout ceiling in seconds when no baseline exists (default: 600.0s)."
+        default=180.0,
+        help="Maximum fallback timeout ceiling in seconds when no baseline exists (default: 180.0s)."
     )
     parser.add_argument(
         "--heavy-threshold",
