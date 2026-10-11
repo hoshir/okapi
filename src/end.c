@@ -86,6 +86,30 @@
 #define SHALLOW_TT_MIN_DEPTH         5
 #endif
 
+/* Use iterative deepening presearch? Disabled by default as verified in ARCH-021. */
+#ifndef USE_PRESEARCH
+#define USE_PRESEARCH                FALSE
+#endif
+
+static int use_presearch_flag = USE_PRESEARCH;
+
+void
+set_use_presearch( int enable ) {
+  use_presearch_flag = enable;
+}
+
+int
+get_use_presearch( void ) {
+  const char *env = getenv( "USE_PRESEARCH" );
+  if ( env != NULL ) {
+    return atoi( env ) != 0;
+  }
+  if ( getenv( "EDAX_HYBRID" ) != NULL ) {
+    return getenv( "SKIP_PRESEARCH" ) == NULL;
+  }
+  return use_presearch_flag;
+}
+
 
 
 
@@ -985,7 +1009,7 @@ end_probe_2ply_etc( int sq,
   pattern indices from bitboards for midgame heuristic pre-search.
 */
 
-static void
+static void __attribute__((unused))
 sync_board_from_bitboards( BitBoard my_bits, BitBoard opp_bits, int side_to_move, int empties ) {
   BitBoard b_bits = (side_to_move == BLACKSQ ? my_bits : opp_bits);
   BitBoard w_bits = (side_to_move == BLACKSQ ? opp_bits : my_bits);
@@ -1795,11 +1819,123 @@ end_presearch_ab( BitBoard my_bits, BitBoard opp_bits,
 
   if ( !presearch_aborted ) {
     add_hash_extended( ENDGAME_MODE, score_to_store, best_list,
-		       flags | MIDGAME_SCORE | HEURISTIC_PRESEARCH_MOVE, depth, 0 );
+		       flags | ENDGAME_SCORE | HEURISTIC_PRESEARCH_MOVE, depth, 0 );
   }
 
   if ( best_move != NULL )
     *best_move = best_sq;
+
+  return best_val;
+}
+
+
+/*
+  END_MPC_SEARCH
+  Self-contained bitboard alpha-beta search for endgame Multi-ProbCut (MPC).
+  Operates entirely on 64-bit bitboards without board-array conversions or TT pollution.
+*/
+static int
+end_mpc_search( BitBoard my_bits, BitBoard opp_bits, int side_to_move,
+                int depth, int empties, int alpha, int beta ) {
+  if ( is_panic_abort() || force_return )
+    return alpha;
+
+  INCREMENT_COUNTER( nodes );
+
+  if ( depth <= 0 ) {
+    int val = end_pattern_evaluate( my_bits, opp_bits );
+    if ( (region_parity != 0) && (empties & 1) )
+      val += REGION_PARITY_BONUS;
+    return val;
+  }
+
+  BitBoard moves = generate_all_c( my_bits, opp_bits );
+  if ( moves == 0 ) {
+    BitBoard opp_moves = generate_all_c( opp_bits, my_bits );
+    if ( opp_moves == 0 ) {
+      int disc_diff = non_iterative_popcount( my_bits ) - non_iterative_popcount( opp_bits );
+      int final_score = (disc_diff > 0) ? (disc_diff + empties) :
+			((disc_diff < 0) ? (disc_diff - empties) : 0);
+      return final_score * 128;
+    }
+    return -end_mpc_search( opp_bits, my_bits, OPP( side_to_move ),
+			    depth, empties, -beta, -alpha );
+  }
+
+  /* Fast static move ordering for shallow depth */
+  int moves_arr[64];
+  int scores_arr[64];
+  int n_moves = 0;
+
+  BitBoard rem_moves = moves;
+  while ( rem_moves != 0 ) {
+    int bit = FIRST_BIT( rem_moves );
+    rem_moves &= rem_moves - 1;
+    int sq = square_of_bit[bit];
+
+    BitBoard new_my_bits;
+    TestFlips_bitboard_to( sq, my_bits, opp_bits, &new_my_bits );
+    BitBoard flipped = new_my_bits & ~my_bits & ~square_mask[sq];
+    BitBoard new_opp = opp_bits ^ flipped;
+    BitBoard opp_replies = generate_all_c( new_opp, new_my_bits );
+    int opp_mob = non_iterative_popcount( opp_replies );
+    int opp_corners = non_iterative_popcount( opp_replies & 0x8100000000000081ull );
+
+    int score = - 128 * opp_mob - 256 * opp_corners;
+    if ( opp_mob == 0 ) score += 1024;
+    if ( quadrant_mask[sq] & region_parity ) score += 128;
+    BitBoard bb = square_mask[sq];
+    if ( bb & CORNER_MASK ) score += 512;
+    else if ( bb & 0x0042000000004200ull ) score -= 256;
+
+    moves_arr[n_moves] = sq;
+    scores_arr[n_moves] = score;
+    n_moves++;
+  }
+
+  /* Simple insertion sort */
+  for ( int i = 1; i < n_moves; i++ ) {
+    int m = moves_arr[i];
+    int s = scores_arr[i];
+    int j = i - 1;
+    while ( j >= 0 && scores_arr[j] < s ) {
+      moves_arr[j + 1] = moves_arr[j];
+      scores_arr[j + 1] = scores_arr[j];
+      j--;
+    }
+    moves_arr[j + 1] = m;
+    scores_arr[j + 1] = s;
+  }
+
+  int best_val = -INFINITE_EVAL;
+
+  for ( int i = 0; i < n_moves; i++ ) {
+    int sq = moves_arr[i];
+    BitBoard new_my_bits;
+    TestFlips_bitboard_to( sq, my_bits, opp_bits, &new_my_bits );
+
+    region_parity ^= quadrant_mask[sq];
+    int val = -end_mpc_search( opp_bits & ~new_my_bits,
+			       new_my_bits,
+			       OPP( side_to_move ),
+			       depth - 1,
+			       empties - 1,
+			       -beta,
+			       -alpha );
+    region_parity ^= quadrant_mask[sq];
+
+    if ( is_panic_abort() || force_return )
+      return alpha;
+
+    if ( val > best_val ) {
+      best_val = val;
+      if ( val > alpha ) {
+	alpha = val;
+	if ( alpha >= beta )
+	  return alpha;
+      }
+    }
+  }
 
   return best_val;
 }
@@ -1930,8 +2066,9 @@ end_search_nws( BitBoard my_bits,
 
     hash_hit = (entry.draft != NO_HASH_MOVE) &&
 	       bb_valid_move( entry.move[0], my_bits, opp_bits ) &&
-	       (entry.flags & ENDGAME_SCORE);
-    if ( !hash_hit && (entry.draft != NO_HASH_MOVE) &&
+	       (entry.flags & ENDGAME_SCORE) &&
+	       !(entry.flags & HEURISTIC_PRESEARCH_MOVE);
+    if ( get_use_presearch() && !hash_hit && (entry.draft != NO_HASH_MOVE) &&
 	 bb_valid_move( entry.move[0], my_bits, opp_bits ) &&
 	 (entry.flags & HEURISTIC_PRESEARCH_MOVE) ) {
       presearch_move = entry.move[0];
@@ -1961,7 +2098,10 @@ end_search_nws( BitBoard my_bits,
 
   if ( USE_MPC && (level > 2) && (selectivity > 0) ) {
     int cut;
-    sync_board_from_bitboards( my_bits, opp_bits, side_to_move, empties );
+    int use_bb_mpc = (getenv( "BITBOARD_MPC" ) != NULL);
+    if ( !use_bb_mpc ) {
+      sync_board_from_bitboards( my_bits, opp_bits, side_to_move, empties );
+    }
     for ( cut = 0; cut < use_end_cut[disks_played]; cut++ ) {
       int shallow_remains = end_mpc_depth[disks_played][cut];
       int mpc_bias = ceil( end_mean[disks_played][shallow_remains] * 128.0 );
@@ -1969,9 +2109,17 @@ end_search_nws( BitBoard my_bits,
 			     end_percentile[selectivity] * 128.0 );
       int beta_bound = 128 * beta + mpc_bias + mpc_window;
       int alpha_bound = 128 * alpha + mpc_bias - mpc_window;
-      int shallow_val =
-	tree_search( level, level + shallow_remains, side_to_move,
-		     alpha_bound, beta_bound, use_hash, FALSE, pass_legal );
+      int shallow_val;
+      if ( use_bb_mpc ) {
+	shallow_val =
+	  end_mpc_search( my_bits, opp_bits, side_to_move,
+			  shallow_remains, empties,
+			  alpha_bound, beta_bound );
+      } else {
+	shallow_val =
+	  tree_search( level, level + shallow_remains, side_to_move,
+		       alpha_bound, beta_bound, use_hash, FALSE, pass_legal );
+      }
       if ( shallow_val >= beta_bound ) {
 	if ( use_hash )
 	  add_hash( ENDGAME_MODE, alpha, 0,
@@ -2379,8 +2527,9 @@ end_search_pvs( BitBoard my_bits,
 
     hash_hit = (entry.draft != NO_HASH_MOVE) &&
 	       bb_valid_move( entry.move[0], my_bits, opp_bits ) &&
-	       (entry.flags & ENDGAME_SCORE);
-    if ( !hash_hit && (entry.draft != NO_HASH_MOVE) &&
+	       (entry.flags & ENDGAME_SCORE) &&
+	       !(entry.flags & HEURISTIC_PRESEARCH_MOVE);
+    if ( get_use_presearch() && !hash_hit && (entry.draft != NO_HASH_MOVE) &&
 	 bb_valid_move( entry.move[0], my_bits, opp_bits ) &&
 	 (entry.flags & HEURISTIC_PRESEARCH_MOVE) ) {
       presearch_move = entry.move[0];
@@ -2413,7 +2562,10 @@ end_search_pvs( BitBoard my_bits,
   /* Use endgame multi-prob-cut to selectively prune the tree */
   if ( USE_MPC && (level > 2) && (selectivity > 0) ) {
     int cut;
-    sync_board_from_bitboards( my_bits, opp_bits, side_to_move, empties );
+    int use_bb_mpc = (getenv( "BITBOARD_MPC" ) != NULL);
+    if ( !use_bb_mpc ) {
+      sync_board_from_bitboards( my_bits, opp_bits, side_to_move, empties );
+    }
     for ( cut = 0; cut < use_end_cut[disks_played]; cut++ ) {
 	int shallow_remains = end_mpc_depth[disks_played][cut];
 	int mpc_bias = ceil( end_mean[disks_played][shallow_remains] * 128.0 );
@@ -2421,12 +2573,20 @@ end_search_pvs( BitBoard my_bits,
 			       end_percentile[selectivity] * 128.0 );
 	int beta_bound = 128 * beta + mpc_bias + mpc_window;
 	int alpha_bound = 128 * alpha + mpc_bias - mpc_window;
-	int shallow_val =
-	  tree_search( level, level + shallow_remains, side_to_move,
-		       alpha_bound, beta_bound, use_hash, FALSE, pass_legal );
+	int shallow_val;
+	if ( use_bb_mpc ) {
+	  shallow_val =
+	    end_mpc_search( my_bits, opp_bits, side_to_move,
+			    shallow_remains, empties,
+			    alpha_bound, beta_bound );
+	} else {
+	  shallow_val =
+	    tree_search( level, level + shallow_remains, side_to_move,
+			 alpha_bound, beta_bound, use_hash, FALSE, pass_legal );
+	}
 	if ( shallow_val >= beta_bound ) {
 	  if ( use_hash )
-	    add_hash( ENDGAME_MODE, alpha, pv[level][level],
+	    add_hash( ENDGAME_MODE, alpha, 0,
 		      ENDGAME_SCORE | LOWER_BOUND, empties, selectivity );
 	  *selective_cutoff = TRUE;
 	  disks_played = saved_disks_played;
@@ -2434,7 +2594,7 @@ end_search_pvs( BitBoard my_bits,
 	}
 	if ( shallow_val <= alpha_bound ) {
 	  if ( use_hash )
-	    add_hash( ENDGAME_MODE, beta, pv[level][level],
+	    add_hash( ENDGAME_MODE, beta, 0,
 		      ENDGAME_SCORE | UPPER_BOUND, empties, selectivity );
 	  *selective_cutoff = TRUE;
 	  disks_played = saved_disks_played;
@@ -3058,6 +3218,12 @@ end_game( int side_to_move,
 	alpha = last_window_center - 1;
 	beta = last_window_center + 1;
 
+	adjust_counter( &nodes );
+	double pass_start_nodes = counter_value( &nodes );
+	double pass_start_time = get_real_timer();
+	int center_before = last_window_center;
+	int total_steps = 0;
+
 	root_eval = end_tree_wrapper( 0, empties, side_to_move,
 				      alpha, beta, selectivity, TRUE );
 
@@ -3073,6 +3239,7 @@ end_game( int side_to_move,
 					  alpha, beta, selectivity, TRUE );
 	  } while ( root_eval <= alpha );
 	  root_eval = last_window_center;
+	  total_steps = -steps;
 	}
 	else if ( root_eval >= beta ) {
 	  int steps = 0;
@@ -3086,9 +3253,17 @@ end_game( int side_to_move,
 					  alpha, beta, selectivity, TRUE );
 	  } while ( root_eval >= beta );
 	  root_eval = last_window_center;
+	  total_steps = steps;
 	}
 
 	adjust_counter( &nodes );
+	double pass_nodes = counter_value( &nodes ) - pass_start_nodes;
+	double pass_time = get_real_timer() - pass_start_time;
+
+	if ( getenv( "PASS_DIAG" ) != NULL ) {
+	  fprintf( stderr, "PASS_DIAG: empties=%d pass=%d sel=%d center_before=%d center_after=%d eval=%d steps=%d nodes=%.0f time=%.3fs\n",
+		   empties, pass_idx, selectivity, center_before, last_window_center, root_eval, total_steps, pass_nodes, pass_time );
+	}
 
 	if ( is_panic_abort() || force_return )
 	  break;
@@ -3180,7 +3355,7 @@ end_game( int side_to_move,
   /* Start non-selective solve */
   clear_panic_abort();
 
-  if ( !wld && (empties >= 16) ) {
+  if ( !wld && (empties >= 16) && get_use_presearch() ) {
     set_bitboards( board, side_to_move, &root_my_bits, &root_opp_bits );
     prepare_to_solve( root_my_bits | root_opp_bits );
     determine_hash_values( side_to_move, board );
@@ -3244,6 +3419,12 @@ end_game( int side_to_move,
 
 
 
+  adjust_counter( &nodes );
+  double exact_start_nodes = counter_value( &nodes );
+  double exact_start_time = get_real_timer();
+  int exact_initial_center = last_window_center;
+  int exact_researches = 0;
+
   if ( wld ) {
     alpha = -1;
     beta = +1;
@@ -3262,6 +3443,7 @@ end_game( int side_to_move,
     if ( !wld ) {
       int delta = 4;
       while ( (root_eval <= alpha || root_eval >= beta) && !is_panic_abort() && !force_return ) {
+        exact_researches++;
         if ( root_eval >= 64 || root_eval <= -64 )
           break;
 
@@ -3292,6 +3474,15 @@ end_game( int side_to_move,
         delta *= 2;
         if ( delta > 64 ) delta = 64;
       }
+    }
+
+    adjust_counter( &nodes );
+    double exact_nodes = counter_value( &nodes ) - exact_start_nodes;
+    double exact_time = get_real_timer() - exact_start_time;
+
+    if ( getenv( "PASS_DIAG" ) != NULL ) {
+      fprintf( stderr, "PASS_DIAG: empties=%d pass=exact sel=0 initial_center=%d final_eval=%d researches=%d nodes=%.0f time=%.3fs\n",
+	       empties, exact_initial_center, root_eval, exact_researches, exact_nodes, exact_time );
     }
     if ( !is_panic_abort() && !force_return ) {
       EvalResult res;
