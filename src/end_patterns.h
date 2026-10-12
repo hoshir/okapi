@@ -29,5 +29,7 @@
   Returns score in fixed-point 1/128 disc units. Higher is better for my_bits.
 */
 int end_pattern_evaluate( BitBoard my_bits, BitBoard opp_bits );
+int end_pattern_evaluate_c33( BitBoard my_bits, BitBoard opp_bits );
+int end_pattern_evaluate_c33_d8( BitBoard my_bits, BitBoard opp_bits );
 
 #endif /* END_PATTERNS_H */
