@@ -94,8 +94,8 @@ static inline int gather_d8_1( BitBoard b ) {
 
 /*
   END_PATTERN_EVALUATE
-  Sum of 18 pattern lookups (4 Corner 3x3, 4 Edge+2X, 8 2x4 Rect, 2 Diag 8).
-  All weights reside 100% within L2 CPU cache (~184 KB).
+  Sum of 16 pattern lookups (4 Corner 3x3, 4 Edge+2X, 8 2x4 Rect, EVAL-012).
+  All weights reside 100% within L2 CPU cache (~171 KB).
   Optimized via unrolled bit gathering and compile-time ternary power tables.
 */
 int
@@ -104,7 +104,6 @@ end_pattern_evaluate( BitBoard my_bits, BitBoard opp_bits ) {
   const int16_t *c33_w = &end_pattern_weights[END_PATTERN_CORNER33_OFFSET];
   const int16_t *e2x_w = &end_pattern_weights[END_PATTERN_EDGE2X_OFFSET];
   const int16_t *r24_w = &end_pattern_weights[END_PATTERN_RECT24_OFFSET];
-  const int16_t *d8_w  = &end_pattern_weights[END_PATTERN_DIAG8_OFFSET];
 
   /* 4 Corner 3x3 */
   score += c33_w[9841 + pow3_table_9[gather_c33_0(my_bits)] - pow3_table_9[gather_c33_0(opp_bits)]];
@@ -127,10 +126,6 @@ end_pattern_evaluate( BitBoard my_bits, BitBoard opp_bits ) {
   score += r24_w[3280 + pow3_table_8[gather_r24_5(my_bits)] - pow3_table_8[gather_r24_5(opp_bits)]];
   score += r24_w[3280 + pow3_table_8[gather_r24_6(my_bits)] - pow3_table_8[gather_r24_6(opp_bits)]];
   score += r24_w[3280 + pow3_table_8[gather_r24_7(my_bits)] - pow3_table_8[gather_r24_7(opp_bits)]];
-
-  /* 2 Diagonals */
-  score += d8_w[3280 + pow3_table_8[gather_d8_0(my_bits)] - pow3_table_8[gather_d8_0(opp_bits)]];
-  score += d8_w[3280 + pow3_table_8[gather_d8_1(my_bits)] - pow3_table_8[gather_d8_1(opp_bits)]];
 
   return score;
 }
