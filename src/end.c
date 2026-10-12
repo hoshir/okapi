@@ -110,11 +110,20 @@ get_use_presearch( void ) {
   return use_presearch_flag;
 }
 
-
-
+typedef struct {
+  unsigned long long nws_nodes;
+  unsigned long long nws_hash_hit;
+  unsigned long long nws_cutoffs;
+  unsigned long long nws_move0_cutoffs;
+  unsigned long long nws_order_calls;
+  unsigned long long nws_etc1_cutoffs;
+  unsigned long long nws_etc2_cutoffs;
+  unsigned long long nws_stability_cutoffs;
+  unsigned long long nws_pattern_evals;
+} OrderDiagStats;
+static OrderDiagStats order_diag_exact;
 
 /* Pseudo-probabilities corresponding to the percentiles.
-   These are taken from the normal distribution; to the percentile
    x corresponds the probability Pr(-x <= Y <= x) where Y is a N(0,1)
    variable. */
 
@@ -1368,6 +1377,9 @@ end_order_moves_presearch( int level,
   for ( i = 0; i < 100; i++ )
     etc_demoted[i] = FALSE;
 
+  if ( selectivity == 0 )
+    order_diag_exact.nws_order_calls++;
+
   typedef struct {
     int sq;
     int flipped;
@@ -1406,6 +1418,34 @@ end_order_moves_presearch( int level,
     }
   }
 
+  /* Phase 0: Immediate stability cutoff scan across all candidate moves (pure bitboard table, ~3ns per move) */
+  for ( i = 0; i < candidate_count; i++ ) {
+    BitBoard child_my_bits = candidates[i].child_my_bits;
+    FULL_ANDNOT( new_opp_bits, opp_bits, candidates[i].flips );
+    EdgeIndices edges;
+    int my_edge_stable = count_edge_stable_indexed( side_to_move, child_my_bits, new_opp_bits, &edges );
+    int lower_bound = 2 * my_edge_stable - 64;
+    if ( lower_bound >= beta ) {
+      *etc_tried_ptr = candidates[i].sq;
+      *etc_cutoff_score = lower_bound;
+      if ( selectivity == 0 ) order_diag_exact.nws_stability_cutoffs++;
+      return TRUE;
+    }
+    if ( edges.bits != 0 && (child_my_bits & CENTRAL_MASK) != 0 ) {
+      int my_cnt = non_iterative_popcount( child_my_bits );
+      if ( 2 * my_cnt - 64 >= beta ) {
+        int s_full = count_stable_indexed( side_to_move, child_my_bits, new_opp_bits, &edges );
+        lower_bound = 2 * s_full - 64;
+        if ( lower_bound >= beta ) {
+          *etc_tried_ptr = candidates[i].sq;
+          *etc_cutoff_score = lower_bound;
+          if ( selectivity == 0 ) order_diag_exact.nws_stability_cutoffs++;
+          return TRUE;
+        }
+      }
+    }
+  }
+
   /* Pass 1: Lightweight 1-ply ETC scan for candidate moves before static ordering */
   if ( use_hash ) {
     for ( i = 0; i < candidate_count; i++ ) {
@@ -1433,6 +1473,7 @@ end_order_moves_presearch( int level,
 	     (etc_entry.eval <= -beta) ) {
 	  *etc_tried_ptr = move;
 	  *etc_cutoff_score = -etc_entry.eval;
+	  if ( selectivity == 0 ) order_diag_exact.nws_etc1_cutoffs++;
 	  return TRUE;
 	}
 	else if ( (etc_entry.flags & (LOWER_BOUND | EXACT_VALUE)) &&
@@ -1442,7 +1483,7 @@ end_order_moves_presearch( int level,
 	}
       }
 
-      if ( !etc1_demoted ) {
+      if ( !etc1_demoted && selectivity > 0 ) {
 	int cutoff_score;
 	int child_best_reply = 0;
 	if ( (etc_entry.draft != NO_HASH_MOVE) && (etc_entry.move[0] != 0) &&
@@ -1498,28 +1539,6 @@ end_order_moves_presearch( int level,
     BitBoard child_my_bits = candidates[i].child_my_bits;
     FULL_ANDNOT( new_opp_bits, opp_bits, candidates[i].flips );
 
-    EdgeIndices edges;
-    int my_edge_stable = count_edge_stable_indexed( side_to_move, child_my_bits, new_opp_bits, &edges );
-
-    int lower_bound = 2 * my_edge_stable - 64;
-    if ( lower_bound >= beta ) {
-      *etc_tried_ptr = move;
-      *etc_cutoff_score = lower_bound;
-      return TRUE;
-    }
-    if ( edges.bits != 0 && (child_my_bits & CENTRAL_MASK) != 0 ) {
-      int my_cnt = non_iterative_popcount( child_my_bits );
-      if ( 2 * my_cnt - 64 >= beta ) {
-	int s_full = count_stable_indexed( side_to_move, child_my_bits, new_opp_bits, &edges );
-	lower_bound = 2 * s_full - 64;
-	if ( lower_bound >= beta ) {
-	  *etc_tried_ptr = move;
-	  *etc_cutoff_score = lower_bound;
-	  return TRUE;
-	}
-      }
-    }
-
     BitBoard opp_moves = generate_all_c( new_opp_bits, child_my_bits );
     int raw_opp_mob = non_iterative_popcount( opp_moves );
 
@@ -1565,11 +1584,13 @@ end_order_moves_presearch( int level,
     }
 
     int quadrant_parity = (quadrant_mask[move] & effective_parity) != 0;
-    int move_score = end_pattern_evaluate( child_my_bits, new_opp_bits ) -
-		     128 * (raw_opp_mob + opp_corner_moves) -
+    if ( selectivity == 0 )
+      order_diag_exact.nws_pattern_evals++;
+    int fast_score = - 128 * (raw_opp_mob + opp_corner_moves) -
 		     c_square_penalty +
 		     (raw_opp_mob == 0 ? 4096 : 0) +
 		     (quadrant_parity ? REGION_PARITY_BONUS : 0);
+    int move_score = end_pattern_evaluate( child_my_bits, new_opp_bits ) + fast_score;
 
     if ( presearch_move != 0 && move == presearch_move ) {
       move_score += PRESEARCH_ORDER_BONUS;
@@ -2075,6 +2096,12 @@ end_search_nws( BitBoard my_bits,
     }
   }
 
+  if ( selectivity == 0 ) {
+    order_diag_exact.nws_nodes++;
+    if ( hash_hit )
+      order_diag_exact.nws_hash_hit++;
+  }
+
   /* 4. Setup and MPC */
   int i;
   int move;
@@ -2251,6 +2278,11 @@ end_search_nws( BitBoard my_bits,
 
     /* Cutoff check in NWS: any score >= beta causes an immediate cutoff */
     if ( curr_val >= beta ) {
+      if ( selectivity == 0 ) {
+	order_diag_exact.nws_cutoffs++;
+	if ( move_index == 0 )
+	  order_diag_exact.nws_move0_cutoffs++;
+      }
       *selective_cutoff = child_selective_cutoff;
       update_best_list( best_list, move, best_list_index, &best_list_length );
       if ( use_hash )
@@ -3419,6 +3451,7 @@ end_game( int side_to_move,
 
 
 
+  memset( &order_diag_exact, 0, sizeof(order_diag_exact) );
   adjust_counter( &nodes );
   double exact_start_nodes = counter_value( &nodes );
   double exact_start_time = get_real_timer();
@@ -3483,6 +3516,21 @@ end_game( int side_to_move,
     if ( getenv( "PASS_DIAG" ) != NULL ) {
       fprintf( stderr, "PASS_DIAG: empties=%d pass=exact sel=0 initial_center=%d final_eval=%d researches=%d nodes=%.0f time=%.3fs\n",
 	       empties, exact_initial_center, root_eval, exact_researches, exact_nodes, exact_time );
+    }
+    if ( getenv( "ORDER_DIAG" ) != NULL ) {
+      fprintf( stderr, "ORDER_DIAG: nws_nodes=%llu hash_hit=%llu (%.1f%%) cutoffs=%llu move0_cutoffs=%llu (%.1f%% of cuts) order_calls=%llu (%.1f%%) etc1=%llu etc2=%llu stab=%llu pattern_evals=%llu\n",
+	       order_diag_exact.nws_nodes,
+	       order_diag_exact.nws_hash_hit,
+	       order_diag_exact.nws_nodes ? (100.0 * order_diag_exact.nws_hash_hit / order_diag_exact.nws_nodes) : 0.0,
+	       order_diag_exact.nws_cutoffs,
+	       order_diag_exact.nws_move0_cutoffs,
+	       order_diag_exact.nws_cutoffs ? (100.0 * order_diag_exact.nws_move0_cutoffs / order_diag_exact.nws_cutoffs) : 0.0,
+	       order_diag_exact.nws_order_calls,
+	       order_diag_exact.nws_nodes ? (100.0 * order_diag_exact.nws_order_calls / order_diag_exact.nws_nodes) : 0.0,
+	       order_diag_exact.nws_etc1_cutoffs,
+	       order_diag_exact.nws_etc2_cutoffs,
+	       order_diag_exact.nws_stability_cutoffs,
+	       order_diag_exact.nws_pattern_evals );
     }
     if ( !is_panic_abort() && !force_return ) {
       EvalResult res;
