@@ -1638,7 +1638,7 @@ end_order_moves_presearch( int level,
     static int lazy_margin = -1;
     if ( lazy_margin == -1 ) {
       char *env_margin = getenv( "LAZY_PATTERN_MARGIN" );
-      lazy_margin = env_margin ? atoi( env_margin ) : 768;
+      lazy_margin = env_margin ? atoi( env_margin ) : 512;
     }
 
     int top_fast = surv[0].fast_score;
