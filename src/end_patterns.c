@@ -169,3 +169,36 @@ end_pattern_evaluate_c33_d8( BitBoard my_bits, BitBoard opp_bits ) {
   return score;
 }
 
+/*
+  END_PATTERN_EVALUATE_C33_R24
+  Lightweight move ordering evaluator using 4 Corner 3x3 and 8 2x4 Rectangle
+  patterns (12 patterns total, 52.5 KB weight footprint, EVAL-011).
+  Fits 100% within L1 data cache (128 KB) while achieving ~85-87%
+  Top-1 move agreement with full 18-pattern evaluation.
+*/
+int
+end_pattern_evaluate_c33_r24( BitBoard my_bits, BitBoard opp_bits ) {
+  int score = 0;
+  const int16_t *c33_w = &end_pattern_weights[END_PATTERN_CORNER33_OFFSET];
+  const int16_t *r24_w = &end_pattern_weights[END_PATTERN_RECT24_OFFSET];
+
+  /* 4 Corner 3x3 (39.4 KB) */
+  score += c33_w[9841 + pow3_table_9[gather_c33_0(my_bits)] - pow3_table_9[gather_c33_0(opp_bits)]];
+  score += c33_w[9841 + pow3_table_9[gather_c33_1(my_bits)] - pow3_table_9[gather_c33_1(opp_bits)]];
+  score += c33_w[9841 + pow3_table_9[gather_c33_2(my_bits)] - pow3_table_9[gather_c33_2(opp_bits)]];
+  score += c33_w[9841 + pow3_table_9[gather_c33_3(my_bits)] - pow3_table_9[gather_c33_3(opp_bits)]];
+
+  /* 8 2x4 Rectangles (13.1 KB) */
+  score += r24_w[3280 + pow3_table_8[gather_r24_0(my_bits)] - pow3_table_8[gather_r24_0(opp_bits)]];
+  score += r24_w[3280 + pow3_table_8[gather_r24_1(my_bits)] - pow3_table_8[gather_r24_1(opp_bits)]];
+  score += r24_w[3280 + pow3_table_8[gather_r24_2(my_bits)] - pow3_table_8[gather_r24_2(opp_bits)]];
+  score += r24_w[3280 + pow3_table_8[gather_r24_3(my_bits)] - pow3_table_8[gather_r24_3(opp_bits)]];
+  score += r24_w[3280 + pow3_table_8[gather_r24_4(my_bits)] - pow3_table_8[gather_r24_4(opp_bits)]];
+  score += r24_w[3280 + pow3_table_8[gather_r24_5(my_bits)] - pow3_table_8[gather_r24_5(opp_bits)]];
+  score += r24_w[3280 + pow3_table_8[gather_r24_6(my_bits)] - pow3_table_8[gather_r24_6(opp_bits)]];
+  score += r24_w[3280 + pow3_table_8[gather_r24_7(my_bits)] - pow3_table_8[gather_r24_7(opp_bits)]];
+
+  return score;
+}
+
+

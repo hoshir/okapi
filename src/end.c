@@ -1657,7 +1657,10 @@ end_order_moves_presearch( int level,
     static int fast_pattern_scale = -1;
     if ( fast_pattern_scale == -1 ) {
       char *env_fps = getenv( "FAST_PATTERN_SCALE" );
-      fast_pattern_scale = env_fps ? atoi( env_fps ) : 100;
+      if ( env_fps )
+        fast_pattern_scale = atoi( env_fps );
+      else
+        fast_pattern_scale = (fast_pattern_mode == 1) ? 100 : 30;
     }
 
     int top_fast = surv[0].fast_score;
@@ -1669,9 +1672,11 @@ end_order_moves_presearch( int level,
           if ( selectivity == 0 )
             order_diag_exact.nws_fast_pattern_evals++;
           if ( fast_pattern_mode == 1 )
+            p_score = end_pattern_evaluate_c33( surv[i].child_my_bits, surv[i].new_opp_bits );
+          else if ( fast_pattern_mode == 2 )
             p_score = end_pattern_evaluate_c33_d8( surv[i].child_my_bits, surv[i].new_opp_bits );
           else
-            p_score = end_pattern_evaluate_c33( surv[i].child_my_bits, surv[i].new_opp_bits );
+            p_score = end_pattern_evaluate_c33_r24( surv[i].child_my_bits, surv[i].new_opp_bits );
           if ( fast_pattern_scale != 100 )
             p_score = (p_score * fast_pattern_scale) / 100;
         } else {
