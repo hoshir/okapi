@@ -484,6 +484,11 @@ add_hash( int reverse_mode,
   victim_slot = base;
   curr_gen = __atomic_load_n( &hash_generation, __ATOMIC_RELAXED ) & 0x03;
 
+  int victim_is_empty = 1;
+  int victim_draft = 0;
+  int victim_is_old = 0;
+  int victim_is_endgame = 0;
+
   for ( i = 0; i < BUCKET_SIZE; i++ ) {
     unsigned int idx = base + i;
     unsigned int k2 = __atomic_load_n( &hash_table[idx].key2, __ATOMIC_RELAXED );
@@ -516,6 +521,10 @@ add_hash( int reverse_mode,
     if ( priority < min_priority ) {
       min_priority = priority;
       victim_slot = idx;
+      victim_is_empty = is_empty;
+      victim_draft = entry_draft;
+      victim_is_old = (age != 0);
+      victim_is_endgame = (entry_flags & ENDGAME_SCORE) != 0;
     }
   }
 
@@ -554,10 +563,9 @@ add_hash( int reverse_mode,
     }
 
     target_slot = victim_slot;
-    unsigned int k1_victim = __atomic_load_n( &hash_table[target_slot].key1_selectivity_flags_draft, __ATOMIC_RELAXED );
-    int victim_is_empty = ((k1_victim & 0x0000FF00) == 0);
 
-    if ( !victim_is_empty && draft <= shallow_no_evict_draft )
+    if ( !victim_is_empty && !victim_is_old && victim_is_endgame &&
+         (victim_draft > draft) && (draft <= shallow_no_evict_draft) )
       return;
 
     if ( min_priority > draft + change_encouragment + rep_offset )
@@ -607,6 +615,11 @@ add_hash_extended( int reverse_mode, int score, int *best, int flags,
   victim_slot = base;
   curr_gen = __atomic_load_n( &hash_generation, __ATOMIC_RELAXED ) & 0x03;
 
+  int victim_is_empty = 1;
+  int victim_draft = 0;
+  int victim_is_old = 0;
+  int victim_is_endgame = 0;
+
   for ( i = 0; i < BUCKET_SIZE; i++ ) {
     unsigned int idx = base + i;
     unsigned int k2 = __atomic_load_n( &hash_table[idx].key2, __ATOMIC_RELAXED );
@@ -639,6 +652,10 @@ add_hash_extended( int reverse_mode, int score, int *best, int flags,
     if ( priority < min_priority ) {
       min_priority = priority;
       victim_slot = idx;
+      victim_is_empty = is_empty;
+      victim_draft = entry_draft;
+      victim_is_old = (age != 0);
+      victim_is_endgame = (entry_flags & ENDGAME_SCORE) != 0;
     }
   }
 
@@ -689,10 +706,9 @@ add_hash_extended( int reverse_mode, int score, int *best, int flags,
     }
 
     target_slot = victim_slot;
-    unsigned int k1_victim = __atomic_load_n( &hash_table[target_slot].key1_selectivity_flags_draft, __ATOMIC_RELAXED );
-    int victim_is_empty = ((k1_victim & 0x0000FF00) == 0);
 
-    if ( !victim_is_empty && draft <= shallow_no_evict_draft ) {
+    if ( !victim_is_empty && !victim_is_old && victim_is_endgame &&
+         (victim_draft > draft) && (draft <= shallow_no_evict_draft) ) {
       if ( tt_diag_active ) tt_stats.stores_rejected++;
       return;
     }
@@ -706,7 +722,6 @@ add_hash_extended( int reverse_mode, int score, int *best, int flags,
         tt_stats.stores_empty_slot++;
       } else {
         tt_stats.stores_evicted++;
-        int victim_draft = k1_victim & DRAFT_VALUE_MASK;
         if ( victim_draft < 64 ) tt_stats.evicted_draft_counts[victim_draft]++;
         if ( draft < 64 ) tt_stats.evicted_by_draft_counts[draft]++;
       }
