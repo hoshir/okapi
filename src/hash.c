@@ -83,6 +83,36 @@ static int rehash_count;
 static int shallow_hash_bits = 0;
 static int shallow_hash_size = 0;
 
+/* ========================================================================= */
+/* Transposition Table Diagnostics (TT_DIAG)                                 */
+/* ========================================================================= */
+
+typedef struct {
+  unsigned long long probes;
+  unsigned long long probe_hits;
+  unsigned long long probe_misses;
+  unsigned long long probe_miss_bucket_full;
+  unsigned long long probe_miss_empty_slots;
+  unsigned long long stores_attempted;
+  unsigned long long stores_updated;
+  unsigned long long stores_empty_slot;
+  unsigned long long stores_evicted;
+  unsigned long long stores_rejected;
+  unsigned long long evicted_draft_counts[64];
+  unsigned long long evicted_by_draft_counts[64];
+} TTDiagnostics;
+
+static TTDiagnostics tt_stats;
+static int tt_diag_inited = 0;
+static int tt_diag_active = 0;
+
+static INLINE void init_tt_diag_if_needed( void ) {
+  if ( !tt_diag_inited ) {
+    tt_diag_active = (getenv( "TT_DIAG" ) != NULL);
+    tt_diag_inited = 1;
+  }
+}
+
 
 
 /*
@@ -417,6 +447,8 @@ set_hash_transformation( unsigned int trans1, unsigned int trans2 ) {
 }
 
 
+#define SHALLOW_NO_EVICT_DEFAULT_DRAFT  9
+
 /*
    ADD_HASH
    Add information to the hash table using 4-way set-associativity.
@@ -477,6 +509,9 @@ add_hash( int reverse_mode,
     if ( (flags & ENDGAME_SCORE) && !(entry_flags & ENDGAME_SCORE) ) {
       priority -= 512;
     }
+    if ( !(flags & ENDGAME_SCORE) && (entry_flags & ENDGAME_SCORE) ) {
+      priority += 512;
+    }
 
     if ( priority < min_priority ) {
       min_priority = priority;
@@ -489,16 +524,43 @@ add_hash( int reverse_mode,
   else
     change_encouragment = 0;
 
+  static int min_tt_store_draft = -1;
+  if ( min_tt_store_draft == -1 ) {
+    char *env_draft = getenv( "MIN_TT_STORE_DRAFT" );
+    min_tt_store_draft = env_draft ? atoi( env_draft ) : 0;
+  }
+  if ( draft < min_tt_store_draft )
+    return;
+
   if ( hit ) {
     int old_is_endgame = (old_flags & ENDGAME_SCORE) != 0;
     int new_is_endgame = (flags & ENDGAME_SCORE) != 0;
+    if ( old_is_endgame && !new_is_endgame )
+      return;
     if ( !old_is_old && (!new_is_endgame || old_is_endgame) &&
          (old_draft > draft + change_encouragment + 2) )
       return;
   }
   else {
+    static int rep_offset = -1;
+    if ( rep_offset == -1 ) {
+      char *env_rep = getenv( "REPLACEMENT_OFFSET" );
+      rep_offset = env_rep ? atoi( env_rep ) : 4;
+    }
+    static int shallow_no_evict_draft = -1;
+    if ( shallow_no_evict_draft == -1 ) {
+      char *env_sne = getenv( "TT_SHALLOW_NO_EVICT" );
+      shallow_no_evict_draft = env_sne ? atoi( env_sne ) : SHALLOW_NO_EVICT_DEFAULT_DRAFT;
+    }
+
     target_slot = victim_slot;
-    if ( min_priority > draft + change_encouragment + REPLACEMENT_OFFSET )
+    unsigned int k1_victim = __atomic_load_n( &hash_table[target_slot].key1_selectivity_flags_draft, __ATOMIC_RELAXED );
+    int victim_is_empty = ((k1_victim & 0x0000FF00) == 0);
+
+    if ( !victim_is_empty && draft <= shallow_no_evict_draft )
+      return;
+
+    if ( min_priority > draft + change_encouragment + rep_offset )
       return;
   }
 
@@ -585,19 +647,70 @@ add_hash_extended( int reverse_mode, int score, int *best, int flags,
   else
     change_encouragment = 0;
 
+  init_tt_diag_if_needed();
+  if ( tt_diag_active ) {
+    tt_stats.stores_attempted++;
+  }
+
+  static int min_tt_store_draft = -1;
+  if ( min_tt_store_draft == -1 ) {
+    char *env_draft = getenv( "MIN_TT_STORE_DRAFT" );
+    min_tt_store_draft = env_draft ? atoi( env_draft ) : 0;
+  }
+  if ( draft < min_tt_store_draft ) {
+    if ( tt_diag_active ) tt_stats.stores_rejected++;
+    return;
+  }
+
   if ( hit ) {
     int old_is_endgame = (old_flags & ENDGAME_SCORE) != 0;
     int new_is_endgame = (flags & ENDGAME_SCORE) != 0;
-    if ( old_is_endgame && !new_is_endgame )
+    if ( old_is_endgame && !new_is_endgame ) {
+      if ( tt_diag_active ) tt_stats.stores_rejected++;
       return;
+    }
     if ( !old_is_old && (!new_is_endgame || old_is_endgame) &&
-         (old_draft > draft + change_encouragment + 2) )
+         (old_draft > draft + change_encouragment + 2) ) {
+      if ( tt_diag_active ) tt_stats.stores_rejected++;
       return;
+    }
+    if ( tt_diag_active ) tt_stats.stores_updated++;
   }
   else {
+    static int rep_offset = -1;
+    if ( rep_offset == -1 ) {
+      char *env_rep = getenv( "REPLACEMENT_OFFSET" );
+      rep_offset = env_rep ? atoi( env_rep ) : 4;
+    }
+    static int shallow_no_evict_draft = -1;
+    if ( shallow_no_evict_draft == -1 ) {
+      char *env_sne = getenv( "TT_SHALLOW_NO_EVICT" );
+      shallow_no_evict_draft = env_sne ? atoi( env_sne ) : SHALLOW_NO_EVICT_DEFAULT_DRAFT;
+    }
+
     target_slot = victim_slot;
-    if ( min_priority > draft + change_encouragment + REPLACEMENT_OFFSET )
+    unsigned int k1_victim = __atomic_load_n( &hash_table[target_slot].key1_selectivity_flags_draft, __ATOMIC_RELAXED );
+    int victim_is_empty = ((k1_victim & 0x0000FF00) == 0);
+
+    if ( !victim_is_empty && draft <= shallow_no_evict_draft ) {
+      if ( tt_diag_active ) tt_stats.stores_rejected++;
       return;
+    }
+
+    if ( min_priority > draft + change_encouragment + rep_offset ) {
+      if ( tt_diag_active ) tt_stats.stores_rejected++;
+      return;
+    }
+    if ( tt_diag_active ) {
+      if ( victim_is_empty ) {
+        tt_stats.stores_empty_slot++;
+      } else {
+        tt_stats.stores_evicted++;
+        int victim_draft = k1_victim & DRAFT_VALUE_MASK;
+        if ( victim_draft < 64 ) tt_stats.evicted_draft_counts[victim_draft]++;
+        if ( draft < 64 ) tt_stats.evicted_by_draft_counts[draft]++;
+      }
+    }
   }
 
   entry.key1 = code1;
@@ -630,6 +743,11 @@ find_hash( HashEntry *entry, int reverse_mode ) {
 
   base = BUCKET_MASK( code1 & hash_mask );
 
+  init_tt_diag_if_needed();
+  if ( tt_diag_active ) {
+    tt_stats.probes++;
+  }
+
   for ( i = 0; i < BUCKET_SIZE; i++ ) {
     unsigned int idx = base + i;
     unsigned int k2_raw = __atomic_load_n( &hash_table[idx].key2, __ATOMIC_ACQUIRE );
@@ -639,10 +757,23 @@ find_hash( HashEntry *entry, int reverse_mode ) {
 
     if ( (k2_raw ^ (unsigned int) ev ^ mv ^ k1_p) == code2 ) {
       if ( ((k1_p ^ code1) & KEY1_MASK) == 0 ) {
+        if ( tt_diag_active ) tt_stats.probe_hits++;
         compact_to_wide( entry, code2, ev, mv, k1_p );
         return;
       }
     }
+  }
+
+  if ( tt_diag_active ) {
+    tt_stats.probe_misses++;
+    int empty_slots = 0;
+    for ( i = 0; i < BUCKET_SIZE; i++ ) {
+      unsigned int idx = base + i;
+      unsigned int k1_p = __atomic_load_n( &hash_table[idx].key1_selectivity_flags_draft, __ATOMIC_RELAXED );
+      if ( ((k1_p & 0x0000FF00) == 0) ) empty_slots++;
+    }
+    if ( empty_slots == 0 ) tt_stats.probe_miss_bucket_full++;
+    else tt_stats.probe_miss_empty_slots++;
   }
 
   entry->draft = NO_HASH_MOVE;
@@ -736,3 +867,86 @@ add_shallow_hash( int score,
   entry.selectivity = 0;
   wide_to_compact( &entry, &shallow_hash_table[index] );
 }
+
+
+/* ========================================================================= */
+/* TT Diagnostic Dumpers & Reporters                                         */
+/* ========================================================================= */
+
+void reset_tt_stats( void ) {
+  memset( &tt_stats, 0, sizeof( tt_stats ) );
+}
+
+void print_tt_stats( const char *label ) {
+  init_tt_diag_if_needed();
+  if ( !tt_diag_active ) return;
+  fprintf( stderr, "TT_DIAG [%s] PROBES: total=%llu hits=%llu (%.2f%%) misses=%llu (full_buckets=%llu, empty_slots=%llu)\n",
+           label, tt_stats.probes, tt_stats.probe_hits,
+           tt_stats.probes ? (100.0 * tt_stats.probe_hits / tt_stats.probes) : 0.0,
+           tt_stats.probe_misses, tt_stats.probe_miss_bucket_full, tt_stats.probe_miss_empty_slots );
+  fprintf( stderr, "TT_DIAG [%s] STORES: attempted=%llu updated=%llu empty_slots=%llu evicted=%llu rejected=%llu\n",
+           label, tt_stats.stores_attempted, tt_stats.stores_updated,
+           tt_stats.stores_empty_slot, tt_stats.stores_evicted, tt_stats.stores_rejected );
+  fprintf( stderr, "TT_DIAG [%s] EVICTIONS BY DRAFT EVICTED: ", label );
+  for ( int d = 9; d <= 28; d++ ) {
+    if ( tt_stats.evicted_draft_counts[d] > 0 ) {
+      fprintf( stderr, "d%d=%llu ", d, tt_stats.evicted_draft_counts[d] );
+    }
+  }
+  fprintf( stderr, "\n" );
+  fprintf( stderr, "TT_DIAG [%s] EVICTIONS BY DRAFT WRITING: ", label );
+  for ( int d = 9; d <= 28; d++ ) {
+    if ( tt_stats.evicted_by_draft_counts[d] > 0 ) {
+      fprintf( stderr, "d%d=%llu ", d, tt_stats.evicted_by_draft_counts[d] );
+    }
+  }
+  fprintf( stderr, "\n" );
+}
+
+void dump_tt_distribution( const char *label ) {
+  init_tt_diag_if_needed();
+  if ( !tt_diag_active || hash_table == NULL ) return;
+
+  unsigned long long occupied = 0;
+  unsigned long long draft_hist[64] = {0};
+  unsigned long long sel_hist[16] = {0};
+  unsigned long long endgame_scores = 0, midgame_scores = 0;
+  unsigned long long exact_vals = 0, lower_bounds = 0, upper_bounds = 0;
+  unsigned char curr_gen = __atomic_load_n( &hash_generation, __ATOMIC_RELAXED ) & 0x03;
+  unsigned long long current_gen_count = 0, old_gen_count = 0;
+
+  for ( int i = 0; i < hash_size; i++ ) {
+    unsigned int k1_p = __atomic_load_n( &hash_table[i].key1_selectivity_flags_draft, __ATOMIC_RELAXED );
+    int flags = (k1_p >> 8) & 0xFF;
+    if ( flags == 0 ) continue;
+
+    occupied++;
+    int draft = k1_p & DRAFT_VALUE_MASK;
+    if ( draft < 64 ) draft_hist[draft]++;
+    int sel = (k1_p & 0x00ffffff) >> 16;
+    if ( sel < 16 ) sel_hist[sel]++;
+    if ( flags & ENDGAME_SCORE ) endgame_scores++;
+    if ( flags & MIDGAME_SCORE ) midgame_scores++;
+    if ( flags & EXACT_VALUE ) exact_vals++;
+    if ( flags & LOWER_BOUND ) lower_bounds++;
+    if ( flags & UPPER_BOUND ) upper_bounds++;
+    int entry_gen = (k1_p & DRAFT_GEN_MASK) >> DRAFT_GEN_SHIFT;
+    if ( entry_gen == curr_gen ) current_gen_count++; else old_gen_count++;
+  }
+
+  fprintf( stderr, "TT_DIAG [%s] OCCUPANCY: %llu / %d (%.2f%%) [current_gen=%llu, old_gen=%llu]\n",
+           label, occupied, hash_size, 100.0 * occupied / hash_size, current_gen_count, old_gen_count );
+  fprintf( stderr, "TT_DIAG [%s] SELECTIVITY: ", label );
+  for ( int s = 0; s <= 9; s++ ) {
+    if ( sel_hist[s] > 0 ) fprintf( stderr, "sel%d=%llu ", s, sel_hist[s] );
+  }
+  fprintf( stderr, "\n" );
+  fprintf( stderr, "TT_DIAG [%s] DRAFTS: ", label );
+  for ( int d = 9; d <= 28; d++ ) {
+    if ( draft_hist[d] > 0 ) fprintf( stderr, "d%d=%llu ", d, draft_hist[d] );
+  }
+  fprintf( stderr, "\n" );
+  fprintf( stderr, "TT_DIAG [%s] FLAGS: exact=%llu lower=%llu upper=%llu (endgame=%llu, midgame=%llu)\n",
+           label, exact_vals, lower_bounds, upper_bounds, endgame_scores, midgame_scores );
+}
+
