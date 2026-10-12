@@ -1506,7 +1506,7 @@ end_order_moves_presearch( int level,
     }
   }
 
-  /* Pass 2: Pure bitboard static move ordering across all candidate moves */
+  /* Pass 2: Pure bitboard static move ordering with Lazy Pattern Evaluation (ORDR-012) */
   int refuted_moves[64];
   int refuted_count = 0;
 
@@ -1515,6 +1515,16 @@ end_order_moves_presearch( int level,
     stable_both = tls.stable_discs[BLACKSQ][level] | tls.stable_discs[WHITESQ][level];
   BitBoard dead = find_dead_squares( ~(my_bits | opp_bits), stable_both );
   unsigned int effective_parity = region_parity ^ dead_quadrant_parity( dead );
+
+  typedef struct {
+    int move;
+    int fast_score;
+    BitBoard child_my_bits;
+    BitBoard new_opp_bits;
+  } SurvivingCandidate;
+
+  SurvivingCandidate surv[64];
+  int surv_count = 0;
 
   for ( i = 0; i < candidate_count; i++ ) {
     move = candidates[i].sq;
@@ -1584,20 +1594,64 @@ end_order_moves_presearch( int level,
     }
 
     int quadrant_parity = (quadrant_mask[move] & effective_parity) != 0;
-    if ( selectivity == 0 )
-      order_diag_exact.nws_pattern_evals++;
     int fast_score = - 128 * (raw_opp_mob + opp_corner_moves) -
 		     c_square_penalty +
 		     (raw_opp_mob == 0 ? 4096 : 0) +
 		     (quadrant_parity ? REGION_PARITY_BONUS : 0);
-    int move_score = end_pattern_evaluate( child_my_bits, new_opp_bits ) + fast_score;
 
     if ( presearch_move != 0 && move == presearch_move ) {
-      move_score += PRESEARCH_ORDER_BONUS;
+      fast_score += PRESEARCH_ORDER_BONUS;
     }
 
-    evals[disks_played][move] = move_score;
-    move_list[disks_played][move_count[disks_played]++] = move;
+    surv[surv_count].move = move;
+    surv[surv_count].fast_score = fast_score;
+    surv[surv_count].child_my_bits = child_my_bits;
+    surv[surv_count].new_opp_bits = new_opp_bits;
+    surv_count++;
+  }
+
+  if ( surv_count == 1 ) {
+    /* Fast-path for single legal move: no pattern evaluation needed */
+    int m = surv[0].move;
+    evals[disks_played][m] = surv[0].fast_score;
+    move_list[disks_played][move_count[disks_played]++] = m;
+  }
+  else if ( surv_count > 1 ) {
+    /* Sort surviving moves by fast_score descending (insertion sort for <= 32 elements) */
+    int j;
+    for ( i = 1; i < surv_count; i++ ) {
+      SurvivingCandidate tmp = surv[i];
+      j = i - 1;
+      while ( j >= 0 && surv[j].fast_score < tmp.fast_score ) {
+        surv[j + 1] = surv[j];
+        j--;
+      }
+      surv[j + 1] = tmp;
+    }
+
+    /* Branch & Bound Pattern Evaluation:
+       Evaluate candidate 0, then only evaluate subsequent candidates whose fast_score + MARGIN >= best_total */
+    static int lazy_margin = -1;
+    if ( lazy_margin == -1 ) {
+      char *env_margin = getenv( "LAZY_PATTERN_MARGIN" );
+      lazy_margin = env_margin ? atoi( env_margin ) : 768;
+    }
+
+    int top_fast = surv[0].fast_score;
+    for ( i = 0; i < surv_count; i++ ) {
+      int m = surv[i].move;
+      if ( i == 0 || (top_fast - surv[i].fast_score <= lazy_margin) ) {
+        if ( selectivity == 0 )
+          order_diag_exact.nws_pattern_evals++;
+        int p_score = end_pattern_evaluate( surv[i].child_my_bits, surv[i].new_opp_bits );
+        evals[disks_played][m] = p_score + surv[i].fast_score;
+      }
+      else {
+        /* Pruned candidate: assign fast_score with offset to rank strictly behind evaluated candidates */
+        evals[disks_played][m] = surv[i].fast_score - 10000;
+      }
+      move_list[disks_played][move_count[disks_played]++] = m;
+    }
   }
 
   if ( beta == curr_alpha + 1 && move_count[disks_played] == 0 && best_list_length == 0 && refuted_count > 0 ) {
