@@ -628,6 +628,10 @@ end_unmake_move( int sq,
 #define ETC_2PLY_REFUTED  1
 #define ETC_2PLY_CUTOFF   2
 
+#ifndef MIN_ETC_DEPTH
+#define MIN_ETC_DEPTH      10
+#endif
+
 #ifndef MIN_2PLY_ETC_DEPTH
 #define MIN_2PLY_ETC_DEPTH 11
 #endif
@@ -1446,8 +1450,8 @@ end_order_moves_presearch( int level,
     }
   }
 
-  /* Pass 1: Lightweight 1-ply ETC scan for candidate moves before static ordering */
-  if ( use_hash ) {
+  /* Pass 1: Lightweight 1-ply ETC scan for candidate moves before static ordering (PRUN-020) */
+  if ( use_hash && (empties >= MIN_ETC_DEPTH) ) {
     for ( i = 0; i < candidate_count; i++ ) {
       move = candidates[i].sq;
       BitBoard child_my_bits = candidates[i].child_my_bits;
