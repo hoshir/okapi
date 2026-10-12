@@ -2,7 +2,7 @@
   "mode": "standard",
   "threads": 8,
   "hash_bits": 22,
-  "created_at": "2026-10-12T12:43:34Z",
+  "created_at": "2026-10-12T16:38:15Z",
   "results": {
     "FFO #40": {
       "correct": true,
@@ -12,9 +12,9 @@
       "expected_moves": [
         "a2"
       ],
-      "nodes": 12978966,
+      "nodes": 12809633,
       "time_sec": 0.1,
-      "nps": 103596357,
+      "nps": 95219085,
       "error": null
     },
     "FFO #41": {
@@ -25,9 +25,9 @@
       "expected_moves": [
         "h4"
       ],
-      "nodes": 23376327,
+      "nodes": 23538187,
       "time_sec": 0.4,
-      "nps": 66414926,
+      "nps": 53241530,
       "error": null
     },
     "FFO #42": {
@@ -38,9 +38,9 @@
       "expected_moves": [
         "g2"
       ],
-      "nodes": 20434441,
+      "nodes": 20797762,
       "time_sec": 0.3,
-      "nps": 60608807,
+      "nps": 62844889,
       "error": null
     },
     "FFO #45": {
@@ -51,9 +51,9 @@
       "expected_moves": [
         "b2"
       ],
-      "nodes": 288606546,
-      "time_sec": 3.7,
-      "nps": 79063030,
+      "nodes": 273833260,
+      "time_sec": 4.2,
+      "nps": 65809436,
       "error": null
     },
     "FFO #48": {
@@ -64,9 +64,9 @@
       "expected_moves": [
         "f6"
       ],
-      "nodes": 169345023,
-      "time_sec": 2.5,
-      "nps": 68445351,
+      "nodes": 176527519,
+      "time_sec": 2.9,
+      "nps": 60301913,
       "error": null
     },
     "FFO #49": {
@@ -77,9 +77,9 @@
       "expected_moves": [
         "e1"
       ],
-      "nodes": 377718979,
-      "time_sec": 4.3,
-      "nps": 87716739,
+      "nodes": 365976193,
+      "time_sec": 4.7,
+      "nps": 77995786,
       "error": null
     },
     "FFO #50": {
@@ -90,9 +90,9 @@
       "expected_moves": [
         "d8"
       ],
-      "nodes": 623745080,
-      "time_sec": 11.5,
-      "nps": 54417984,
+      "nodes": 628918778,
+      "time_sec": 13.3,
+      "nps": 47347400,
       "error": null
     },
     "FFO #52": {
@@ -103,9 +103,9 @@
       "expected_moves": [
         "a3"
       ],
-      "nodes": 403650055,
-      "time_sec": 6.1,
-      "nps": 66570054,
+      "nodes": 412080105,
+      "time_sec": 7.0,
+      "nps": 58912122,
       "error": null
     }
   }
