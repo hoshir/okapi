@@ -134,3 +134,38 @@ end_pattern_evaluate( BitBoard my_bits, BitBoard opp_bits ) {
 
   return score;
 }
+
+/*
+  END_PATTERN_EVALUATE_C33
+  Ultra-fast 4 Corner 3x3 pattern evaluation (~39 KB, 100% L1D cache resident).
+  Only 8 bit-gathers, 8 pow3 lookups, and 4 weight table lookups.
+*/
+int
+end_pattern_evaluate_c33( BitBoard my_bits, BitBoard opp_bits ) {
+  int score = 0;
+  const int16_t *c33_w = &end_pattern_weights[END_PATTERN_CORNER33_OFFSET];
+
+  score += c33_w[9841 + pow3_table_9[gather_c33_0(my_bits)] - pow3_table_9[gather_c33_0(opp_bits)]];
+  score += c33_w[9841 + pow3_table_9[gather_c33_1(my_bits)] - pow3_table_9[gather_c33_1(opp_bits)]];
+  score += c33_w[9841 + pow3_table_9[gather_c33_2(my_bits)] - pow3_table_9[gather_c33_2(opp_bits)]];
+  score += c33_w[9841 + pow3_table_9[gather_c33_3(my_bits)] - pow3_table_9[gather_c33_3(opp_bits)]];
+
+  return score;
+}
+
+/*
+  END_PATTERN_EVALUATE_C33_D8
+  Corner 3x3 + Diag 8 evaluation (~52 KB, 100% L1D cache resident).
+  Adds 2 diagonal lookups to corner evaluation.
+*/
+int
+end_pattern_evaluate_c33_d8( BitBoard my_bits, BitBoard opp_bits ) {
+  int score = end_pattern_evaluate_c33( my_bits, opp_bits );
+  const int16_t *d8_w  = &end_pattern_weights[END_PATTERN_DIAG8_OFFSET];
+
+  score += d8_w[3280 + pow3_table_8[gather_d8_0(my_bits)] - pow3_table_8[gather_d8_0(opp_bits)]];
+  score += d8_w[3280 + pow3_table_8[gather_d8_1(my_bits)] - pow3_table_8[gather_d8_1(opp_bits)]];
+
+  return score;
+}
+

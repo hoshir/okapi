@@ -120,6 +120,7 @@ typedef struct {
   unsigned long long nws_etc2_cutoffs;
   unsigned long long nws_stability_cutoffs;
   unsigned long long nws_pattern_evals;
+  unsigned long long nws_fast_pattern_evals;
 } OrderDiagStats;
 static OrderDiagStats order_diag_exact;
 
@@ -1641,13 +1642,43 @@ end_order_moves_presearch( int level,
       lazy_margin = env_margin ? atoi( env_margin ) : 512;
     }
 
+    static int fast_pattern_depth = -1;
+    if ( fast_pattern_depth == -1 ) {
+      char *env_fp = getenv( "FAST_PATTERN_DEPTH" );
+      fast_pattern_depth = env_fp ? atoi( env_fp ) : 9;
+    }
+
+    static int fast_pattern_mode = -1;
+    if ( fast_pattern_mode == -1 ) {
+      char *env_fpm = getenv( "FAST_PATTERN_MODE" );
+      fast_pattern_mode = env_fpm ? atoi( env_fpm ) : 0;
+    }
+
+    static int fast_pattern_scale = -1;
+    if ( fast_pattern_scale == -1 ) {
+      char *env_fps = getenv( "FAST_PATTERN_SCALE" );
+      fast_pattern_scale = env_fps ? atoi( env_fps ) : 100;
+    }
+
     int top_fast = surv[0].fast_score;
     for ( i = 0; i < surv_count; i++ ) {
       int m = surv[i].move;
       if ( i == 0 || (top_fast - surv[i].fast_score <= lazy_margin) ) {
-        if ( selectivity == 0 )
-          order_diag_exact.nws_pattern_evals++;
-        int p_score = end_pattern_evaluate( surv[i].child_my_bits, surv[i].new_opp_bits );
+        int p_score;
+        if ( empties <= fast_pattern_depth ) {
+          if ( selectivity == 0 )
+            order_diag_exact.nws_fast_pattern_evals++;
+          if ( fast_pattern_mode == 1 )
+            p_score = end_pattern_evaluate_c33_d8( surv[i].child_my_bits, surv[i].new_opp_bits );
+          else
+            p_score = end_pattern_evaluate_c33( surv[i].child_my_bits, surv[i].new_opp_bits );
+          if ( fast_pattern_scale != 100 )
+            p_score = (p_score * fast_pattern_scale) / 100;
+        } else {
+          if ( selectivity == 0 )
+            order_diag_exact.nws_pattern_evals++;
+          p_score = end_pattern_evaluate( surv[i].child_my_bits, surv[i].new_opp_bits );
+        }
         evals[disks_played][m] = p_score + surv[i].fast_score;
       }
       else {
@@ -3606,7 +3637,7 @@ end_game( int side_to_move,
 	       empties, exact_initial_center, root_eval, exact_researches, exact_nodes, exact_time );
     }
     if ( getenv( "ORDER_DIAG" ) != NULL ) {
-      fprintf( stderr, "ORDER_DIAG: nws_nodes=%llu hash_hit=%llu (%.1f%%) cutoffs=%llu move0_cutoffs=%llu (%.1f%% of cuts) order_calls=%llu (%.1f%%) etc1=%llu etc2=%llu stab=%llu pattern_evals=%llu\n",
+      fprintf( stderr, "ORDER_DIAG: nws_nodes=%llu hash_hit=%llu (%.1f%%) cutoffs=%llu move0_cutoffs=%llu (%.1f%% of cuts) order_calls=%llu (%.1f%%) etc1=%llu etc2=%llu stab=%llu pattern_evals=%llu (fast=%llu)\n",
 	       order_diag_exact.nws_nodes,
 	       order_diag_exact.nws_hash_hit,
 	       order_diag_exact.nws_nodes ? (100.0 * order_diag_exact.nws_hash_hit / order_diag_exact.nws_nodes) : 0.0,
@@ -3618,7 +3649,8 @@ end_game( int side_to_move,
 	       order_diag_exact.nws_etc1_cutoffs,
 	       order_diag_exact.nws_etc2_cutoffs,
 	       order_diag_exact.nws_stability_cutoffs,
-	       order_diag_exact.nws_pattern_evals );
+	       order_diag_exact.nws_pattern_evals,
+	       order_diag_exact.nws_fast_pattern_evals );
     }
     if ( !is_panic_abort() && !force_return ) {
       EvalResult res;
