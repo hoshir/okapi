@@ -1,0 +1,151 @@
+{
+  "name": "fastest_ffo55",
+  "position": "FFO #55",
+  "empties": 29,
+  "board": "--------X-X------XXXXOOOOOXOXX--OOOXXXX-OOXXXX--O-OOOX-----OO--- O",
+  "side_to_move": "O",
+  "threads": 8,
+  "hash_bits": 22,
+  "exact_solve": 0,
+  "recorded_at": "2026-10-12T22:03:36+09:00",
+  "commit": "9c24f5a",
+  "pr": "PR #6 (SIMP-002: refactor(search): simplify parallel split depth and unify endgame SMP)",
+  "summary": {
+    "correct": true,
+    "score": "32-32",
+    "move": "g6",
+    "pv": "g6 h7 c1 f2 g2 g8 g4 h1 f8 h5 h8 h2 h4 h6",
+    "total_time_sec": 99.6,
+    "total_nodes": 14393425371,
+    "average_nps": 144544470,
+    "selective_nodes": 4037966237,
+    "selective_time_sec": 26.383,
+    "selective_nps": 153071378,
+    "exact_nodes": 10351117488,
+    "exact_time_sec": 73.211,
+    "exact_nps": 141387476
+  },
+  "passes": [
+    {
+      "pass": 0,
+      "selectivity": 9,
+      "center_before": 0,
+      "center_after": 4,
+      "eval": 4,
+      "steps": 2,
+      "nodes": 4239822,
+      "time_sec": 0.111,
+      "nps": 38196594
+    },
+    {
+      "pass": 1,
+      "selectivity": 8,
+      "center_before": 4,
+      "center_after": 2,
+      "eval": 2,
+      "steps": -1,
+      "nodes": 831668,
+      "time_sec": 0.013,
+      "nps": 63974461
+    },
+    {
+      "pass": 2,
+      "selectivity": 7,
+      "center_before": 2,
+      "center_after": 0,
+      "eval": 0,
+      "steps": -1,
+      "nodes": 6442359,
+      "time_sec": 0.066,
+      "nps": 97611500
+    },
+    {
+      "pass": 3,
+      "selectivity": 6,
+      "center_before": 0,
+      "center_after": 2,
+      "eval": 2,
+      "steps": 1,
+      "nodes": 49553168,
+      "time_sec": 0.725,
+      "nps": 68349197
+    },
+    {
+      "pass": 4,
+      "selectivity": 5,
+      "center_before": 2,
+      "center_after": 0,
+      "eval": 0,
+      "steps": -1,
+      "nodes": 247599810,
+      "time_sec": 2.618,
+      "nps": 94575939
+    },
+    {
+      "pass": 5,
+      "selectivity": 4,
+      "center_before": 0,
+      "center_after": 2,
+      "eval": 2,
+      "steps": 1,
+      "nodes": 45692754,
+      "time_sec": 0.415,
+      "nps": 110103021
+    },
+    {
+      "pass": 6,
+      "selectivity": 3,
+      "center_before": 2,
+      "center_after": 0,
+      "eval": 0,
+      "steps": -1,
+      "nodes": 423899631,
+      "time_sec": 2.582,
+      "nps": 164174915
+    },
+    {
+      "pass": 7,
+      "selectivity": 2,
+      "center_before": 0,
+      "center_after": 0,
+      "eval": 0,
+      "steps": 0,
+      "nodes": 1416559021,
+      "time_sec": 8.352,
+      "nps": 169607162
+    },
+    {
+      "pass": 8,
+      "selectivity": 1,
+      "center_before": 0,
+      "center_after": 0,
+      "eval": 0,
+      "steps": 0,
+      "nodes": 1843148004,
+      "time_sec": 11.101,
+      "nps": 166034411
+    },
+    {
+      "pass": "exact",
+      "selectivity": 0,
+      "initial_center": 0,
+      "final_eval": 0,
+      "researches": 0,
+      "nodes": 10351117488,
+      "time_sec": 73.211,
+      "nps": 141387476
+    }
+  ],
+  "raw_pass_diag": [
+    "PASS_DIAG: empties=29 pass=0 sel=9 center_before=0 center_after=4 eval=4 steps=2 nodes=4239822 time=0.111s",
+    "PASS_DIAG: empties=29 pass=1 sel=8 center_before=4 center_after=2 eval=2 steps=-1 nodes=831668 time=0.013s",
+    "PASS_DIAG: empties=29 pass=2 sel=7 center_before=2 center_after=0 eval=0 steps=-1 nodes=6442359 time=0.066s",
+    "PASS_DIAG: empties=29 pass=3 sel=6 center_before=0 center_after=2 eval=2 steps=1 nodes=49553168 time=0.725s",
+    "PASS_DIAG: empties=29 pass=4 sel=5 center_before=2 center_after=0 eval=0 steps=-1 nodes=247599810 time=2.618s",
+    "PASS_DIAG: empties=29 pass=5 sel=4 center_before=0 center_after=2 eval=2 steps=1 nodes=45692754 time=0.415s",
+    "PASS_DIAG: empties=29 pass=6 sel=3 center_before=2 center_after=0 eval=0 steps=-1 nodes=423899631 time=2.582s",
+    "PASS_DIAG: empties=29 pass=7 sel=2 center_before=0 center_after=0 eval=0 steps=0 nodes=1416559021 time=8.352s",
+    "PASS_DIAG: empties=29 pass=8 sel=1 center_before=0 center_after=0 eval=0 steps=0 nodes=1843148004 time=11.101s",
+    "PASS_DIAG: empties=29 pass=exact sel=0 initial_center=0 final_eval=0 researches=0 nodes=10351117488 time=73.211s"
+  ]
+}

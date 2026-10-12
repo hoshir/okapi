@@ -1,0 +1,92 @@
+{
+  "name": "current_master_ffo55",
+  "position": "FFO #55",
+  "empties": 29,
+  "board": "--------X-X------XXXXOOOOOXOXX--OOOXXXX-OOXXXX--O-OOOX-----OO--- O",
+  "side_to_move": "O",
+  "threads": 8,
+  "hash_bits": 22,
+  "exact_solve": 0,
+  "recorded_at": "2026-10-12T22:00:27+09:00",
+  "commit": "qs ab (post-PR #66)",
+  "pr": "PR #66 (opt(aspiration): calibrate root endgame aspiration center via empty-dependent logistic sigmoid)",
+  "summary": {
+    "correct": true,
+    "score": "32-32",
+    "move": "g6",
+    "pv": "g6 h7 c1 f2 g2 g8 f8 h1 h8 h2 g4 h5 h4 h6",
+    "total_time_sec": 273.1,
+    "total_nodes": 21341496708,
+    "average_nps": 78134883,
+    "selective_nodes": 9387498744,
+    "selective_time_sec": 97.310,
+    "selective_nps": 96469614,
+    "exact_nodes": 11916666118,
+    "exact_time_sec": 175.292,
+    "exact_nps": 67981802
+  },
+  "passes": [
+    {
+      "pass": 0,
+      "selectivity": 6,
+      "center_before": 2,
+      "center_after": 0,
+      "eval": 0,
+      "steps": -1,
+      "nodes": 259518771,
+      "time_sec": 2.468,
+      "nps": 105153472
+    },
+    {
+      "pass": 1,
+      "selectivity": 3,
+      "center_before": 0,
+      "center_after": 0,
+      "eval": 0,
+      "steps": 0,
+      "nodes": 1845631856,
+      "time_sec": 18.475,
+      "nps": 99898882
+    },
+    {
+      "pass": 2,
+      "selectivity": 2,
+      "center_before": 0,
+      "center_after": 0,
+      "eval": 0,
+      "steps": 0,
+      "nodes": 3489925380,
+      "time_sec": 34.791,
+      "nps": 100311154
+    },
+    {
+      "pass": 3,
+      "selectivity": 1,
+      "center_before": 0,
+      "center_after": 0,
+      "eval": 0,
+      "steps": 0,
+      "nodes": 3793266137,
+      "time_sec": 41.576,
+      "nps": 91236919
+    },
+    {
+      "pass": "exact",
+      "selectivity": 0,
+      "initial_center": 0,
+      "final_eval": 0,
+      "researches": 0,
+      "nodes": 11916666118,
+      "time_sec": 175.292,
+      "nps": 67981802
+    }
+  ],
+  "raw_pass_diag": [
+    "PASS_DIAG: INITIAL_PREDICTION center=2 est=200 scaled=1.56",
+    "PASS_DIAG: empties=29 pass=0 sel=6 center_before=2 center_after=0 eval=0 steps=-1 nodes=259518771 time=2.468s",
+    "PASS_DIAG: empties=29 pass=1 sel=3 center_before=0 center_after=0 eval=0 steps=0 nodes=1845631856 time=18.475s",
+    "PASS_DIAG: empties=29 pass=2 sel=2 center_before=0 center_after=0 eval=0 steps=0 nodes=3489925380 time=34.791s",
+    "PASS_DIAG: empties=29 pass=3 sel=1 center_before=0 center_after=0 eval=0 steps=0 nodes=3793266137 time=41.576s",
+    "PASS_DIAG: empties=29 pass=exact sel=0 initial_center=0 final_eval=0 researches=0 nodes=11916666118 time=175.292s"
+  ]
+}

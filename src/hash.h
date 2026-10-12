@@ -200,6 +200,10 @@ add_shallow_hash( int score,
 		  int flags,
 		  int draft );
 
+void dump_tt_distribution( const char *label );
+void reset_tt_stats( void );
+void print_tt_stats( const char *label );
+
 
 
 #ifdef __cplusplus
