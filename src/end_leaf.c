@@ -38,6 +38,7 @@ solve_four_empty( BitBoard my_bits,
 		  int disc_diff,
 		  int pass_legal ) {
   BitBoard new_opp_bits;
+  BitBoard new_my_bits;
   int score = -INFINITE_EVAL;
   int flipped;
   int new_disc_diff;
@@ -55,11 +56,11 @@ solve_four_empty( BitBoard my_bits,
     sq1 = m[0]; sq2 = m[1]; sq3 = m[2]; sq4 = m[3];
   }
 
-  flipped = TestFlips_wrapper( sq1, my_bits, opp_bits );
+  flipped = TestFlips_wrapper_to( sq1, my_bits, opp_bits, &new_my_bits );
   if ( flipped != 0 ) {
-    FULL_ANDNOT( new_opp_bits, opp_bits, bb_flips );
+    FULL_ANDNOT( new_opp_bits, opp_bits, new_my_bits );
     new_disc_diff = -disc_diff - 2 * flipped - 1;
-    score = -solve_three_empty( new_opp_bits, bb_flips, sq2, sq3, sq4,
+    score = -solve_three_empty( new_opp_bits, new_my_bits, sq2, sq3, sq4,
 				-beta, -alpha, new_disc_diff, TRUE );
     if ( score >= beta )
       return score;
@@ -67,11 +68,11 @@ solve_four_empty( BitBoard my_bits,
       alpha = score;
   }
 
-  flipped = TestFlips_wrapper( sq2, my_bits, opp_bits );
+  flipped = TestFlips_wrapper_to( sq2, my_bits, opp_bits, &new_my_bits );
   if ( flipped != 0 ) {
-    FULL_ANDNOT( new_opp_bits, opp_bits, bb_flips );
+    FULL_ANDNOT( new_opp_bits, opp_bits, new_my_bits );
     new_disc_diff = -disc_diff - 2 * flipped - 1;
-    ev = -solve_three_empty( new_opp_bits, bb_flips, sq1, sq3, sq4,
+    ev = -solve_three_empty( new_opp_bits, new_my_bits, sq1, sq3, sq4,
 			     -beta, -alpha, new_disc_diff, TRUE );
     if ( ev >= beta )
       return ev;
@@ -82,11 +83,11 @@ solve_four_empty( BitBoard my_bits,
     }
   }
 
-  flipped = TestFlips_wrapper( sq3, my_bits, opp_bits );
+  flipped = TestFlips_wrapper_to( sq3, my_bits, opp_bits, &new_my_bits );
   if ( flipped != 0 ) {
-    FULL_ANDNOT( new_opp_bits, opp_bits, bb_flips );
+    FULL_ANDNOT( new_opp_bits, opp_bits, new_my_bits );
     new_disc_diff = -disc_diff - 2 * flipped - 1;
-    ev = -solve_three_empty( new_opp_bits, bb_flips, sq1, sq2, sq4,
+    ev = -solve_three_empty( new_opp_bits, new_my_bits, sq1, sq2, sq4,
 			     -beta, -alpha, new_disc_diff, TRUE );
     if ( ev >= beta )
       return ev;
@@ -97,11 +98,11 @@ solve_four_empty( BitBoard my_bits,
     }
   }
 
-  flipped = TestFlips_wrapper( sq4, my_bits, opp_bits );
+  flipped = TestFlips_wrapper_to( sq4, my_bits, opp_bits, &new_my_bits );
   if ( flipped != 0 ) {
-    FULL_ANDNOT( new_opp_bits, opp_bits, bb_flips );
+    FULL_ANDNOT( new_opp_bits, opp_bits, new_my_bits );
     new_disc_diff = -disc_diff - 2 * flipped - 1;
-    ev = -solve_three_empty( new_opp_bits, bb_flips, sq1, sq2, sq3,
+    ev = -solve_three_empty( new_opp_bits, new_my_bits, sq1, sq2, sq3,
 			     -beta, -alpha, new_disc_diff, TRUE );
     if ( ev >= score )
       return ev;
@@ -139,6 +140,7 @@ solve_five_empty( BitBoard my_bits,
 		  int disc_diff,
 		  int pass_legal ) {
   BitBoard new_opp_bits;
+  BitBoard new_my_bits;
   int score = -INFINITE_EVAL;
   int in_alpha = alpha;
   int oppcol = OPP( color );
@@ -211,7 +213,7 @@ solve_five_empty( BitBoard my_bits,
 
   for ( k = 0; k < 5; k++ ) {
     int m = cand[k];
-    flipped = TestFlips_wrapper( m, my_bits, opp_bits );
+    flipped = TestFlips_wrapper_to( m, my_bits, opp_bits, &new_my_bits );
     if ( flipped != 0 ) {
       int rem[4];
       int r = 0, j;
@@ -219,10 +221,10 @@ solve_five_empty( BitBoard my_bits,
         if ( orig_sq[j] != m )
           rem[r++] = orig_sq[j];
       }
-      FULL_ANDNOT( new_opp_bits, opp_bits, bb_flips );
+      FULL_ANDNOT( new_opp_bits, opp_bits, new_my_bits );
       new_disc_diff = -disc_diff - 2 * flipped - 1;
       region_parity ^= quadrant_mask[m];
-      ev = -solve_four_empty( new_opp_bits, bb_flips,
+      ev = -solve_four_empty( new_opp_bits, new_my_bits,
                               rem[0], rem[1], rem[2], rem[3],
                               -beta, -alpha, new_disc_diff, TRUE );
       region_parity ^= quadrant_mask[m];
@@ -286,6 +288,7 @@ solve_six_empty( BitBoard my_bits,
 		 int disc_diff,
 		 int pass_legal ) {
   BitBoard new_opp_bits;
+  BitBoard new_my_bits;
   int score = -INFINITE_EVAL;
   int in_alpha = alpha;
   int oppcol = OPP( color );
@@ -358,7 +361,7 @@ solve_six_empty( BitBoard my_bits,
 
   for ( k = 0; k < 6; k++ ) {
     int m = cand[k];
-    flipped = TestFlips_wrapper( m, my_bits, opp_bits );
+    flipped = TestFlips_wrapper_to( m, my_bits, opp_bits, &new_my_bits );
     if ( flipped != 0 ) {
       int rem[5];
       int r = 0, j;
@@ -366,16 +369,16 @@ solve_six_empty( BitBoard my_bits,
 	if ( orig_sq[j] != m )
 	  rem[r++] = orig_sq[j];
       }
-      FULL_ANDNOT( new_opp_bits, opp_bits, bb_flips );
+      FULL_ANDNOT( new_opp_bits, opp_bits, new_my_bits );
       new_disc_diff = -disc_diff - 2 * flipped - 1;
       region_parity ^= quadrant_mask[m];
 #if USE_SHALLOW_TT
       unsigned int diff1, diff2;
-      end_hash_diff( bb_flips, my_bits, color, m, &diff1, &diff2 );
+      end_hash_diff( new_my_bits, my_bits, color, m, &diff1, &diff2 );
       hash1 ^= diff1;
       hash2 ^= diff2;
 #endif
-      ev = -solve_five_empty( new_opp_bits, bb_flips,
+      ev = -solve_five_empty( new_opp_bits, new_my_bits,
 			     rem[0], rem[1], rem[2], rem[3], rem[4],
 			     -beta, -alpha, oppcol, new_disc_diff, TRUE );
 #if USE_SHALLOW_TT
@@ -440,6 +443,7 @@ solve_seven_empty( BitBoard my_bits,
 		   int disc_diff,
 		   int pass_legal ) {
   BitBoard new_opp_bits;
+  BitBoard new_my_bits;
   int score = -INFINITE_EVAL;
   int in_alpha = alpha;
   int oppcol = OPP( color );
@@ -512,7 +516,7 @@ solve_seven_empty( BitBoard my_bits,
 
   for ( k = 0; k < 7; k++ ) {
     int m = cand[k];
-    flipped = TestFlips_wrapper( m, my_bits, opp_bits );
+    flipped = TestFlips_wrapper_to( m, my_bits, opp_bits, &new_my_bits );
     if ( flipped != 0 ) {
       int rem[6];
       int r = 0, j;
@@ -520,16 +524,16 @@ solve_seven_empty( BitBoard my_bits,
 	if ( orig_sq[j] != m )
 	  rem[r++] = orig_sq[j];
       }
-      FULL_ANDNOT( new_opp_bits, opp_bits, bb_flips );
+      FULL_ANDNOT( new_opp_bits, opp_bits, new_my_bits );
       new_disc_diff = -disc_diff - 2 * flipped - 1;
       region_parity ^= quadrant_mask[m];
 #if USE_SHALLOW_TT
       unsigned int diff1, diff2;
-      end_hash_diff( bb_flips, my_bits, color, m, &diff1, &diff2 );
+      end_hash_diff( new_my_bits, my_bits, color, m, &diff1, &diff2 );
       hash1 ^= diff1;
       hash2 ^= diff2;
 #endif
-      ev = -solve_six_empty( new_opp_bits, bb_flips,
+      ev = -solve_six_empty( new_opp_bits, new_my_bits,
 			     rem[0], rem[1], rem[2], rem[3], rem[4], rem[5],
 			     -beta, -alpha, oppcol, new_disc_diff, TRUE );
 #if USE_SHALLOW_TT
@@ -602,6 +606,7 @@ solve_eight_empty( BitBoard my_bits,
 		   int disc_diff,
 		   int pass_legal ) {
   BitBoard new_opp_bits;
+  BitBoard new_my_bits;
   int score = -INFINITE_EVAL;
   int in_alpha = alpha;
   int oppcol = OPP( color );
@@ -672,7 +677,7 @@ solve_eight_empty( BitBoard my_bits,
 
   for ( k = 0; k < 8; k++ ) {
     int m = cand[k];
-    flipped = TestFlips_wrapper( m, my_bits, opp_bits );
+    flipped = TestFlips_wrapper_to( m, my_bits, opp_bits, &new_my_bits );
     if ( flipped != 0 ) {
       int rem[7];
       int r = 0, j;
@@ -680,16 +685,16 @@ solve_eight_empty( BitBoard my_bits,
 	if ( orig_sq[j] != m )
 	  rem[r++] = orig_sq[j];
       }
-      FULL_ANDNOT( new_opp_bits, opp_bits, bb_flips );
+      FULL_ANDNOT( new_opp_bits, opp_bits, new_my_bits );
       new_disc_diff = -disc_diff - 2 * flipped - 1;
       region_parity ^= quadrant_mask[m];
 #if USE_SHALLOW_TT
       unsigned int diff1, diff2;
-      end_hash_diff( bb_flips, my_bits, color, m, &diff1, &diff2 );
+      end_hash_diff( new_my_bits, my_bits, color, m, &diff1, &diff2 );
       hash1 ^= diff1;
       hash2 ^= diff2;
 #endif
-      ev = -solve_seven_empty( new_opp_bits, bb_flips,
+      ev = -solve_seven_empty( new_opp_bits, new_my_bits,
 			       rem[0], rem[1], rem[2], rem[3], rem[4], rem[5], rem[6],
 			       -beta, -alpha, oppcol, new_disc_diff, TRUE );
 #if USE_SHALLOW_TT

@@ -40,18 +40,22 @@ extern "C" {
   (2) verifying that the move flips some disc.
 */
 
+static ALWAYS_INLINE int
+TestFlips_wrapper_to( int sq,
+		      BitBoard my_bits,
+		      BitBoard opp_bits,
+		      BitBoard *new_my_bits ) {
+  if ( (neighborhood_mask[sq] & opp_bits) != 0 )
+    return TestFlips_bitboard_to( sq, my_bits, opp_bits, new_my_bits );
+  else
+    return 0;
+}
+
 INLINE static int
 TestFlips_wrapper( int sq,
 		   BitBoard my_bits,
 		   BitBoard opp_bits ) {
-  int flipped;
-
-  if ( (neighborhood_mask[sq] & opp_bits) != 0 )
-    flipped = TestFlips_bitboard( sq, my_bits, opp_bits );
-  else
-    flipped = 0;
-
-  return flipped;
+  return TestFlips_wrapper_to( sq, my_bits, opp_bits, &bb_flips );
 }
 
 /*
