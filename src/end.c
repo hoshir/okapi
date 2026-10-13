@@ -1704,6 +1704,94 @@ end_order_moves_presearch( int level,
       }
       move_list[disks_played][move_count[disks_played]++] = m;
     }
+
+    /* Sort surv by evals descending so top candidates can be deepened */
+    for ( i = 1; i < surv_count; i++ ) {
+      SurvivingCandidate tmp = surv[i];
+      int m_tmp = tmp.move;
+      int ev_tmp = evals[disks_played][m_tmp];
+      int k = i - 1;
+      while ( k >= 0 && evals[disks_played][surv[k].move] < ev_tmp ) {
+        surv[k + 1] = surv[k];
+        k--;
+      }
+      surv[k + 1] = tmp;
+    }
+
+    /* Selective shallow tree_search deepening on top-K candidates (SRCH-005)
+       Evaluates shallow lookahead for the top surviving candidates at deep endgame
+       nodes (empties >= 15), providing tactical lookahead to avoid combinatorial
+       tree explosion during both selective passes and exact solve. */
+    static int search_order_min = 15, search_order_maxd = 6, search_order_exact = 1;
+    static int search_order_fastw = 8, search_order_ts = 1, search_order_topk = 2;
+    static int search_order_inited = 0;
+    if ( !search_order_inited ) {
+      char *e5 = getenv( "SEARCH_ORDER_TS" );
+      if ( e5 ) search_order_ts = atoi( e5 );
+      char *e1 = getenv( "SEARCH_ORDER_MIN" );
+      if ( e1 ) search_order_min = atoi( e1 );
+      char *e2 = getenv( "SEARCH_ORDER_MAXD" );
+      if ( e2 ) search_order_maxd = atoi( e2 );
+      char *e3 = getenv( "SEARCH_ORDER_EXACT" );
+      if ( e3 ) search_order_exact = atoi( e3 );
+      char *e4 = getenv( "SEARCH_ORDER_FASTW" );
+      if ( e4 ) search_order_fastw = atoi( e4 );
+      char *e6 = getenv( "SEARCH_ORDER_TOPK" );
+      if ( e6 ) search_order_topk = atoi( e6 );
+      search_order_inited = 1;
+    }
+
+    if ( search_order_ts && empties >= search_order_min &&
+         (selectivity > 0 || search_order_exact) ) {
+      int d = (empties < 15) ? 1 : (empties < 18) ? 2 : (empties < 24) ? 3 :
+        (empties < 28) ? 4 : 6;
+      if ( d > search_order_maxd )
+        d = search_order_maxd;
+      int upper = (-curr_alpha + 8) * 128;
+      int ff_thr;
+      {
+        int st = disks_played, dd = (d > MAX_END_CORR_DEPTH) ? MAX_END_CORR_DEPTH : d;
+        double mean = 0.0, sig = 100.0;
+        for ( ; st <= 60; st++ )
+          if ( end_stats_available[st][dd] ) {
+            mean = end_mean[st][dd];
+            sig = 0.45 * end_sigma[st][dd];
+            break;
+          }
+        ff_thr = 128 * curr_alpha + (int) ceil( (mean + sig) * 128.0 );
+        if ( ff_thr > WIPEOUT_THRESHOLD * 128 )
+          ff_thr = WIPEOUT_THRESHOLD * 128;
+      }
+      int k_limit = search_order_topk;
+      if ( k_limit > surv_count )
+        k_limit = surv_count;
+      for ( i = 0; i < k_limit; i++ ) {
+        int m = surv[i].move;
+        unsigned int saved_parity = region_parity;
+        region_parity ^= quadrant_mask[m];
+        unsigned int diff1, diff2;
+        end_hash_diff( surv[i].child_my_bits, my_bits, side_to_move, m, &diff1, &diff2 );
+        hash1 ^= diff1;
+        hash2 ^= diff2;
+        sync_board_from_bitboards( surv[i].new_opp_bits, surv[i].child_my_bits,
+                                   OPP( side_to_move ), empties - 1 );
+        int v = -tree_search( level + 1, level + d, OPP( side_to_move ),
+                              -INFINITE_EVAL, upper, TRUE, TRUE, TRUE );
+        hash1 ^= diff1;
+        hash2 ^= diff2;
+        disks_played = 60 - empties;
+        region_parity = saved_parity;
+
+        if ( v > ff_thr ) {
+          int mob = non_iterative_popcount( generate_all_c( surv[i].new_opp_bits,
+                                                            surv[i].child_my_bits ) );
+          int wipe = (v > WIPEOUT_THRESHOLD * 128);
+          v += wipe ? 2000000 : 1000000;
+          v -= (wipe ? 2 : 1) * 460 * search_order_fastw / 8 * mob;
+        }
+        evals[disks_played][m] = v;
+      }
+    }
   }
 
   if ( beta == curr_alpha + 1 && move_count[disks_played] == 0 && best_list_length == 0 && refuted_count > 0 ) {
