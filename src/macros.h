@@ -35,8 +35,10 @@ extern "C" {
 /* Define the inline directive when available */
 #if defined( __GNUC__ )&& !defined( __cplusplus )
 #define INLINE __inline__
+#define ALWAYS_INLINE __inline__ __attribute__((always_inline))
 #else
 #define INLINE
+#define ALWAYS_INLINE
 #endif
 
 

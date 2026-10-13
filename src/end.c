@@ -153,7 +153,6 @@ static int komi_shift;
   BB_VALID_MOVE
   Determine if a (hash) move is legal in the position given by the
   bitboards.  Replaces the array-based valid_move.
-  Note: clobbers bb_flips via TestFlips_wrapper.
 */
 
 static int
@@ -248,6 +247,7 @@ solve_two_empty( BitBoard my_bits,
   int score = -INFINITE_EVAL;
   int flipped;
   int ev;
+  BitBoard new_my_bits;
 
   INCREMENT_COUNTER( nodes );
 
@@ -258,24 +258,24 @@ solve_two_empty( BitBoard my_bits,
 
   /* Try the first of the two empty squares... */
 
-  flipped = TestFlips_wrapper( sq1, my_bits, opp_bits );
+  flipped = TestFlips_wrapper_to( sq1, my_bits, opp_bits, &new_my_bits );
   if ( flipped != 0 ) {  /* SQ1 feasible for me */
     INCREMENT_COUNTER( nodes );
 
     ev = disc_diff + 2 * flipped;
 
-    flipped = CountFlips_bitboard( sq2, opp_bits & ~bb_flips );
+    flipped = CountFlips_bitboard( sq2, opp_bits & ~new_my_bits );
     if ( flipped != 0 )
       ev -= 2 * flipped;
     else {  /* He passes, check if SQ2 is feasible for me */
       if ( ev >= 0 ) {  /* I'm ahead, so EV will increase by at least 2 */
 	ev += 2;
 	if ( ev < beta )  /* Only bother if not certain fail-high */
-	  ev += 2 * CountFlips_bitboard( sq2, bb_flips );
+	  ev += 2 * CountFlips_bitboard( sq2, new_my_bits );
       }
       else {
 	if ( ev < beta ) {  /* Only bother if not fail-high already */
-	  flipped = CountFlips_bitboard( sq2, bb_flips );
+	  flipped = CountFlips_bitboard( sq2, new_my_bits );
 	  if ( flipped != 0 )  /* SQ2 feasible for me, game over */
 	    ev += 2 * (flipped + 1);
 	  /* ELSE: SQ2 will end up empty, game over */
@@ -294,24 +294,24 @@ solve_two_empty( BitBoard my_bits,
 
   /* ...and then the second */
 
-  flipped = TestFlips_wrapper( sq2, my_bits, opp_bits );
+  flipped = TestFlips_wrapper_to( sq2, my_bits, opp_bits, &new_my_bits );
   if ( flipped != 0 ) {  /* SQ2 feasible for me */
     INCREMENT_COUNTER( nodes );
 
     ev = disc_diff + 2 * flipped;
 
-    flipped = CountFlips_bitboard( sq1, opp_bits & ~bb_flips );
+    flipped = CountFlips_bitboard( sq1, opp_bits & ~new_my_bits );
     if ( flipped != 0 )  /* SQ1 feasible for him, game over */
       ev -= 2 * flipped;
     else {  /* He passes, check if SQ1 is feasible for me */
       if ( ev >= 0 ) {  /* I'm ahead, so EV will increase by at least 2 */
 	ev += 2;
 	if ( ev < beta )  /* Only bother if not certain fail-high */
-	  ev += 2 * CountFlips_bitboard( sq1, bb_flips );
+	  ev += 2 * CountFlips_bitboard( sq1, new_my_bits );
       }
       else {
 	if ( ev < beta ) {  /* Only bother if not fail-high already */
-	  flipped = CountFlips_bitboard( sq1, bb_flips );
+	  flipped = CountFlips_bitboard( sq1, new_my_bits );
 	  if ( flipped != 0 )  /* SQ1 feasible for me, game over */
 	    ev += 2 * (flipped + 1);
 	  /* ELSE: SQ1 will end up empty, game over */
@@ -356,6 +356,7 @@ solve_three_empty( BitBoard my_bits,
 		   int disc_diff,
 		   int pass_legal ) {
   BitBoard new_opp_bits;
+  BitBoard new_my_bits;
   int score = -INFINITE_EVAL;
   int flipped;
   int new_disc_diff;
@@ -375,11 +376,11 @@ solve_three_empty( BitBoard my_bits,
     }
   }
 
-  flipped = TestFlips_wrapper( sq1, my_bits, opp_bits );
+  flipped = TestFlips_wrapper_to( sq1, my_bits, opp_bits, &new_my_bits );
   if ( flipped != 0 ) {
-    FULL_ANDNOT( new_opp_bits, opp_bits, bb_flips );
+    FULL_ANDNOT( new_opp_bits, opp_bits, new_my_bits );
     new_disc_diff = -disc_diff - 2 * flipped - 1;
-    score = -solve_two_empty( new_opp_bits, bb_flips, sq2, sq3,
+    score = -solve_two_empty( new_opp_bits, new_my_bits, sq2, sq3,
 			      -beta, -alpha, new_disc_diff, TRUE );
     if ( score >= beta )
       return score;
@@ -387,11 +388,11 @@ solve_three_empty( BitBoard my_bits,
       alpha = score;
   }
 
-  flipped = TestFlips_wrapper( sq2, my_bits, opp_bits );
+  flipped = TestFlips_wrapper_to( sq2, my_bits, opp_bits, &new_my_bits );
   if ( flipped != 0 ) {
-    FULL_ANDNOT( new_opp_bits, opp_bits, bb_flips );
+    FULL_ANDNOT( new_opp_bits, opp_bits, new_my_bits );
     new_disc_diff = -disc_diff - 2 * flipped - 1;
-    ev = -solve_two_empty( new_opp_bits, bb_flips, sq1, sq3,
+    ev = -solve_two_empty( new_opp_bits, new_my_bits, sq1, sq3,
 			   -beta, -alpha, new_disc_diff, TRUE );
     if ( ev >= beta )
       return ev;
@@ -402,11 +403,11 @@ solve_three_empty( BitBoard my_bits,
     }
   }
 
-  flipped = TestFlips_wrapper( sq3, my_bits, opp_bits );
+  flipped = TestFlips_wrapper_to( sq3, my_bits, opp_bits, &new_my_bits );
   if ( flipped != 0 ) {
-    FULL_ANDNOT( new_opp_bits, opp_bits, bb_flips );
+    FULL_ANDNOT( new_opp_bits, opp_bits, new_my_bits );
     new_disc_diff = -disc_diff - 2 * flipped - 1;
-    ev = -solve_two_empty( new_opp_bits, bb_flips, sq1, sq2,
+    ev = -solve_two_empty( new_opp_bits, new_my_bits, sq1, sq2,
 			   -beta, -alpha, new_disc_diff, TRUE );
     if ( ev >= score )
       return ev;
@@ -543,8 +544,9 @@ solve_parity( BitBoard my_bits,
   }
 
   if ( empties == 1 ) {
+    BitBoard dummy;
     int sq1 = end_move_list[END_MOVE_LIST_HEAD].succ;
-    int flipped = TestFlips_wrapper( sq1, my_bits, opp_bits );
+    int flipped = TestFlips_wrapper_to( sq1, my_bits, opp_bits, &dummy );
     if ( flipped != 0 )
       return disc_diff + 2 * flipped + 1;
     if ( !pass_legal ) {
@@ -552,7 +554,7 @@ solve_parity( BitBoard my_bits,
       if ( disc_diff < 0 ) return disc_diff - 1;
       return 0;
     }
-    flipped = TestFlips_wrapper( sq1, opp_bits, my_bits );
+    flipped = TestFlips_wrapper_to( sq1, opp_bits, my_bits, &dummy );
     if ( flipped != 0 )
       return disc_diff - 2 * flipped - 1;
     if ( disc_diff > 0 ) return disc_diff + 1;
@@ -1169,12 +1171,11 @@ end_search_sibling( SplitPoint *sp, int idx ) {
   region_parity = sp->sp_region_parity;
   memcpy( end_move_list, sp->sp_end_move_list, sizeof( end_move_list ) );
 
-  int flipped = TestFlips_wrapper( move, my_bits, opp_bits );
+  int flipped = TestFlips_wrapper_to( move, my_bits, opp_bits, &new_my_bits );
   if ( flipped == 0 )
     return;
 
-  new_my_bits = bb_flips;
-  FULL_ANDNOT( new_opp_bits, opp_bits, bb_flips );
+  FULL_ANDNOT( new_opp_bits, opp_bits, new_my_bits );
 
   if ( sp->level + 1 <= MAX_SEARCH_DEPTH ) {
     tls.stable_discs[BLACKSQ][sp->level + 1] = sp->saved_stable[BLACKSQ];
@@ -1238,6 +1239,7 @@ dispatch_siblings( BitBoard my_bits, BitBoard opp_bits,
   int count = 0;
   int used[100];
   int i, sq;
+  BitBoard dummy_flips;
 
   for ( i = 0; i < 100; i++ )
     used[i] = FALSE;
@@ -1247,7 +1249,7 @@ dispatch_siblings( BitBoard my_bits, BitBoard opp_bits,
   for ( i = 0; i < best_list_length; i++ ) {
     sq = best_list[i];
     if ( !used[sq] && !((my_bits | opp_bits) & square_mask[sq]) &&
-	 (TestFlips_wrapper( sq, my_bits, opp_bits ) > 0) ) {
+	 (TestFlips_wrapper_to( sq, my_bits, opp_bits, &dummy_flips ) > 0) ) {
       used[sq] = TRUE;
       if ( count < MAX_ROOT_MOVES )
 	sp->moves[count++] = sq;
@@ -1287,7 +1289,7 @@ dispatch_siblings( BitBoard my_bits, BitBoard opp_bits,
     for ( i = 0; i < MOVE_ORDER_SIZE; i++ ) {
       sq = sorted_move_order[disks_played][i];
       if ( !used[sq] && !((my_bits | opp_bits) & square_mask[sq]) &&
-	   (TestFlips_wrapper( sq, my_bits, opp_bits ) > 0) ) {
+	   (TestFlips_wrapper_to( sq, my_bits, opp_bits, &dummy_flips ) > 0) ) {
 	used[sq] = TRUE;
 	if ( count < MAX_ROOT_MOVES )
 	  sp->moves[count++] = sq;
@@ -1417,15 +1419,16 @@ end_order_moves_presearch( int level,
     move = sorted_move_order[disks_played][shallow_index];
     if ( legal_moves & square_mask[move] ) {
       legal_moves &= ~square_mask[move];
-      int flipped = TestFlips_wrapper( move, my_bits, opp_bits );
+      BitBoard flips;
+      int flipped = TestFlips_wrapper_to( move, my_bits, opp_bits, &flips );
       if ( flipped > 0 ) {
 	candidates[candidate_count].sq = move;
 	candidates[candidate_count].flipped = flipped;
-	candidates[candidate_count].flips = bb_flips;
-	candidates[candidate_count].child_my_bits = my_bits | square_mask[move] | bb_flips;
+	candidates[candidate_count].flips = flips;
+	candidates[candidate_count].child_my_bits = my_bits | square_mask[move] | flips;
 	if ( level <= MAX_SEARCH_DEPTH ) {
 	  cached_flipped[level][move] = flipped;
-	  cached_flips[level][move] = bb_flips;
+	  cached_flips[level][move] = flips;
 	}
 	candidate_count++;
       }
@@ -2347,13 +2350,12 @@ end_search_nws( BitBoard my_bits,
     int flipped;
     if ( level <= MAX_SEARCH_DEPTH && cached_flipped[level][move] > 0 ) {
       flipped = cached_flipped[level][move];
-      bb_flips = cached_flips[level][move];
+      new_my_bits = cached_flips[level][move];
     }
     else {
-      flipped = TestFlips_wrapper( move, my_bits, opp_bits );
+      flipped = TestFlips_wrapper_to( move, my_bits, opp_bits, &new_my_bits );
     }
-    new_my_bits = bb_flips;
-    FULL_ANDNOT( new_opp_bits, opp_bits, bb_flips );
+    FULL_ANDNOT( new_opp_bits, opp_bits, new_my_bits );
 
     end_make_move( move, new_my_bits, my_bits, side_to_move, &diff1, &diff2, &pred, &succ );
 
@@ -2849,13 +2851,12 @@ end_search_pvs( BitBoard my_bits,
     int flipped;
     if ( level <= MAX_SEARCH_DEPTH && cached_flipped[level][move] > 0 ) {
       flipped = cached_flipped[level][move];
-      bb_flips = cached_flips[level][move];
+      new_my_bits = cached_flips[level][move];
     }
     else {
-      flipped = TestFlips_wrapper( move, my_bits, opp_bits );
+      flipped = TestFlips_wrapper_to( move, my_bits, opp_bits, &new_my_bits );
     }
-    new_my_bits = bb_flips;
-    FULL_ANDNOT( new_opp_bits, opp_bits, bb_flips );
+    FULL_ANDNOT( new_opp_bits, opp_bits, new_my_bits );
 
     end_make_move( move, new_my_bits, my_bits, side_to_move, &diff1, &diff2, &pred, &succ );
 
