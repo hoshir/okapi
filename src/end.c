@@ -1660,7 +1660,7 @@ end_order_moves_presearch( int level,
     static int fast_pattern_depth = -1;
     if ( fast_pattern_depth == -1 ) {
       char *env_fp = getenv( "FAST_PATTERN_DEPTH" );
-      fast_pattern_depth = env_fp ? atoi( env_fp ) : 9;
+      fast_pattern_depth = env_fp ? atoi( env_fp ) : 13;
     }
 
     static int fast_pattern_mode = -1;
