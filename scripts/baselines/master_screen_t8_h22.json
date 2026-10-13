@@ -1,6 +1,6 @@
 {
-  "verdict": "NEEDS_FULL",
-  "reason": "Screening showed promising node reduction (-6.95%). Proceed to --mode full.",
+  "verdict": "STALE_BASELINE",
+  "reason": "Regression vs a baseline that predates the latest src/ change; re-sync baselines on the parent commit (sync-baseline) and re-run before judging. Underlying result: Deterministic node count regressed by +1.10% (> +0.5% tolerance).",
   "tests_passed": true,
   "all_correct": true,
   "mode": "screen",
@@ -9,10 +9,10 @@
   "simplification_mode": false,
   "baseline_stale": true,
   "provenance": {
-    "commit": "c08003c4793d5f69c6ad22ff631e1c59d1c4d973",
+    "commit": "8b32e2a711283b9027fd630e17197148d012e5e3",
     "src_dirty": false,
-    "binary_mtime": 1791835391.2772298,
-    "written_at": 1791835470.65585,
+    "binary_mtime": 1791853962.6811974,
+    "written_at": 1791854044.810113,
     "argv": [
       "scripts/eval_candidate.py",
       "--mode",
@@ -28,33 +28,33 @@
   },
   "heavy_threshold": 3.0,
   "totals": {
-    "total_nodes": 848973515,
-    "total_time": 16.9
+    "total_nodes": 858349156,
+    "total_time": 10.2
   },
   "summary": {
-    "total_candidate_nodes": 848973515,
-    "total_baseline_nodes": 912339509,
-    "total_node_delta_pct": -6.95,
-    "total_candidate_time": 16.9,
-    "total_baseline_time": 17.1,
-    "total_time_delta_pct": -1.17
+    "total_candidate_nodes": 858349156,
+    "total_baseline_nodes": 848973515,
+    "total_node_delta_pct": 1.1,
+    "total_candidate_time": 10.2,
+    "total_baseline_time": 16.9,
+    "total_time_delta_pct": -39.64
   },
   "comparison": {
     "FFO #45": {
-      "candidate_nodes": 260990426,
-      "baseline_nodes": 283539614,
-      "node_delta_pct": -7.95,
-      "candidate_time": 3.8,
-      "baseline_time": 4.1,
-      "time_delta_pct": -7.32
+      "candidate_nodes": 265880209,
+      "baseline_nodes": 260990426,
+      "node_delta_pct": 1.87,
+      "candidate_time": 2.6,
+      "baseline_time": 3.8,
+      "time_delta_pct": -31.58
     },
     "FFO #50": {
-      "candidate_nodes": 587983089,
-      "baseline_nodes": 628799895,
-      "node_delta_pct": -6.49,
-      "candidate_time": 13.1,
-      "baseline_time": 13.0,
-      "time_delta_pct": 0.77
+      "candidate_nodes": 592468947,
+      "baseline_nodes": 587983089,
+      "node_delta_pct": 0.76,
+      "candidate_time": 7.6,
+      "baseline_time": 13.1,
+      "time_delta_pct": -41.98
     }
   },
   "results": {
@@ -66,9 +66,9 @@
       "expected_moves": [
         "b2"
       ],
-      "nodes": 260990426,
-      "time_sec": 3.8,
-      "nps": 68096260,
+      "nodes": 265880209,
+      "time_sec": 2.6,
+      "nps": 102442272,
       "error": null
     },
     "FFO #50": {
@@ -79,9 +79,9 @@
       "expected_moves": [
         "d8"
       ],
-      "nodes": 587983089,
-      "time_sec": 13.1,
-      "nps": 44995998,
+      "nodes": 592468947,
+      "time_sec": 7.6,
+      "nps": 78270966,
       "error": null
     }
   }
