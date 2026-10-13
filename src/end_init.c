@@ -9,9 +9,7 @@
 #include "bitboard.h"
 #include "constant.h"
 #include "end_init.h"
-#include "moves.h"
 
-BitBoard neighborhood_mask[100];
 
 const unsigned int quadrant_mask[100] = {
   0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
@@ -38,31 +36,9 @@ int full_output_mode = TRUE;
 
 void
 setup_end( void ) {
-  int i, j;
-  static const int dir_shift[8] = {1, -1, 7, -7, 8, -8, 9, -9};
-
   earliest_wld_solve = 0;
   earliest_full_solve = 0;
   full_output_mode = TRUE;
-
-  /* Calculate the neighborhood masks */
-
-  for ( i = 1; i <= 8; i++ )
-    for ( j = 1; j <= 8; j++ ) {
-      /* Create the neighborhood mask for the square POS */
-
-      int pos = 10 * i + j;
-      int shift = 8 * (i - 1) + (j - 1);
-      unsigned int k;
-
-      neighborhood_mask[pos] = 0;
-
-      for ( k = 0; k < 8; k++ )
-	if ( dir_mask[pos] & (1 << k) ) {
-	  unsigned int neighbor = shift + dir_shift[k];
-	  neighborhood_mask[pos] |= 1ull << neighbor;
-	}
-    }
 }
 
 /*

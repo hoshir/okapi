@@ -66,6 +66,7 @@ FIRST_BIT( BitBoard x ) {
 
 
 extern BitBoard square_mask[100];
+extern BitBoard neighborhood_mask[100];
 
 /* Conversion from a board coordinate (11..88) to the bit index, and
    back again. */

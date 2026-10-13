@@ -18,6 +18,7 @@
 
 
 BitBoard square_mask[100];
+BitBoard neighborhood_mask[100];
 int bit_position[100];
 int square_of_bit[64];
 FlipRays flip_rays[64];
@@ -92,15 +93,20 @@ init_bitboard( void ) {
       square_mask[pos] = 1ull << shift;
       bit_position[pos] = shift;
       square_of_bit[shift] = pos;
+      neighborhood_mask[pos] = 0;
     }
 
   for ( i = 1; i <= 8; i++ )
     for ( j = 1; j <= 8; j++ ) {
+      int pos = 10 * i + j;
       FlipRays *r = &flip_rays[8 * (i - 1) + (j - 1)];
       for ( k = 0; k < 8; k++ ) {
 	BitBoard ray = 0;
 	int ci = i + dir_di[k];
 	int cj = j + dir_dj[k];
+	if ( (ci >= 1) && (ci <= 8) && (cj >= 1) && (cj <= 8) ) {
+	  neighborhood_mask[pos] |= 1ull << (8 * (ci - 1) + (cj - 1));
+	}
 	while ( (ci >= 1) && (ci <= 8) && (cj >= 1) && (cj <= 8) ) {
 	  ray |= 1ull << (8 * (ci - 1) + (cj - 1));
 	  ci += dir_di[k];
