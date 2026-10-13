@@ -48,29 +48,29 @@ typedef struct {
 
 typedef struct {
   /* The position, one square per entry. */
-  Board board;
+  Board ts_board;
 
   /* The same position as bitboards, indexed by colour. */
-  BitBoard board_bits[3];
+  BitBoard ts_board_bits[3];
 
   /* The discs turned by the move made at each stage. */
-  BitBoard flip_mask[65];
+  BitBoard ts_flip_mask[65];
 
-  int piece_count[3][MAX_SEARCH_DEPTH];
+  int ts_piece_count[3][MAX_SEARCH_DEPTH];
 
   /* The hash codes at each node on the way down. */
-  unsigned int hash_stored1[MAX_SEARCH_DEPTH];
-  unsigned int hash_stored2[MAX_SEARCH_DEPTH];
+  unsigned int ts_hash_stored1[MAX_SEARCH_DEPTH];
+  unsigned int ts_hash_stored2[MAX_SEARCH_DEPTH];
 
   /* The evaluation pattern indices, in black perspective. */
-  unsigned short eval_pattern_index[56];
+  unsigned short ts_eval_pattern_index[56];
 
   /* The 64-bit hash key of the current position. */
-  unsigned int hash1, hash2;
+  unsigned int ts_hash1, ts_hash2;
 
   /* The number of discs played from the initial position.  Must match
      the current state of the BOARD variable. */
-  int disks_played;
+  int ts_disks_played;
 
   /* The endgame's own state.  Its solvers touch five or six of these
      per node, which is why they are here rather than standing alone.
@@ -80,37 +80,37 @@ typedef struct {
      REGION_PARITY has a bit per quadrant with an odd number of them.
      END_BEST_MOVE is the endgame's own, spelled apart from the
      midgame local of the same name. */
-  BitBoard bb_flips;
-  MoveLink end_move_list[100];
-  unsigned int region_parity;
-  int end_best_move, end_best_root_move;
+  BitBoard ts_bb_flips;
+  MoveLink ts_end_move_list[100];
+  unsigned int ts_region_parity;
+  int ts_end_best_move, ts_end_best_root_move;
 
   /* Monotonically tracked stable discs along the search path, indexed by [color][level]. */
   BitBoard stable_discs[3][MAX_SEARCH_DEPTH + 1];
 
   /* Counted once per node, so it is on the hottest path there is. */
-  CounterType nodes;
+  CounterType ts_nodes;
 } ThreadState;
 
 extern _Thread_local ThreadState tls;
 
 
-#define board               (tls.board)
-#define board_bits          (tls.board_bits)
-#define flip_mask           (tls.flip_mask)
-#define piece_count         (tls.piece_count)
-#define hash_stored1        (tls.hash_stored1)
-#define hash_stored2        (tls.hash_stored2)
-#define eval_pattern_index  (tls.eval_pattern_index)
-#define hash1               (tls.hash1)
-#define hash2               (tls.hash2)
-#define disks_played        (tls.disks_played)
-#define bb_flips            (tls.bb_flips)
-#define end_move_list       (tls.end_move_list)
-#define region_parity       (tls.region_parity)
-#define end_best_move       (tls.end_best_move)
-#define end_best_root_move  (tls.end_best_root_move)
-#define nodes               (tls.nodes)
+#define board               (tls.ts_board)
+#define board_bits          (tls.ts_board_bits)
+#define flip_mask           (tls.ts_flip_mask)
+#define piece_count         (tls.ts_piece_count)
+#define hash_stored1        (tls.ts_hash_stored1)
+#define hash_stored2        (tls.ts_hash_stored2)
+#define eval_pattern_index  (tls.ts_eval_pattern_index)
+#define hash1               (tls.ts_hash1)
+#define hash2               (tls.ts_hash2)
+#define disks_played        (tls.ts_disks_played)
+#define bb_flips            (tls.ts_bb_flips)
+#define end_move_list       (tls.ts_end_move_list)
+#define region_parity       (tls.ts_region_parity)
+#define end_best_move       (tls.ts_end_best_move)
+#define end_best_root_move  (tls.ts_end_best_root_move)
+#define nodes               (tls.ts_nodes)
 
 
 

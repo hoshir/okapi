@@ -1,62 +1,8 @@
 {
-  "verdict": "NEEDS_FULL",
-  "reason": "Screening showed promising node reduction (-4.64%). Proceed to --mode full.",
-  "tests_passed": true,
-  "all_correct": true,
   "mode": "screen",
   "threads": 8,
   "hash_bits": 22,
-  "simplification_mode": false,
-  "baseline_stale": false,
-  "provenance": {
-    "commit": "9877c06b137bc6ce00fe943e741c60e893046794",
-    "src_dirty": true,
-    "binary_mtime": 1791872105.91496,
-    "written_at": 1791872517.874335,
-    "argv": [
-      "scripts/eval_candidate.py",
-      "--mode",
-      "screen",
-      "--threads",
-      "8",
-      "--hash-bits",
-      "22",
-      "--skip-tests",
-      "--save-json",
-      "scripts/baselines/candidate_screen_t8_srch005.json"
-    ]
-  },
-  "heavy_threshold": 3.0,
-  "totals": {
-    "total_nodes": 818066884,
-    "total_time": 11.8
-  },
-  "summary": {
-    "total_candidate_nodes": 818066884,
-    "total_baseline_nodes": 857833861,
-    "total_node_delta_pct": -4.64,
-    "total_candidate_time": 11.8,
-    "total_baseline_time": 9.4,
-    "total_time_delta_pct": 25.53
-  },
-  "comparison": {
-    "FFO #45": {
-      "candidate_nodes": 237320751,
-      "baseline_nodes": 266664870,
-      "node_delta_pct": -11.0,
-      "candidate_time": 2.3,
-      "baseline_time": 2.4,
-      "time_delta_pct": -4.17
-    },
-    "FFO #50": {
-      "candidate_nodes": 580746133,
-      "baseline_nodes": 591168991,
-      "node_delta_pct": -1.76,
-      "candidate_time": 9.5,
-      "baseline_time": 7.0,
-      "time_delta_pct": 35.71
-    }
-  },
+  "created_at": "2026-10-13T09:24:10Z",
   "results": {
     "FFO #45": {
       "correct": true,
@@ -66,9 +12,9 @@
       "expected_moves": [
         "b2"
       ],
-      "nodes": 237320751,
-      "time_sec": 2.3,
-      "nps": 102420261,
+      "nodes": 227916802,
+      "time_sec": 2.2,
+      "nps": 103854217,
       "error": null
     },
     "FFO #50": {
@@ -79,9 +25,9 @@
       "expected_moves": [
         "d8"
       ],
-      "nodes": 580746133,
-      "time_sec": 9.5,
-      "nps": 61286692,
+      "nodes": 578934742,
+      "time_sec": 8.0,
+      "nps": 72799472,
       "error": null
     }
   }

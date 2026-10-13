@@ -235,8 +235,9 @@ prepare_to_solve( BitBoard occupied ) {
     and PVS for 8 to 12 empties
 */
 
-static int
-solve_two_empty( BitBoard my_bits,
+int
+solve_two_empty( ThreadState *ts,
+		 BitBoard my_bits,
 		 BitBoard opp_bits,
 		 int sq1,
 		 int sq2,
@@ -249,7 +250,7 @@ solve_two_empty( BitBoard my_bits,
   int ev;
   BitBoard new_my_bits;
 
-  INCREMENT_COUNTER( nodes );
+  ts->ts_nodes.lo++;
 
   /* Overall strategy: Lazy evaluation whenever possible, i.e., don't
      update bitboards until they are used. Also look at alpha and beta
@@ -260,7 +261,7 @@ solve_two_empty( BitBoard my_bits,
 
   flipped = TestFlips_wrapper_to( sq1, my_bits, opp_bits, &new_my_bits );
   if ( flipped != 0 ) {  /* SQ1 feasible for me */
-    INCREMENT_COUNTER( nodes );
+    ts->ts_nodes.lo++;
 
     ev = disc_diff + 2 * flipped;
 
@@ -296,7 +297,7 @@ solve_two_empty( BitBoard my_bits,
 
   flipped = TestFlips_wrapper_to( sq2, my_bits, opp_bits, &new_my_bits );
   if ( flipped != 0 ) {  /* SQ2 feasible for me */
-    INCREMENT_COUNTER( nodes );
+    ts->ts_nodes.lo++;
 
     ev = disc_diff + 2 * flipped;
 
@@ -337,7 +338,7 @@ solve_two_empty( BitBoard my_bits,
       return 0;
     }
     else
-      return -solve_two_empty( opp_bits, my_bits, sq1, sq2, -beta,
+      return -solve_two_empty( ts, opp_bits, my_bits, sq1, sq2, -beta,
 			       -alpha, -disc_diff, FALSE );
   }
   else
@@ -346,7 +347,8 @@ solve_two_empty( BitBoard my_bits,
 
 
 int
-solve_three_empty( BitBoard my_bits,
+solve_three_empty( ThreadState *ts,
+		   BitBoard my_bits,
 		   BitBoard opp_bits,
 		   int sq1,
 		   int sq2,
@@ -362,7 +364,7 @@ solve_three_empty( BitBoard my_bits,
   int new_disc_diff;
   int ev;
 
-  INCREMENT_COUNTER( nodes );
+  ts->ts_nodes.lo++;
 
   unsigned int q1 = quadrant_mask[sq1];
   unsigned int q2 = quadrant_mask[sq2];
@@ -380,7 +382,7 @@ solve_three_empty( BitBoard my_bits,
   if ( flipped != 0 ) {
     FULL_ANDNOT( new_opp_bits, opp_bits, new_my_bits );
     new_disc_diff = -disc_diff - 2 * flipped - 1;
-    score = -solve_two_empty( new_opp_bits, new_my_bits, sq2, sq3,
+    score = -solve_two_empty( ts, new_opp_bits, new_my_bits, sq2, sq3,
 			      -beta, -alpha, new_disc_diff, TRUE );
     if ( score >= beta )
       return score;
@@ -392,7 +394,7 @@ solve_three_empty( BitBoard my_bits,
   if ( flipped != 0 ) {
     FULL_ANDNOT( new_opp_bits, opp_bits, new_my_bits );
     new_disc_diff = -disc_diff - 2 * flipped - 1;
-    ev = -solve_two_empty( new_opp_bits, new_my_bits, sq1, sq3,
+    ev = -solve_two_empty( ts, new_opp_bits, new_my_bits, sq1, sq3,
 			   -beta, -alpha, new_disc_diff, TRUE );
     if ( ev >= beta )
       return ev;
@@ -407,7 +409,7 @@ solve_three_empty( BitBoard my_bits,
   if ( flipped != 0 ) {
     FULL_ANDNOT( new_opp_bits, opp_bits, new_my_bits );
     new_disc_diff = -disc_diff - 2 * flipped - 1;
-    ev = -solve_two_empty( new_opp_bits, new_my_bits, sq1, sq2,
+    ev = -solve_two_empty( ts, new_opp_bits, new_my_bits, sq1, sq2,
 			   -beta, -alpha, new_disc_diff, TRUE );
     if ( ev >= score )
       return ev;
@@ -422,7 +424,7 @@ solve_three_empty( BitBoard my_bits,
       return 0;  /* Can't reach this code, only keep it for symmetry */
     }
     else
-      return -solve_three_empty( opp_bits, my_bits, sq1, sq2, sq3,
+      return -solve_three_empty( ts, opp_bits, my_bits, sq1, sq2, sq3,
 				 -beta, -alpha, -disc_diff, FALSE );
   }
 
@@ -464,7 +466,8 @@ end_search_nws( BitBoard my_bits,
 */
 
 static int
-solve_parity( BitBoard my_bits,
+solve_parity( ThreadState *ts,
+	      BitBoard my_bits,
 	      BitBoard opp_bits,
 	      int alpha,
 	      int beta, 
@@ -474,78 +477,78 @@ solve_parity( BitBoard my_bits,
 	      int pass_legal,
 	      int level ) {
   if ( empties == 8 ) {
-    int sq1 = end_move_list[END_MOVE_LIST_HEAD].succ;
-    int sq2 = end_move_list[sq1].succ;
-    int sq3 = end_move_list[sq2].succ;
-    int sq4 = end_move_list[sq3].succ;
-    int sq5 = end_move_list[sq4].succ;
-    int sq6 = end_move_list[sq5].succ;
-    int sq7 = end_move_list[sq6].succ;
-    int sq8 = end_move_list[sq7].succ;
-    return solve_eight_empty( my_bits, opp_bits, sq1, sq2, sq3, sq4, sq5, sq6, sq7, sq8,
+    int sq1 = ts->ts_end_move_list[END_MOVE_LIST_HEAD].succ;
+    int sq2 = ts->ts_end_move_list[sq1].succ;
+    int sq3 = ts->ts_end_move_list[sq2].succ;
+    int sq4 = ts->ts_end_move_list[sq3].succ;
+    int sq5 = ts->ts_end_move_list[sq4].succ;
+    int sq6 = ts->ts_end_move_list[sq5].succ;
+    int sq7 = ts->ts_end_move_list[sq6].succ;
+    int sq8 = ts->ts_end_move_list[sq7].succ;
+    return solve_eight_empty( ts, my_bits, opp_bits, sq1, sq2, sq3, sq4, sq5, sq6, sq7, sq8,
 			      alpha, beta, color, disc_diff, pass_legal );
   }
 
   if ( empties == 7 ) {
-    int sq1 = end_move_list[END_MOVE_LIST_HEAD].succ;
-    int sq2 = end_move_list[sq1].succ;
-    int sq3 = end_move_list[sq2].succ;
-    int sq4 = end_move_list[sq3].succ;
-    int sq5 = end_move_list[sq4].succ;
-    int sq6 = end_move_list[sq5].succ;
-    int sq7 = end_move_list[sq6].succ;
-    return solve_seven_empty( my_bits, opp_bits, sq1, sq2, sq3, sq4, sq5, sq6, sq7,
+    int sq1 = ts->ts_end_move_list[END_MOVE_LIST_HEAD].succ;
+    int sq2 = ts->ts_end_move_list[sq1].succ;
+    int sq3 = ts->ts_end_move_list[sq2].succ;
+    int sq4 = ts->ts_end_move_list[sq3].succ;
+    int sq5 = ts->ts_end_move_list[sq4].succ;
+    int sq6 = ts->ts_end_move_list[sq5].succ;
+    int sq7 = ts->ts_end_move_list[sq6].succ;
+    return solve_seven_empty( ts, my_bits, opp_bits, sq1, sq2, sq3, sq4, sq5, sq6, sq7,
 			      alpha, beta, color, disc_diff, pass_legal );
   }
 
   if ( empties == 6 ) {
-    int sq1 = end_move_list[END_MOVE_LIST_HEAD].succ;
-    int sq2 = end_move_list[sq1].succ;
-    int sq3 = end_move_list[sq2].succ;
-    int sq4 = end_move_list[sq3].succ;
-    int sq5 = end_move_list[sq4].succ;
-    int sq6 = end_move_list[sq5].succ;
-    return solve_six_empty( my_bits, opp_bits, sq1, sq2, sq3, sq4, sq5, sq6,
+    int sq1 = ts->ts_end_move_list[END_MOVE_LIST_HEAD].succ;
+    int sq2 = ts->ts_end_move_list[sq1].succ;
+    int sq3 = ts->ts_end_move_list[sq2].succ;
+    int sq4 = ts->ts_end_move_list[sq3].succ;
+    int sq5 = ts->ts_end_move_list[sq4].succ;
+    int sq6 = ts->ts_end_move_list[sq5].succ;
+    return solve_six_empty( ts, my_bits, opp_bits, sq1, sq2, sq3, sq4, sq5, sq6,
 			    alpha, beta, color, disc_diff, pass_legal );
   }
 
   if ( empties == 5 ) {
-    int sq1 = end_move_list[END_MOVE_LIST_HEAD].succ;
-    int sq2 = end_move_list[sq1].succ;
-    int sq3 = end_move_list[sq2].succ;
-    int sq4 = end_move_list[sq3].succ;
-    int sq5 = end_move_list[sq4].succ;
-    return solve_five_empty( my_bits, opp_bits, sq1, sq2, sq3, sq4, sq5,
+    int sq1 = ts->ts_end_move_list[END_MOVE_LIST_HEAD].succ;
+    int sq2 = ts->ts_end_move_list[sq1].succ;
+    int sq3 = ts->ts_end_move_list[sq2].succ;
+    int sq4 = ts->ts_end_move_list[sq3].succ;
+    int sq5 = ts->ts_end_move_list[sq4].succ;
+    return solve_five_empty( ts, my_bits, opp_bits, sq1, sq2, sq3, sq4, sq5,
 			     alpha, beta, color, disc_diff, pass_legal );
   }
 
   if ( empties == 4 ) {
-    int sq1 = end_move_list[END_MOVE_LIST_HEAD].succ;
-    int sq2 = end_move_list[sq1].succ;
-    int sq3 = end_move_list[sq2].succ;
-    int sq4 = end_move_list[sq3].succ;
-    return solve_four_empty( my_bits, opp_bits, sq1, sq2, sq3, sq4,
+    int sq1 = ts->ts_end_move_list[END_MOVE_LIST_HEAD].succ;
+    int sq2 = ts->ts_end_move_list[sq1].succ;
+    int sq3 = ts->ts_end_move_list[sq2].succ;
+    int sq4 = ts->ts_end_move_list[sq3].succ;
+    return solve_four_empty( ts, my_bits, opp_bits, sq1, sq2, sq3, sq4,
 			     alpha, beta, disc_diff, pass_legal );
   }
 
   if ( empties == 3 ) {
-    int sq1 = end_move_list[END_MOVE_LIST_HEAD].succ;
-    int sq2 = end_move_list[sq1].succ;
-    int sq3 = end_move_list[sq2].succ;
-    return solve_three_empty( my_bits, opp_bits, sq1, sq2, sq3,
+    int sq1 = ts->ts_end_move_list[END_MOVE_LIST_HEAD].succ;
+    int sq2 = ts->ts_end_move_list[sq1].succ;
+    int sq3 = ts->ts_end_move_list[sq2].succ;
+    return solve_three_empty( ts, my_bits, opp_bits, sq1, sq2, sq3,
 			      alpha, beta, disc_diff, pass_legal );
   }
 
   if ( empties == 2 ) {
-    int sq1 = end_move_list[END_MOVE_LIST_HEAD].succ;
-    int sq2 = end_move_list[sq1].succ;
-    return solve_two_empty( my_bits, opp_bits, sq1, sq2,
+    int sq1 = ts->ts_end_move_list[END_MOVE_LIST_HEAD].succ;
+    int sq2 = ts->ts_end_move_list[sq1].succ;
+    return solve_two_empty( ts, my_bits, opp_bits, sq1, sq2,
 			    alpha, beta, disc_diff, pass_legal );
   }
 
   if ( empties == 1 ) {
     BitBoard dummy;
-    int sq1 = end_move_list[END_MOVE_LIST_HEAD].succ;
+    int sq1 = ts->ts_end_move_list[END_MOVE_LIST_HEAD].succ;
     int flipped = TestFlips_wrapper_to( sq1, my_bits, opp_bits, &dummy );
     if ( flipped != 0 )
       return disc_diff + 2 * flipped + 1;
@@ -2188,7 +2191,7 @@ end_search_nws( BitBoard my_bits,
 
   /* 1. Terminal leaf dispatch (no PV tracking needed in NWS) */
   if ( empties <= LOW_LEVEL_DEPTH ) {
-    return solve_parity( my_bits, opp_bits, alpha, beta, side_to_move,
+    return solve_parity( &tls, my_bits, opp_bits, alpha, beta, side_to_move,
 			 empties, disc_diff, pass_legal, level );
   }
 
@@ -2606,12 +2609,13 @@ end_search_pvs( BitBoard my_bits,
 
   /* 1. Terminal leaf dispatch */
   if ( empties <= LOW_LEVEL_DEPTH ) {
-    int res = solve_parity( my_bits, opp_bits, alpha, beta, side_to_move,
+    ThreadState *ts = &tls;
+    int res = solve_parity( ts, my_bits, opp_bits, alpha, beta, side_to_move,
 			    empties, disc_diff, pass_legal, level );
     pv_depth[level] = level + 1;
-    pv[level][level] = end_best_move;
+    pv[level][level] = ts->ts_end_best_move;
     if ( level == 0 )
-      end_best_root_move = end_best_move;
+      end_best_root_move = ts->ts_end_best_move;
     return res;
   }
 

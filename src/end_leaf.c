@@ -27,7 +27,8 @@
 
 
 int
-solve_four_empty( BitBoard my_bits,
+solve_four_empty( ThreadState *ts,
+		  BitBoard my_bits,
 		  BitBoard opp_bits,
 		  int sq1,
 		  int sq2,
@@ -44,15 +45,16 @@ solve_four_empty( BitBoard my_bits,
   int new_disc_diff;
   int ev;
 
-  INCREMENT_COUNTER( nodes );
+  ts->ts_nodes.lo++;
 
-  if ( region_parity != 0 ) {
+  unsigned int par = quadrant_mask[sq1] ^ quadrant_mask[sq2] ^ quadrant_mask[sq3] ^ quadrant_mask[sq4];
+  if ( par != 0 ) {
     int m[4];
     int head = 0, tail = 3;
-    if ( quadrant_mask[sq1] & region_parity ) m[head++] = sq1; else m[tail--] = sq1;
-    if ( quadrant_mask[sq2] & region_parity ) m[head++] = sq2; else m[tail--] = sq2;
-    if ( quadrant_mask[sq3] & region_parity ) m[head++] = sq3; else m[tail--] = sq3;
-    if ( quadrant_mask[sq4] & region_parity ) m[head++] = sq4; else m[tail--] = sq4;
+    if ( quadrant_mask[sq1] & par ) m[head++] = sq1; else m[tail--] = sq1;
+    if ( quadrant_mask[sq2] & par ) m[head++] = sq2; else m[tail--] = sq2;
+    if ( quadrant_mask[sq3] & par ) m[head++] = sq3; else m[tail--] = sq3;
+    if ( quadrant_mask[sq4] & par ) m[head++] = sq4; else m[tail--] = sq4;
     sq1 = m[0]; sq2 = m[1]; sq3 = m[2]; sq4 = m[3];
   }
 
@@ -60,7 +62,7 @@ solve_four_empty( BitBoard my_bits,
   if ( flipped != 0 ) {
     FULL_ANDNOT( new_opp_bits, opp_bits, new_my_bits );
     new_disc_diff = -disc_diff - 2 * flipped - 1;
-    score = -solve_three_empty( new_opp_bits, new_my_bits, sq2, sq3, sq4,
+    score = -solve_three_empty( ts, new_opp_bits, new_my_bits, sq2, sq3, sq4,
 				-beta, -alpha, new_disc_diff, TRUE );
     if ( score >= beta )
       return score;
@@ -72,7 +74,7 @@ solve_four_empty( BitBoard my_bits,
   if ( flipped != 0 ) {
     FULL_ANDNOT( new_opp_bits, opp_bits, new_my_bits );
     new_disc_diff = -disc_diff - 2 * flipped - 1;
-    ev = -solve_three_empty( new_opp_bits, new_my_bits, sq1, sq3, sq4,
+    ev = -solve_three_empty( ts, new_opp_bits, new_my_bits, sq1, sq3, sq4,
 			     -beta, -alpha, new_disc_diff, TRUE );
     if ( ev >= beta )
       return ev;
@@ -87,7 +89,7 @@ solve_four_empty( BitBoard my_bits,
   if ( flipped != 0 ) {
     FULL_ANDNOT( new_opp_bits, opp_bits, new_my_bits );
     new_disc_diff = -disc_diff - 2 * flipped - 1;
-    ev = -solve_three_empty( new_opp_bits, new_my_bits, sq1, sq2, sq4,
+    ev = -solve_three_empty( ts, new_opp_bits, new_my_bits, sq1, sq2, sq4,
 			     -beta, -alpha, new_disc_diff, TRUE );
     if ( ev >= beta )
       return ev;
@@ -102,7 +104,7 @@ solve_four_empty( BitBoard my_bits,
   if ( flipped != 0 ) {
     FULL_ANDNOT( new_opp_bits, opp_bits, new_my_bits );
     new_disc_diff = -disc_diff - 2 * flipped - 1;
-    ev = -solve_three_empty( new_opp_bits, new_my_bits, sq1, sq2, sq3,
+    ev = -solve_three_empty( ts, new_opp_bits, new_my_bits, sq1, sq2, sq3,
 			     -beta, -alpha, new_disc_diff, TRUE );
     if ( ev >= score )
       return ev;
@@ -117,7 +119,7 @@ solve_four_empty( BitBoard my_bits,
       return 0;
     }
     else
-      return -solve_four_empty( opp_bits, my_bits, sq1, sq2, sq3, sq4,
+      return -solve_four_empty( ts, opp_bits, my_bits, sq1, sq2, sq3, sq4,
 				-beta, -alpha, -disc_diff, FALSE );
   }
 
@@ -127,7 +129,8 @@ solve_four_empty( BitBoard my_bits,
 
 
 int
-solve_five_empty( BitBoard my_bits,
+solve_five_empty( ThreadState *ts,
+		  BitBoard my_bits,
 		  BitBoard opp_bits,
 		  int sq1,
 		  int sq2,
@@ -149,17 +152,17 @@ solve_five_empty( BitBoard my_bits,
   int ev;
   int best_sq = 0;
 
-  INCREMENT_COUNTER( nodes );
+  ts->ts_nodes.lo++;
 
 #if USE_SHALLOW_TT
   {
     HashEntry entry;
-    find_shallow_hash( &entry );
+    find_shallow_hash( &entry, ts );
     if ( (entry.draft == 5) && (entry.flags & ENDGAME_SCORE) ) {
       if ( (entry.flags & EXACT_VALUE) ||
 	   ((entry.flags & LOWER_BOUND) && entry.eval >= beta) ||
 	   ((entry.flags & UPPER_BOUND) && entry.eval <= alpha) ) {
-	end_best_move = entry.move[0];
+	ts->ts_end_best_move = entry.move[0];
 	return entry.eval;
       }
     }
@@ -193,12 +196,15 @@ solve_five_empty( BitBoard my_bits,
   orig_sq[0] = sq1; orig_sq[1] = sq2; orig_sq[2] = sq3;
   orig_sq[3] = sq4; orig_sq[4] = sq5;
 
-  if ( region_parity != 0 ) {
+  unsigned int par = quadrant_mask[orig_sq[0]] ^ quadrant_mask[orig_sq[1]] ^
+                     quadrant_mask[orig_sq[2]] ^ quadrant_mask[orig_sq[3]] ^
+                     quadrant_mask[orig_sq[4]];
+  if ( par != 0 ) {
     int m_even[5];
     int n_odd = 0, n_even = 0;
     int i;
     for ( i = 0; i < 5; i++ ) {
-      if ( quadrant_mask[orig_sq[i]] & region_parity )
+      if ( quadrant_mask[orig_sq[i]] & par )
         cand[n_odd++] = orig_sq[i];
       else
         m_even[n_even++] = orig_sq[i];
@@ -223,15 +229,13 @@ solve_five_empty( BitBoard my_bits,
       }
       FULL_ANDNOT( new_opp_bits, opp_bits, new_my_bits );
       new_disc_diff = -disc_diff - 2 * flipped - 1;
-      region_parity ^= quadrant_mask[m];
-      ev = -solve_four_empty( new_opp_bits, new_my_bits,
+      ev = -solve_four_empty( ts, new_opp_bits, new_my_bits,
                               rem[0], rem[1], rem[2], rem[3],
                               -beta, -alpha, new_disc_diff, TRUE );
-      region_parity ^= quadrant_mask[m];
       if ( ev >= beta ) {
-        end_best_move = m;
+        ts->ts_end_best_move = m;
 #if USE_SHALLOW_TT
-        add_shallow_hash( ev, m, ENDGAME_SCORE | LOWER_BOUND, 5 );
+        add_shallow_hash( ev, m, ENDGAME_SCORE | LOWER_BOUND, 5, ts );
 #endif
         return ev;
       }
@@ -251,30 +255,31 @@ solve_five_empty( BitBoard my_bits,
       return 0;
     }
     else {
-      hash1 ^= hash_flip_color1;
-      hash2 ^= hash_flip_color2;
-      ev = -solve_five_empty( opp_bits, my_bits, orig_sq[0], orig_sq[1], orig_sq[2], orig_sq[3], orig_sq[4],
+      ts->ts_hash1 ^= hash_flip_color1;
+      ts->ts_hash2 ^= hash_flip_color2;
+      ev = -solve_five_empty( ts, opp_bits, my_bits, orig_sq[0], orig_sq[1], orig_sq[2], orig_sq[3], orig_sq[4],
                               -beta, -alpha, oppcol, -disc_diff, FALSE );
-      hash1 ^= hash_flip_color1;
-      hash2 ^= hash_flip_color2;
+      ts->ts_hash1 ^= hash_flip_color1;
+      ts->ts_hash2 ^= hash_flip_color2;
       return ev;
     }
   }
 
 #if USE_SHALLOW_TT
   if ( score <= in_alpha )
-    add_shallow_hash( score, best_sq, ENDGAME_SCORE | UPPER_BOUND, 5 );
+    add_shallow_hash( score, best_sq, ENDGAME_SCORE | UPPER_BOUND, 5, ts );
   else
-    add_shallow_hash( score, best_sq, ENDGAME_SCORE | EXACT_VALUE, 5 );
+    add_shallow_hash( score, best_sq, ENDGAME_SCORE | EXACT_VALUE, 5, ts );
 #endif
-  end_best_move = best_sq;
+  ts->ts_end_best_move = best_sq;
   return score;
 }
 
 
 
 int
-solve_six_empty( BitBoard my_bits,
+solve_six_empty( ThreadState *ts,
+		 BitBoard my_bits,
 		 BitBoard opp_bits,
 		 int sq1,
 		 int sq2,
@@ -297,17 +302,17 @@ solve_six_empty( BitBoard my_bits,
   int ev;
   int best_sq = 0;
 
-  INCREMENT_COUNTER( nodes );
+  ts->ts_nodes.lo++;
 
 #if USE_SHALLOW_TT
   {
     HashEntry entry;
-    find_shallow_hash( &entry );
+    find_shallow_hash( &entry, ts );
     if ( (entry.draft == 6) && (entry.flags & ENDGAME_SCORE) ) {
       if ( (entry.flags & EXACT_VALUE) ||
 	   ((entry.flags & LOWER_BOUND) && entry.eval >= beta) ||
 	   ((entry.flags & UPPER_BOUND) && entry.eval <= alpha) ) {
-	end_best_move = entry.move[0];
+	ts->ts_end_best_move = entry.move[0];
 	return entry.eval;
       }
     }
@@ -341,12 +346,15 @@ solve_six_empty( BitBoard my_bits,
   orig_sq[0] = sq1; orig_sq[1] = sq2; orig_sq[2] = sq3;
   orig_sq[3] = sq4; orig_sq[4] = sq5; orig_sq[5] = sq6;
 
-  if ( region_parity != 0 ) {
+  unsigned int par = quadrant_mask[orig_sq[0]] ^ quadrant_mask[orig_sq[1]] ^
+                     quadrant_mask[orig_sq[2]] ^ quadrant_mask[orig_sq[3]] ^
+                     quadrant_mask[orig_sq[4]] ^ quadrant_mask[orig_sq[5]];
+  if ( par != 0 ) {
     int m_even[6];
     int n_odd = 0, n_even = 0;
     int i;
     for ( i = 0; i < 6; i++ ) {
-      if ( quadrant_mask[orig_sq[i]] & region_parity )
+      if ( quadrant_mask[orig_sq[i]] & par )
 	cand[n_odd++] = orig_sq[i];
       else
 	m_even[n_even++] = orig_sq[i];
@@ -371,25 +379,23 @@ solve_six_empty( BitBoard my_bits,
       }
       FULL_ANDNOT( new_opp_bits, opp_bits, new_my_bits );
       new_disc_diff = -disc_diff - 2 * flipped - 1;
-      region_parity ^= quadrant_mask[m];
 #if USE_SHALLOW_TT
       unsigned int diff1, diff2;
       end_hash_diff( new_my_bits, my_bits, color, m, &diff1, &diff2 );
-      hash1 ^= diff1;
-      hash2 ^= diff2;
+      ts->ts_hash1 ^= diff1;
+      ts->ts_hash2 ^= diff2;
 #endif
-      ev = -solve_five_empty( new_opp_bits, new_my_bits,
+      ev = -solve_five_empty( ts, new_opp_bits, new_my_bits,
 			     rem[0], rem[1], rem[2], rem[3], rem[4],
 			     -beta, -alpha, oppcol, new_disc_diff, TRUE );
 #if USE_SHALLOW_TT
-      hash1 ^= diff1;
-      hash2 ^= diff2;
+      ts->ts_hash1 ^= diff1;
+      ts->ts_hash2 ^= diff2;
 #endif
-      region_parity ^= quadrant_mask[m];
       if ( ev >= beta ) {
-	end_best_move = m;
+	ts->ts_end_best_move = m;
 #if USE_SHALLOW_TT
-	add_shallow_hash( ev, m, ENDGAME_SCORE | LOWER_BOUND, 6 );
+	add_shallow_hash( ev, m, ENDGAME_SCORE | LOWER_BOUND, 6, ts );
 #endif
 	return ev;
       }
@@ -410,25 +416,33 @@ solve_six_empty( BitBoard my_bits,
 	return disc_diff - 6;
       return 0;
     }
-    else
-      return -solve_six_empty( opp_bits, my_bits, sq1, sq2, sq3, sq4, sq5, sq6,
-			       -beta, -alpha, oppcol, -disc_diff, FALSE );
+    else {
+      ts->ts_hash1 ^= hash_flip_color1;
+      ts->ts_hash2 ^= hash_flip_color2;
+      ev = -solve_six_empty( ts, opp_bits, my_bits, sq1, sq2, sq3, sq4, sq5, sq6,
+			     -beta, -alpha, oppcol, -disc_diff, FALSE );
+      ts->ts_hash1 ^= hash_flip_color1;
+      ts->ts_hash2 ^= hash_flip_color2;
+      return ev;
+    }
   }
 
 #if USE_SHALLOW_TT
   if ( score <= in_alpha )
-    add_shallow_hash( score, best_sq, ENDGAME_SCORE | UPPER_BOUND, 6 );
+    add_shallow_hash( score, best_sq, ENDGAME_SCORE | UPPER_BOUND, 6, ts );
   else
-    add_shallow_hash( score, best_sq, ENDGAME_SCORE | EXACT_VALUE, 6 );
+    add_shallow_hash( score, best_sq, ENDGAME_SCORE | EXACT_VALUE, 6, ts );
 #endif
 
+  ts->ts_end_best_move = best_sq;
   return score;
 }
 
 
 
 int
-solve_seven_empty( BitBoard my_bits,
+solve_seven_empty( ThreadState *ts,
+		   BitBoard my_bits,
 		   BitBoard opp_bits,
 		   int sq1,
 		   int sq2,
@@ -452,17 +466,17 @@ solve_seven_empty( BitBoard my_bits,
   int ev;
   int best_sq = 0;
 
-  INCREMENT_COUNTER( nodes );
+  ts->ts_nodes.lo++;
 
 #if USE_SHALLOW_TT
   {
     HashEntry entry;
-    find_shallow_hash( &entry );
+    find_shallow_hash( &entry, ts );
     if ( (entry.draft == 7) && (entry.flags & ENDGAME_SCORE) ) {
       if ( (entry.flags & EXACT_VALUE) ||
 	   ((entry.flags & LOWER_BOUND) && entry.eval >= beta) ||
 	   ((entry.flags & UPPER_BOUND) && entry.eval <= alpha) ) {
-	end_best_move = entry.move[0];
+	ts->ts_end_best_move = entry.move[0];
 	return entry.eval;
       }
     }
@@ -493,15 +507,19 @@ solve_seven_empty( BitBoard my_bits,
   int cand[7];
   int k;
 
-  orig_sq[0] = sq1; orig_sq[1] = sq2; orig_sq[2] = sq3; orig_sq[3] = sq4;
-  orig_sq[4] = sq5; orig_sq[5] = sq6; orig_sq[6] = sq7;
+  orig_sq[0] = sq1; orig_sq[1] = sq2; orig_sq[2] = sq3;
+  orig_sq[3] = sq4; orig_sq[4] = sq5; orig_sq[5] = sq6; orig_sq[6] = sq7;
 
-  if ( region_parity != 0 ) {
+  unsigned int par = quadrant_mask[orig_sq[0]] ^ quadrant_mask[orig_sq[1]] ^
+                     quadrant_mask[orig_sq[2]] ^ quadrant_mask[orig_sq[3]] ^
+                     quadrant_mask[orig_sq[4]] ^ quadrant_mask[orig_sq[5]] ^
+                     quadrant_mask[orig_sq[6]];
+  if ( par != 0 ) {
     int m_even[7];
     int n_odd = 0, n_even = 0;
     int i;
     for ( i = 0; i < 7; i++ ) {
-      if ( quadrant_mask[orig_sq[i]] & region_parity )
+      if ( quadrant_mask[orig_sq[i]] & par )
 	cand[n_odd++] = orig_sq[i];
       else
 	m_even[n_even++] = orig_sq[i];
@@ -526,25 +544,23 @@ solve_seven_empty( BitBoard my_bits,
       }
       FULL_ANDNOT( new_opp_bits, opp_bits, new_my_bits );
       new_disc_diff = -disc_diff - 2 * flipped - 1;
-      region_parity ^= quadrant_mask[m];
 #if USE_SHALLOW_TT
       unsigned int diff1, diff2;
       end_hash_diff( new_my_bits, my_bits, color, m, &diff1, &diff2 );
-      hash1 ^= diff1;
-      hash2 ^= diff2;
+      ts->ts_hash1 ^= diff1;
+      ts->ts_hash2 ^= diff2;
 #endif
-      ev = -solve_six_empty( new_opp_bits, new_my_bits,
+      ev = -solve_six_empty( ts, new_opp_bits, new_my_bits,
 			     rem[0], rem[1], rem[2], rem[3], rem[4], rem[5],
 			     -beta, -alpha, oppcol, new_disc_diff, TRUE );
 #if USE_SHALLOW_TT
-      hash1 ^= diff1;
-      hash2 ^= diff2;
+      ts->ts_hash1 ^= diff1;
+      ts->ts_hash2 ^= diff2;
 #endif
-      region_parity ^= quadrant_mask[m];
       if ( ev >= beta ) {
-	end_best_move = m;
+	ts->ts_end_best_move = m;
 #if USE_SHALLOW_TT
-	add_shallow_hash( ev, m, ENDGAME_SCORE | LOWER_BOUND, 7 );
+	add_shallow_hash( ev, m, ENDGAME_SCORE | LOWER_BOUND, 7, ts );
 #endif
 	return ev;
       }
@@ -566,31 +582,33 @@ solve_seven_empty( BitBoard my_bits,
       return 0;
     }
     else {
-      hash1 ^= hash_flip_color1;
-      hash2 ^= hash_flip_color2;
-      ev = -solve_seven_empty( opp_bits, my_bits,
+      ts->ts_hash1 ^= hash_flip_color1;
+      ts->ts_hash2 ^= hash_flip_color2;
+      ev = -solve_seven_empty( ts, opp_bits, my_bits,
 			       orig_sq[0], orig_sq[1], orig_sq[2], orig_sq[3], orig_sq[4], orig_sq[5], orig_sq[6],
 			       -beta, -alpha, oppcol, -disc_diff, FALSE );
-      hash1 ^= hash_flip_color1;
-      hash2 ^= hash_flip_color2;
+      ts->ts_hash1 ^= hash_flip_color1;
+      ts->ts_hash2 ^= hash_flip_color2;
       return ev;
     }
   }
 
 #if USE_SHALLOW_TT
   if ( score <= in_alpha )
-    add_shallow_hash( score, best_sq, ENDGAME_SCORE | UPPER_BOUND, 7 );
+    add_shallow_hash( score, best_sq, ENDGAME_SCORE | UPPER_BOUND, 7, ts );
   else
-    add_shallow_hash( score, best_sq, ENDGAME_SCORE | EXACT_VALUE, 7 );
+    add_shallow_hash( score, best_sq, ENDGAME_SCORE | EXACT_VALUE, 7, ts );
 #endif
 
+  ts->ts_end_best_move = best_sq;
   return score;
 }
 
 
 
 int
-solve_eight_empty( BitBoard my_bits,
+solve_eight_empty( ThreadState *ts,
+		   BitBoard my_bits,
 		   BitBoard opp_bits,
 		   int sq1,
 		   int sq2,
@@ -615,17 +633,17 @@ solve_eight_empty( BitBoard my_bits,
   int ev;
   int best_sq = 0;
 
-  INCREMENT_COUNTER( nodes );
+  ts->ts_nodes.lo++;
 
 #if USE_SHALLOW_TT
   {
     HashEntry entry;
-    find_shallow_hash( &entry );
+    find_shallow_hash( &entry, ts );
     if ( (entry.draft == 8) && (entry.flags & ENDGAME_SCORE) ) {
       if ( (entry.flags & EXACT_VALUE) ||
 	   ((entry.flags & LOWER_BOUND) && entry.eval >= beta) ||
 	   ((entry.flags & UPPER_BOUND) && entry.eval <= alpha) ) {
-	end_best_move = entry.move[0];
+	ts->ts_end_best_move = entry.move[0];
 	return entry.eval;
       }
     }
@@ -659,13 +677,18 @@ solve_eight_empty( BitBoard my_bits,
   orig_sq[0] = sq1; orig_sq[1] = sq2; orig_sq[2] = sq3; orig_sq[3] = sq4;
   orig_sq[4] = sq5; orig_sq[5] = sq6; orig_sq[6] = sq7; orig_sq[7] = sq8;
 
+  unsigned int par = quadrant_mask[orig_sq[0]] ^ quadrant_mask[orig_sq[1]] ^
+                     quadrant_mask[orig_sq[2]] ^ quadrant_mask[orig_sq[3]] ^
+                     quadrant_mask[orig_sq[4]] ^ quadrant_mask[orig_sq[5]] ^
+                     quadrant_mask[orig_sq[6]] ^ quadrant_mask[orig_sq[7]];
+
   int corners[8], odds[8], evens[8];
   int n_corner = 0, n_odd = 0, n_even = 0;
   for ( i = 0; i < 8; i++ ) {
     int sq = orig_sq[i];
     if ( (1ULL << sq) & CORNER_MASK )
       corners[n_corner++] = sq;
-    else if ( quadrant_mask[sq] & region_parity )
+    else if ( quadrant_mask[sq] & par )
       odds[n_odd++] = sq;
     else
       evens[n_even++] = sq;
@@ -687,25 +710,23 @@ solve_eight_empty( BitBoard my_bits,
       }
       FULL_ANDNOT( new_opp_bits, opp_bits, new_my_bits );
       new_disc_diff = -disc_diff - 2 * flipped - 1;
-      region_parity ^= quadrant_mask[m];
 #if USE_SHALLOW_TT
       unsigned int diff1, diff2;
       end_hash_diff( new_my_bits, my_bits, color, m, &diff1, &diff2 );
-      hash1 ^= diff1;
-      hash2 ^= diff2;
+      ts->ts_hash1 ^= diff1;
+      ts->ts_hash2 ^= diff2;
 #endif
-      ev = -solve_seven_empty( new_opp_bits, new_my_bits,
+      ev = -solve_seven_empty( ts, new_opp_bits, new_my_bits,
 			       rem[0], rem[1], rem[2], rem[3], rem[4], rem[5], rem[6],
 			       -beta, -alpha, oppcol, new_disc_diff, TRUE );
 #if USE_SHALLOW_TT
-      hash1 ^= diff1;
-      hash2 ^= diff2;
+      ts->ts_hash1 ^= diff1;
+      ts->ts_hash2 ^= diff2;
 #endif
-      region_parity ^= quadrant_mask[m];
       if ( ev >= beta ) {
-	end_best_move = m;
+	ts->ts_end_best_move = m;
 #if USE_SHALLOW_TT
-	add_shallow_hash( ev, m, ENDGAME_SCORE | LOWER_BOUND, 8 );
+	add_shallow_hash( ev, m, ENDGAME_SCORE | LOWER_BOUND, 8, ts );
 #endif
 	return ev;
       }
@@ -727,25 +748,26 @@ solve_eight_empty( BitBoard my_bits,
       return 0;
     }
     else {
-      hash1 ^= hash_flip_color1;
-      hash2 ^= hash_flip_color2;
-      ev = -solve_eight_empty( opp_bits, my_bits,
+      ts->ts_hash1 ^= hash_flip_color1;
+      ts->ts_hash2 ^= hash_flip_color2;
+      ev = -solve_eight_empty( ts, opp_bits, my_bits,
 			       orig_sq[0], orig_sq[1], orig_sq[2], orig_sq[3],
 			       orig_sq[4], orig_sq[5], orig_sq[6], orig_sq[7],
 			       -beta, -alpha, oppcol, -disc_diff, FALSE );
-      hash1 ^= hash_flip_color1;
-      hash2 ^= hash_flip_color2;
+      ts->ts_hash1 ^= hash_flip_color1;
+      ts->ts_hash2 ^= hash_flip_color2;
       return ev;
     }
   }
 
 #if USE_SHALLOW_TT
   if ( score <= in_alpha )
-    add_shallow_hash( score, best_sq, ENDGAME_SCORE | UPPER_BOUND, 8 );
+    add_shallow_hash( score, best_sq, ENDGAME_SCORE | UPPER_BOUND, 8, ts );
   else
-    add_shallow_hash( score, best_sq, ENDGAME_SCORE | EXACT_VALUE, 8 );
+    add_shallow_hash( score, best_sq, ENDGAME_SCORE | EXACT_VALUE, 8, ts );
 #endif
 
+  ts->ts_end_best_move = best_sq;
   return score;
 }
 
