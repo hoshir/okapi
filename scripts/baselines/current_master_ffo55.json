@@ -7,23 +7,23 @@
   "threads": 8,
   "hash_bits": 22,
   "exact_solve": 0,
-  "recorded_at": "2026-10-13T18:28:00+09:00",
-  "commit": "opt(endgame): eliminate remaining thread-local variable overhead in leaf solvers",
+  "recorded_at": "2026-10-13T21:11:44+09:00",
+  "commit": "e0509b5",
   "pr": "PR #77 (opt(endgame): eliminate remaining thread-local variable overhead in leaf solvers)",
   "summary": {
     "correct": true,
     "score": "32-32",
     "move": "g6",
     "pv": "g6 h7 e2 f2 h4 g4 d2 c1 e1 g1 f1 d1",
-    "total_time_sec": 133.2,
-    "total_nodes": 11566497361,
-    "average_nps": 86818763,
-    "selective_nodes": 4691578238,
-    "selective_time_sec": 40.563,
-    "selective_nps": 115661520,
-    "exact_nodes": 6838375675,
-    "exact_time_sec": 92.154,
-    "exact_nps": 74205955
+    "total_time_sec": 127.5,
+    "total_nodes": 11542325357,
+    "average_nps": 90528042,
+    "selective_nodes": 4587532775,
+    "selective_time_sec": 37.783,
+    "selective_nps": 121417906,
+    "exact_nodes": 6923699559,
+    "exact_time_sec": 89.283,
+    "exact_nps": 77547792
   },
   "passes": [
     {
@@ -33,9 +33,9 @@
       "center_after": 0,
       "eval": 0,
       "steps": -1,
-      "nodes": 68037137,
-      "time_sec": 0.611,
-      "nps": 111353743
+      "nodes": 83499063,
+      "time_sec": 0.681,
+      "nps": 122612427
     },
     {
       "pass": 1,
@@ -44,9 +44,9 @@
       "center_after": 0,
       "eval": 0,
       "steps": 0,
-      "nodes": 1241007473,
-      "time_sec": 10.714,
-      "nps": 115830453
+      "nodes": 1175075399,
+      "time_sec": 9.496,
+      "nps": 123744250
     },
     {
       "pass": 2,
@@ -55,9 +55,9 @@
       "center_after": 0,
       "eval": 0,
       "steps": 0,
-      "nodes": 1534354736,
-      "time_sec": 11.976,
-      "nps": 128119133
+      "nodes": 1508741353,
+      "time_sec": 12.049,
+      "nps": 125217142
     },
     {
       "pass": 3,
@@ -66,9 +66,9 @@
       "center_after": 0,
       "eval": 0,
       "steps": 0,
-      "nodes": 1848178892,
-      "time_sec": 17.262,
-      "nps": 107066324
+      "nodes": 1820216960,
+      "time_sec": 15.557,
+      "nps": 117003082
     },
     {
       "pass": "exact",
@@ -76,17 +76,17 @@
       "initial_center": 0,
       "final_eval": 0,
       "researches": 0,
-      "nodes": 6838375675,
-      "time_sec": 92.154,
-      "nps": 74205955
+      "nodes": 6923699559,
+      "time_sec": 89.283,
+      "nps": 77547792
     }
   ],
   "raw_pass_diag": [
     "PASS_DIAG: INITIAL_PREDICTION center=2 est=163 scaled=1.27",
-    "PASS_DIAG: empties=29 pass=0 sel=6 center_before=2 center_after=0 eval=0 steps=-1 nodes=68037137 time=0.611s",
-    "PASS_DIAG: empties=29 pass=1 sel=3 center_before=0 center_after=0 eval=0 steps=0 nodes=1241007473 time=10.714s",
-    "PASS_DIAG: empties=29 pass=2 sel=2 center_before=0 center_after=0 eval=0 steps=0 nodes=1534354736 time=11.976s",
-    "PASS_DIAG: empties=29 pass=3 sel=1 center_before=0 center_after=0 eval=0 steps=0 nodes=1848178892 time=17.262s",
-    "PASS_DIAG: empties=29 pass=exact sel=0 initial_center=0 final_eval=0 researches=0 nodes=6838375675 time=92.154s"
+    "PASS_DIAG: empties=29 pass=0 sel=6 center_before=2 center_after=0 eval=0 steps=-1 nodes=83499063 time=0.681s",
+    "PASS_DIAG: empties=29 pass=1 sel=3 center_before=0 center_after=0 eval=0 steps=0 nodes=1175075399 time=9.496s",
+    "PASS_DIAG: empties=29 pass=2 sel=2 center_before=0 center_after=0 eval=0 steps=0 nodes=1508741353 time=12.049s",
+    "PASS_DIAG: empties=29 pass=3 sel=1 center_before=0 center_after=0 eval=0 steps=0 nodes=1820216960 time=15.557s",
+    "PASS_DIAG: empties=29 pass=exact sel=0 initial_center=0 final_eval=0 researches=0 nodes=6923699559 time=89.283s"
   ]
 }
