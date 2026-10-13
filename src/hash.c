@@ -807,7 +807,7 @@ find_hash( HashEntry *entry, int reverse_mode ) {
 */
 
 void REGPARM(1)
-find_shallow_hash( HashEntry *entry ) {
+find_shallow_hash( HashEntry *entry, const ThreadState *ts ) {
   int index;
   unsigned int code1, code2;
   unsigned int k2_raw, k1_p, mv;
@@ -821,8 +821,8 @@ find_shallow_hash( HashEntry *entry ) {
     return;
   }
 
-  code1 = hash2 ^ hash_trans2;
-  code2 = hash1 ^ hash_trans1;
+  code1 = ts->ts_hash2 ^ hash_trans2;
+  code2 = ts->ts_hash1 ^ hash_trans1;
 
   index = code1 & shallow_hash_mask;
 
@@ -857,7 +857,8 @@ void
 add_shallow_hash( int score,
 		  int best,
 		  int flags,
-		  int draft ) {
+		  int draft,
+		  const ThreadState *ts ) {
   unsigned int index;
   unsigned int code1, code2;
   HashEntry entry;
@@ -865,8 +866,8 @@ add_shallow_hash( int score,
   if ( shallow_hash_table == NULL )
     return;
 
-  code1 = hash2 ^ hash_trans2;
-  code2 = hash1 ^ hash_trans1;
+  code1 = ts->ts_hash2 ^ hash_trans2;
+  code2 = ts->ts_hash1 ^ hash_trans1;
 
   index = code1 & shallow_hash_mask;
 

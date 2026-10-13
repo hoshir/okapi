@@ -88,7 +88,19 @@ end_hash_diff( const BitBoard new_my_bits, const BitBoard my_bits,
 }
 
 int
-solve_three_empty( BitBoard my_bits,
+solve_two_empty( ThreadState *ts,
+		 BitBoard my_bits,
+		 BitBoard opp_bits,
+		 int sq1,
+		 int sq2,
+		 int alpha,
+		 int beta,
+		 int disc_diff,
+		 int pass_legal );
+
+int
+solve_three_empty( ThreadState *ts,
+		   BitBoard my_bits,
 		   BitBoard opp_bits,
 		   int sq1,
 		   int sq2,
@@ -99,7 +111,8 @@ solve_three_empty( BitBoard my_bits,
 		   int pass_legal );
 
 int
-solve_four_empty( BitBoard my_bits,
+solve_four_empty( ThreadState *ts,
+		  BitBoard my_bits,
 		  BitBoard opp_bits,
 		  int sq1,
 		  int sq2,
@@ -111,7 +124,8 @@ solve_four_empty( BitBoard my_bits,
 		  int pass_legal );
 
 int
-solve_five_empty( BitBoard my_bits,
+solve_five_empty( ThreadState *ts,
+		  BitBoard my_bits,
 		  BitBoard opp_bits,
 		  int sq1,
 		  int sq2,
@@ -125,7 +139,8 @@ solve_five_empty( BitBoard my_bits,
 		  int pass_legal );
 
 int
-solve_six_empty( BitBoard my_bits,
+solve_six_empty( ThreadState *ts,
+		 BitBoard my_bits,
 		 BitBoard opp_bits,
 		 int sq1,
 		 int sq2,
@@ -140,7 +155,8 @@ solve_six_empty( BitBoard my_bits,
 		 int pass_legal );
 
 int
-solve_seven_empty( BitBoard my_bits,
+solve_seven_empty( ThreadState *ts,
+		   BitBoard my_bits,
 		   BitBoard opp_bits,
 		   int sq1,
 		   int sq2,
@@ -156,7 +172,8 @@ solve_seven_empty( BitBoard my_bits,
 		   int pass_legal );
 
 int
-solve_eight_empty( BitBoard my_bits,
+solve_eight_empty( ThreadState *ts,
+		   BitBoard my_bits,
 		   BitBoard opp_bits,
 		   int sq1,
 		   int sq2,

@@ -192,13 +192,14 @@ void
 clear_shallow_hash( void );
 
 void REGPARM(1)
-find_shallow_hash( HashEntry *entry );
+find_shallow_hash( HashEntry *entry, const ThreadState *ts );
 
 void
 add_shallow_hash( int score,
 		  int best,
 		  int flags,
-		  int draft );
+		  int draft,
+		  const ThreadState *ts );
 
 void dump_tt_distribution( const char *label );
 void reset_tt_stats( void );
