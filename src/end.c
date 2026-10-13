@@ -93,21 +93,30 @@
 
 static int use_presearch_flag = USE_PRESEARCH;
 
+static int cached_use_presearch = -1;
+
 void
 set_use_presearch( int enable ) {
   use_presearch_flag = enable;
+  cached_use_presearch = enable;
 }
 
 int
 get_use_presearch( void ) {
+  if ( cached_use_presearch != -1 ) {
+    return cached_use_presearch;
+  }
   const char *env = getenv( "USE_PRESEARCH" );
   if ( env != NULL ) {
-    return atoi( env ) != 0;
+    cached_use_presearch = (atoi( env ) != 0);
+    return cached_use_presearch;
   }
   if ( getenv( "EDAX_HYBRID" ) != NULL ) {
-    return getenv( "SKIP_PRESEARCH" ) == NULL;
+    cached_use_presearch = (getenv( "SKIP_PRESEARCH" ) == NULL);
+    return cached_use_presearch;
   }
-  return use_presearch_flag;
+  cached_use_presearch = use_presearch_flag;
+  return cached_use_presearch;
 }
 
 typedef struct {
@@ -2183,9 +2192,9 @@ end_search_nws( BitBoard my_bits,
 	       bb_valid_move( entry.move[0], my_bits, opp_bits ) &&
 	       (entry.flags & ENDGAME_SCORE) &&
 	       !(entry.flags & HEURISTIC_PRESEARCH_MOVE);
-    if ( get_use_presearch() && !hash_hit && (entry.draft != NO_HASH_MOVE) &&
+    if ( (entry.flags & HEURISTIC_PRESEARCH_MOVE) && !hash_hit && (entry.draft != NO_HASH_MOVE) &&
 	 bb_valid_move( entry.move[0], my_bits, opp_bits ) &&
-	 (entry.flags & HEURISTIC_PRESEARCH_MOVE) ) {
+	 get_use_presearch() ) {
       presearch_move = entry.move[0];
     }
   }
@@ -2219,7 +2228,10 @@ end_search_nws( BitBoard my_bits,
 
   if ( USE_MPC && (level > 2) && (selectivity > 0) ) {
     int cut;
-    int use_bb_mpc = (getenv( "BITBOARD_MPC" ) != NULL);
+    static int use_bb_mpc = -1;
+    if ( use_bb_mpc == -1 ) {
+      use_bb_mpc = (getenv( "BITBOARD_MPC" ) != NULL);
+    }
     if ( !use_bb_mpc ) {
       sync_board_from_bitboards( my_bits, opp_bits, side_to_move, empties );
     }
@@ -2655,9 +2667,9 @@ end_search_pvs( BitBoard my_bits,
 	       bb_valid_move( entry.move[0], my_bits, opp_bits ) &&
 	       (entry.flags & ENDGAME_SCORE) &&
 	       !(entry.flags & HEURISTIC_PRESEARCH_MOVE);
-    if ( get_use_presearch() && !hash_hit && (entry.draft != NO_HASH_MOVE) &&
+    if ( (entry.flags & HEURISTIC_PRESEARCH_MOVE) && !hash_hit && (entry.draft != NO_HASH_MOVE) &&
 	 bb_valid_move( entry.move[0], my_bits, opp_bits ) &&
-	 (entry.flags & HEURISTIC_PRESEARCH_MOVE) ) {
+	 get_use_presearch() ) {
       presearch_move = entry.move[0];
     }
   }
@@ -2688,7 +2700,10 @@ end_search_pvs( BitBoard my_bits,
   /* Use endgame multi-prob-cut to selectively prune the tree */
   if ( USE_MPC && (level > 2) && (selectivity > 0) ) {
     int cut;
-    int use_bb_mpc = (getenv( "BITBOARD_MPC" ) != NULL);
+    static int use_bb_mpc = -1;
+    if ( use_bb_mpc == -1 ) {
+      use_bb_mpc = (getenv( "BITBOARD_MPC" ) != NULL);
+    }
     if ( !use_bb_mpc ) {
       sync_board_from_bitboards( my_bits, opp_bits, side_to_move, empties );
     }
