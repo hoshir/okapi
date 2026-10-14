@@ -173,13 +173,16 @@ solve_five_empty( ThreadState *ts,
   if ( ((my_bits | opp_bits) & CORNER_MASK) != 0 && (opp_bits & BORDER_MASK) != 0 ) {
     int opp_cnt = non_iterative_popcount( opp_bits );
     if ( alpha >= 0 && (64 - 2 * opp_cnt <= alpha || 64 - 2 * opp_cnt < beta) ) {
-      int stability_bound;
       EdgeIndices edges;
-      stability_bound = 64 - 2 * count_edge_stable_indexed( oppcol, opp_bits, my_bits, &edges );
+      int s_edge = count_edge_stable_indexed( oppcol, opp_bits, my_bits, &edges );
+      int stability_bound = 64 - 2 * s_edge;
       if ( stability_bound <= alpha )
         return alpha;
       if ( edges.bits != 0 && (opp_bits & CENTRAL_MASK) != 0 ) {
-        stability_bound = 64 - 2 * count_stable_indexed( oppcol, opp_bits, my_bits, &edges );
+        int max_stable = s_edge + non_iterative_popcount( opp_bits & CENTRAL_MASK );
+        if ( 64 - 2 * max_stable <= alpha || 64 - 2 * max_stable < beta ) {
+          stability_bound = 64 - 2 * count_stable_indexed( oppcol, opp_bits, my_bits, &edges );
+        }
         if ( stability_bound < beta )
           beta = stability_bound + 1;
         if ( stability_bound <= alpha )
@@ -323,13 +326,16 @@ solve_six_empty( ThreadState *ts,
   if ( ((my_bits | opp_bits) & CORNER_MASK) != 0 && (opp_bits & BORDER_MASK) != 0 ) {
     int opp_cnt = non_iterative_popcount( opp_bits );
     if ( alpha >= 0 && (64 - 2 * opp_cnt <= alpha || 64 - 2 * opp_cnt < beta) ) {
-      int stability_bound;
       EdgeIndices edges;
-      stability_bound = 64 - 2 * count_edge_stable_indexed( oppcol, opp_bits, my_bits, &edges );
+      int s_edge = count_edge_stable_indexed( oppcol, opp_bits, my_bits, &edges );
+      int stability_bound = 64 - 2 * s_edge;
       if ( stability_bound <= alpha )
         return alpha;
       if ( edges.bits != 0 && (opp_bits & CENTRAL_MASK) != 0 ) {
-        stability_bound = 64 - 2 * count_stable_indexed( oppcol, opp_bits, my_bits, &edges );
+        int max_stable = s_edge + non_iterative_popcount( opp_bits & CENTRAL_MASK );
+        if ( 64 - 2 * max_stable <= alpha || 64 - 2 * max_stable < beta ) {
+          stability_bound = 64 - 2 * count_stable_indexed( oppcol, opp_bits, my_bits, &edges );
+        }
         if ( stability_bound < beta )
           beta = stability_bound + 1;
         if ( stability_bound <= alpha )
@@ -487,13 +493,16 @@ solve_seven_empty( ThreadState *ts,
   if ( ((my_bits | opp_bits) & CORNER_MASK) != 0 && (opp_bits & BORDER_MASK) != 0 ) {
     int opp_cnt = non_iterative_popcount( opp_bits );
     if ( alpha >= 0 && (64 - 2 * opp_cnt <= alpha || 64 - 2 * opp_cnt < beta) ) {
-      int stability_bound;
       EdgeIndices edges;
-      stability_bound = 64 - 2 * count_edge_stable_indexed( oppcol, opp_bits, my_bits, &edges );
+      int s_edge = count_edge_stable_indexed( oppcol, opp_bits, my_bits, &edges );
+      int stability_bound = 64 - 2 * s_edge;
       if ( stability_bound <= alpha )
         return alpha;
       if ( edges.bits != 0 && (opp_bits & CENTRAL_MASK) != 0 ) {
-        stability_bound = 64 - 2 * count_stable_indexed( oppcol, opp_bits, my_bits, &edges );
+        int max_stable = s_edge + non_iterative_popcount( opp_bits & CENTRAL_MASK );
+        if ( 64 - 2 * max_stable <= alpha || 64 - 2 * max_stable < beta ) {
+          stability_bound = 64 - 2 * count_stable_indexed( oppcol, opp_bits, my_bits, &edges );
+        }
         if ( stability_bound < beta )
           beta = stability_bound + 1;
         if ( stability_bound <= alpha )
@@ -654,13 +663,16 @@ solve_eight_empty( ThreadState *ts,
   if ( ((my_bits | opp_bits) & CORNER_MASK) != 0 && (opp_bits & BORDER_MASK) != 0 ) {
     int opp_cnt = non_iterative_popcount( opp_bits );
     if ( alpha >= 0 && (64 - 2 * opp_cnt <= alpha || 64 - 2 * opp_cnt < beta) ) {
-      int stability_bound;
       EdgeIndices edges;
-      stability_bound = 64 - 2 * count_edge_stable_indexed( oppcol, opp_bits, my_bits, &edges );
+      int s_edge = count_edge_stable_indexed( oppcol, opp_bits, my_bits, &edges );
+      int stability_bound = 64 - 2 * s_edge;
       if ( stability_bound <= alpha )
         return alpha;
       if ( edges.bits != 0 && (opp_bits & CENTRAL_MASK) != 0 ) {
-        stability_bound = 64 - 2 * count_stable_indexed( oppcol, opp_bits, my_bits, &edges );
+        int max_stable = s_edge + non_iterative_popcount( opp_bits & CENTRAL_MASK );
+        if ( 64 - 2 * max_stable <= alpha || 64 - 2 * max_stable < beta ) {
+          stability_bound = 64 - 2 * count_stable_indexed( oppcol, opp_bits, my_bits, &edges );
+        }
         if ( stability_bound < beta )
           beta = stability_bound + 1;
         if ( stability_bound <= alpha )

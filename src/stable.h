@@ -30,10 +30,6 @@ extern "C" {
 
 
 
-extern _Thread_local BitBoard last_black_stable, last_white_stable;
-
-
-
 typedef struct {
   BitBoard bits;
 } EdgeIndices;
@@ -42,7 +38,7 @@ int
 count_edge_stable_indexed( int color, BitBoard col_bits, BitBoard opp_bits, EdgeIndices *edges );
 
 int
-count_stable_indexed( int color, BitBoard col_bits, BitBoard opp_bits, const EdgeIndices *edges );
+count_stable_indexed( int color, BitBoard col_bits, BitBoard opp_bits, EdgeIndices *edges );
 
 
 void
