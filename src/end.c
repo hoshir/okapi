@@ -3261,9 +3261,10 @@ end_game( int side_to_move,
 
   reset_buffer_display();
 
-  /* Make sure the pre-searches don't mess up the hash table */
+  /* Allow midgame pre-searches to read/write TT (ENDGAME_SCORE entries
+     are strictly protected against MIDGAME_SCORE overwrites in hash.c) */
 
-  toggle_midgame_hash_usage( TRUE, FALSE );
+  toggle_midgame_hash_usage( TRUE, TRUE );
 
   incomplete_search = FALSE;
   any_search_result = FALSE;
@@ -3305,16 +3306,33 @@ end_game( int side_to_move,
     sync_board_from_bitboards( root_my_bits, root_opp_bits, side_to_move, empties );
     int stage = 60 - empties;
     int saved_pv00 = pv[0][0];
-    int ts_val = tree_search( 0, 6, side_to_move, -INFINITE_EVAL, INFINITE_EVAL, TRUE, FALSE, TRUE );
+    int ts_val = 0, ts_val_6 = 0;
+    set_midgame_full_width_depth( 4 );
+    for ( int id_d = 4; id_d <= 8; id_d += 2 ) {
+      sync_board_from_bitboards( root_my_bits, root_opp_bits, side_to_move, empties );
+      ts_val = tree_search( 0, id_d, side_to_move, -INFINITE_EVAL, INFINITE_EVAL,
+                            TRUE, (id_d >= 8), TRUE );
+      if ( id_d == 6 )
+        ts_val_6 = ts_val;
+    }
+    set_midgame_full_width_depth( 0 );
     pv[0][0] = saved_pv00;
-    double bias = 0.0;
+    double bias6 = 0.0, bias8 = 0.0;
     for ( int st = stage; st <= 60; st++ ) {
       if ( end_stats_available[st][6] ) {
-        bias = end_mean[st][6];
+        bias6 = end_mean[st][6];
         break;
       }
     }
-    int rts_adj_val = ts_val - (int) llround( bias * 128.0 );
+    for ( int st = stage; st <= 60; st++ ) {
+      if ( end_stats_available[st][8] ) {
+        bias8 = end_mean[st][8];
+        break;
+      }
+    }
+    int rts_adj_6 = ts_val_6 - (int) llround( bias6 * 128.0 );
+    int rts_adj_8 = ts_val - (int) llround( bias8 * 128.0 );
+    int rts_adj_val = (abs( rts_adj_6 ) >= 14 * 128) ? rts_adj_6 : rts_adj_8;
     last_window_center = end_aspiration_center( rts_adj_val, 60 );
 
     if ( getenv( "PASS_DIAG" ) != NULL ) {
