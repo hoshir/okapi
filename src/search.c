@@ -262,32 +262,8 @@ sort_moves( int list_size ) {
 
 
 /*
-  SELECT_MOVE
-  Finds the best move in the move list neglecting the first FIRST moves.
-  Moves this move to the front of the sub-list.
+  SELECT_MOVE is defined as static ALWAYS_INLINE in search.h
 */
-
-INLINE int
-select_move( int first, int list_size ) {
-  int i;
-  int temp_move;
-  int best, best_eval;
-
-  best = first;
-  best_eval = evals[disks_played][move_list[disks_played][first]];
-  for ( i = first + 1; i < list_size; i++ )
-    if ( evals[disks_played][move_list[disks_played][i]] > best_eval ) {
-      best = i;
-      best_eval = evals[disks_played][move_list[disks_played][i]];
-    }
-  if ( best != first ) {
-    temp_move = move_list[disks_played][first];
-    move_list[disks_played][first] = move_list[disks_played][best];
-    move_list[disks_played][best] = temp_move;
-  }
-
-  return move_list[disks_played][first];
-}
 
 
 

@@ -66,7 +66,7 @@ void
 send_status_time( double elapsed_time );
 
 void
-send_status_pv( int *pv, int max_depth );
+send_status_pv( int *pv_seq, int max_depth );
 
 void
 send_status_nodes( double node_count );
