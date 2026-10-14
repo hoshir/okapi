@@ -1733,6 +1733,10 @@ end_order_moves_presearch( ThreadState *ts,
         (empties < 28) ? 4 : 6;
       if ( d > search_order_maxd )
         d = search_order_maxd;
+      if ( best_list_length == 0 &&
+           ((empties >= 20 && empties <= 22) ||
+            (empties == 23 && level >= 2)) )
+        d += 1;
       int upper = (-curr_alpha + 8) * 128;
       int ff_thr;
       {
@@ -1784,14 +1788,26 @@ end_order_moves_presearch( ThreadState *ts,
         else if ( empties >= 28 ) {
           ev_stage[m] = v;
         }
+        if ( i == 1 && !ts_promoted[0] && !ts_promoted[1] && surv_count >= 3 && d <= 4 )
+          k_limit = 3;
       }
       if ( empties < 28 && k_limit >= 2 && !ts_promoted[0] && !ts_promoted[1] &&
-           (empties < 20 || curr_alpha >= 18) && (ts_vals[1] > ts_vals[0] + 256) ) {
-        int m0 = surv[0].sq, m1 = surv[1].sq;
-        if ( ev_stage[m0] > ev_stage[m1] ) {
-          int tmp_ev = ev_stage[m0];
-          ev_stage[m0] = ev_stage[m1];
-          ev_stage[m1] = tmp_ev;
+           (k_limit < 3 || !ts_promoted[2]) && (empties < 20 || curr_alpha >= 18) ) {
+        int best_k = 1;
+        int max_v = ts_vals[1];
+        for ( i = 2; i < k_limit; i++ ) {
+          if ( ts_vals[i] > max_v ) {
+            max_v = ts_vals[i];
+            best_k = i;
+          }
+        }
+        if ( max_v > ts_vals[0] + 256 ) {
+          int m0 = surv[0].sq, mb = surv[best_k].sq;
+          if ( ev_stage[m0] > ev_stage[mb] ) {
+            int tmp_ev = ev_stage[m0];
+            ev_stage[m0] = ev_stage[mb];
+            ev_stage[mb] = tmp_ev;
+          }
         }
       }
     }
