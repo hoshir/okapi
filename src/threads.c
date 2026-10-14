@@ -25,6 +25,9 @@
 
 
 #include <pthread.h>
+#ifdef __APPLE__
+#include <pthread/qos.h>
+#endif
 #include <stdlib.h>
 
 #include "constant.h"
@@ -130,6 +133,29 @@ static _Thread_local int nesting;
    parallel search was doing.  Written under the pool lock. */
 static CounterType pooled_nodes;
 
+
+
+static int
+ybwc_has_stealable_work( int my_id ) {
+  int i;
+  int num_t = thread_count;
+
+  for ( i = 0; i < num_t; i++ ) {
+    if ( i == my_id )
+      continue;
+    SplitPoint *sp = atomic_load_explicit( &thread_split[i], memory_order_acquire );
+    if ( sp == NULL )
+      continue;
+    if ( atomic_load_explicit( &sp->cutoff_occurred, memory_order_relaxed ) )
+      continue;
+    if ( atomic_load_explicit( &sp->alpha, memory_order_relaxed ) >= sp->beta )
+      continue;
+    if ( atomic_load_explicit( &sp->next_move_idx, memory_order_relaxed ) >= sp->move_count )
+      continue;
+    return TRUE;
+  }
+  return FALSE;
+}
 
 
 /*
@@ -248,8 +274,12 @@ ybwc_split( SplitPoint *sp ) {
   // 1. Publish split point for helpers to steal from
   atomic_store_explicit( &thread_split[my_id], sp, memory_order_seq_cst );
 
-  // 2. Wake up idle worker threads
-  pthread_cond_broadcast( &pool.change );
+  // 2. Wake up parked worker threads without racing against pthread_cond_wait
+  if ( atomic_load_explicit( &idle_count, memory_order_seq_cst ) > 0 ) {
+    pthread_mutex_lock( &pool.lock );
+    pthread_cond_broadcast( &pool.change );
+    pthread_mutex_unlock( &pool.lock );
+  }
 
   // 3. Master thread steals and searches moves from its own split point
   SplitPoint *saved_sp = current_split_point;
@@ -379,6 +409,9 @@ worker_main( void *arg ) {
   int my_id = (int)(intptr_t) arg;
   thread_id = my_id;
   is_worker = TRUE;
+#ifdef __APPLE__
+  pthread_set_qos_class_self_np( QOS_CLASS_USER_INTERACTIVE, 0 );
+#endif
   init_search_thread();
 
   while ( !pool.shutting_down ) {
@@ -423,7 +456,12 @@ worker_main( void *arg ) {
 
     // 4. Park when no work exists
     if ( !pool.shutting_down ) {
-      atomic_fetch_add_explicit( &idle_count, 1, memory_order_relaxed );
+      atomic_fetch_add_explicit( &idle_count, 1, memory_order_seq_cst );
+      if ( active_splits > 0 && ybwc_has_stealable_work( my_id ) ) {
+        atomic_fetch_sub_explicit( &idle_count, 1, memory_order_relaxed );
+        pthread_mutex_unlock( &pool.lock );
+        continue;
+      }
       pthread_cond_wait( &pool.change, &pool.lock );
       atomic_fetch_sub_explicit( &idle_count, 1, memory_order_relaxed );
     }
@@ -440,6 +478,9 @@ threads_init( int count ) {
   int i;
 
   thread_id = 0;
+#ifdef __APPLE__
+  pthread_set_qos_class_self_np( QOS_CLASS_USER_INTERACTIVE, 0 );
+#endif
 
   if ( count < 1 )
     count = 1;

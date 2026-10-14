@@ -1,8 +1,62 @@
 {
+  "verdict": "NEEDS_FULL",
+  "reason": "Screening showed promising node reduction (-7.51%). Proceed to --mode full.",
+  "tests_passed": true,
+  "all_correct": true,
   "mode": "screen",
   "threads": 8,
   "hash_bits": 22,
-  "created_at": "2026-10-13T12:08:06Z",
+  "simplification_mode": false,
+  "baseline_stale": true,
+  "provenance": {
+    "commit": "02f1351bfb9a0ac02d4781050d16f56133525818",
+    "src_dirty": true,
+    "binary_mtime": 1791989466.474714,
+    "written_at": 1791990371.5931451,
+    "argv": [
+      "scripts/eval_candidate.py",
+      "--mode",
+      "screen",
+      "--threads",
+      "8",
+      "--hash-bits",
+      "22",
+      "--skip-tests",
+      "--save-json",
+      "scripts/baselines/master_screen_t8_h22.json"
+    ]
+  },
+  "heavy_threshold": 3.0,
+  "totals": {
+    "total_nodes": 714423968,
+    "total_time": 9.5
+  },
+  "summary": {
+    "total_candidate_nodes": 714423968,
+    "total_baseline_nodes": 772414136,
+    "total_node_delta_pct": -7.51,
+    "total_candidate_time": 9.5,
+    "total_baseline_time": 9.1,
+    "total_time_delta_pct": 4.4
+  },
+  "comparison": {
+    "FFO #45": {
+      "candidate_nodes": 225424931,
+      "baseline_nodes": 231755561,
+      "node_delta_pct": -2.73,
+      "candidate_time": 2.5,
+      "baseline_time": 2.1,
+      "time_delta_pct": 19.05
+    },
+    "FFO #50": {
+      "candidate_nodes": 488999037,
+      "baseline_nodes": 540658575,
+      "node_delta_pct": -9.55,
+      "candidate_time": 7.0,
+      "baseline_time": 7.0,
+      "time_delta_pct": 0.0
+    }
+  },
   "results": {
     "FFO #45": {
       "correct": true,
@@ -12,9 +66,9 @@
       "expected_moves": [
         "b2"
       ],
-      "nodes": 231755561,
-      "time_sec": 2.1,
-      "nps": 111579998,
+      "nodes": 225424931,
+      "time_sec": 2.5,
+      "nps": 89159792,
       "error": null
     },
     "FFO #50": {
@@ -25,9 +79,9 @@
       "expected_moves": [
         "d8"
       ],
-      "nodes": 540658575,
+      "nodes": 488999037,
       "time_sec": 7.0,
-      "nps": 76791265,
+      "nps": 69667242,
       "error": null
     }
   }
