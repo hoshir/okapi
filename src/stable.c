@@ -44,26 +44,35 @@
 
 
 
-/* Global variables */
-
-/* All discs determined as stable last time COUNT_STABLE was called
-   for the two colors */
-_Thread_local BitBoard last_black_stable, last_white_stable;
-
-
-
 /* Local variables */
 
 /* Direct 64 KB lookup table mapping player & opponent 8-bit edge patterns to player's stable discs */
 static uint8_t edge_stable_table[256 * 256];
+static BitBoard unpack_fileA_table[256];
 
 
 
 /*
-  GET_FULL_LINES
-  Computes the bitboard of squares whose line along DIR is completely filled
-  with occupied discs from border to border using Kogge-Stone parallel prefix.
+  FULL_STABILITY_H / FULL_STABILITY_V / GET_FULL_LINES
+  Computes the bitboards of squares whose horizontal, vertical, or diagonal
+  lines are completely filled with occupied discs from border to border.
 */
+
+static INLINE BitBoard
+full_stability_h( BitBoard full ) {
+  full &= full >> 1;
+  full &= full >> 2;
+  full &= full >> 4;
+  return (full & 0x0101010101010101ull) * 0xFFull;
+}
+
+static INLINE BitBoard
+full_stability_v( BitBoard full ) {
+  full &= (full >> 8) | (full << 56);
+  full &= (full >> 16) | (full << 48);
+  full &= (full >> 32) | (full << 32);
+  return full;
+}
 
 static INLINE BitBoard
 get_full_lines( BitBoard line, int dir ) {
@@ -102,12 +111,20 @@ edge_zardoz_stable( BitBoard *ss,
     return;
 
   const BitBoard disc = dd | od;
-  const BitBoard full_h = get_full_lines( disc, 1 );
-  const BitBoard full_v = get_full_lines( disc, 8 );
+  const BitBoard full_h = full_stability_h( disc );
+  const BitBoard full_v = full_stability_v( disc );
+
+  BitBoard s0 = *ss;
+  BitBoard hv_cand = ((s0 >> 1) | (s0 << 1) | full_h)
+                   & ((s0 >> 8) | (s0 << 8) | full_v)
+                   & central_mask;
+  if ( hv_cand == 0 )
+    return;
+
   const BitBoard full_d7 = get_full_lines( disc, 7 );
   const BitBoard full_d9 = get_full_lines( disc, 9 );
 
-  BitBoard new_stable = *ss | (full_h & full_v & full_d7 & full_d9 & central_mask);
+  BitBoard new_stable = s0 | (full_h & full_v & full_d7 & full_d9 & central_mask);
 
   BitBoard stable = 0;
   while ( (new_stable & ~stable) != 0 ) {
@@ -128,13 +145,6 @@ INLINE static BitBoard
 unpack_fileA( unsigned int t ) {
   BitBoard b = (((t & 0x0Fu) * 0x00204081u) & 0x01010101u);
   b |= ((BitBoard)(((t >> 4) * 0x00204081u) & 0x01010101u)) << 32;
-  return b;
-}
-
-INLINE static BitBoard
-unpack_fileH( unsigned int t ) {
-  BitBoard b = (((t & 0x0Fu) * 0x10204080u) & 0x80808080u);
-  b |= ((BitBoard)(((t >> 4) * 0x10204080u) & 0x80808080u)) << 32;
   return b;
 }
 
@@ -165,8 +175,8 @@ count_edge_stable_indexed( int color,
 
   BitBoard st = (BitBoard) edge_stable_table[p_r1 | (o_r1 << 8)]
               | ((BitBoard) edge_stable_table[p_r8 | (o_r8 << 8)] << 56)
-              | unpack_fileA( edge_stable_table[p_fA | (o_fA << 8)] )
-              | unpack_fileH( edge_stable_table[p_fH | (o_fH << 8)] );
+              | unpack_fileA_table[edge_stable_table[p_fA | (o_fA << 8)]]
+              | (unpack_fileA_table[edge_stable_table[p_fH | (o_fH << 8)]] << 7);
 
   edges->bits = st;
   return non_iterative_popcount( st );
@@ -179,24 +189,23 @@ count_edge_stable_indexed( int color,
 
 /*
   COUNT_STABLE_INDEXED
-  Returns the number of stable discs for COLOR given the calculated EDGES.
+  Returns the number of stable discs for COLOR given the calculated EDGES,
+  and updates edges->bits with the full stable disc mask.
 */
 
 int
 count_stable_indexed( int color,
 		      BitBoard col_bits,
 		      BitBoard opp_bits,
-		      const EdgeIndices *edges ) {
+		      EdgeIndices *edges ) {
+  (void) color;
   BitBoard col_stable = edges->bits;
 
   /* Expand the stable edge discs into a full set of stable discs */
-  if ( (col_bits & CENTRAL_MASK) != 0 )
+  if ( (col_bits & CENTRAL_MASK) != 0 ) {
     edge_zardoz_stable( &col_stable, col_bits, opp_bits );
-
-  if ( color == BLACKSQ )
-    last_black_stable = col_stable;
-  else
-    last_white_stable = col_stable;
+    edges->bits = col_stable;
+  }
 
   return non_iterative_popcount( col_stable );
 }
@@ -336,6 +345,7 @@ init_stable( void ) {
   int i, j, p, o;
 
   for ( i = 0; i < 256; i++ ) {
+    unpack_fileA_table[i] = unpack_fileA( (unsigned int) i );
     base_conv[i] = 0;
     for ( j = 0; j < 8; j++ )
       if ( i & (1 << j) )

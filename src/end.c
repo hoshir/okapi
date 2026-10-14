@@ -729,15 +729,15 @@ probe_forced_reply_cutoff( int cand_sq,
 	EdgeIndices edges;
 	int s_edge = count_edge_stable_indexed( OPP( cur_side ), cur_opp_bits, cur_my_bits, &edges );
 	int bound = 2 * s_edge - 64;
-	if ( OPP( cur_side) == side_to_move ) {
+	if ( OPP( cur_side ) == side_to_move ) {
 	  /* side_to_move score is >= bound */
 	  if ( bound >= beta ) {
 	    *cutoff_score = bound;
 	    return FORCED_CUTOFF;
 	  }
 	  if ( edges.bits != 0 && (cur_opp_bits & CENTRAL_MASK) != 0 ) {
-	    int cnt = non_iterative_popcount( cur_opp_bits );
-	    if ( 2 * cnt - 64 >= beta ) {
+	    int max_stable = s_edge + non_iterative_popcount( cur_opp_bits & CENTRAL_MASK );
+	    if ( 2 * max_stable - 64 >= beta ) {
 	      int s_full = count_stable_indexed( OPP( cur_side ), cur_opp_bits, cur_my_bits, &edges );
 	      bound = 2 * s_full - 64;
 	      if ( bound >= beta ) {
@@ -753,8 +753,8 @@ probe_forced_reply_cutoff( int cand_sq,
 	    return FORCED_REFUTED;
 	  }
 	  if ( edges.bits != 0 && (cur_opp_bits & CENTRAL_MASK) != 0 ) {
-	    int cnt = non_iterative_popcount( cur_opp_bits );
-	    if ( -(2 * cnt - 64) <= alpha ) {
+	    int max_stable = s_edge + non_iterative_popcount( cur_opp_bits & CENTRAL_MASK );
+	    if ( -(2 * max_stable - 64) <= alpha ) {
 	      int s_full = count_stable_indexed( OPP( cur_side ), cur_opp_bits, cur_my_bits, &edges );
 	      bound = 2 * s_full - 64;
 	      if ( -bound <= alpha ) {
@@ -1439,28 +1439,36 @@ end_order_moves_presearch( int level,
   }
 
   /* Phase 0: Immediate stability cutoff scan across all candidate moves (pure bitboard table, ~3ns per move) */
-  for ( i = 0; i < candidate_count; i++ ) {
-    BitBoard child_my_bits = candidates[i].child_my_bits;
-    FULL_ANDNOT( new_opp_bits, opp_bits, candidates[i].flips );
-    EdgeIndices edges;
-    int my_edge_stable = count_edge_stable_indexed( side_to_move, child_my_bits, new_opp_bits, &edges );
-    int lower_bound = 2 * my_edge_stable - 64;
-    if ( lower_bound >= beta ) {
-      *etc_tried_ptr = candidates[i].sq;
-      *etc_cutoff_score = lower_bound;
-      if ( selectivity == 0 ) order_diag_exact.nws_stability_cutoffs++;
-      return TRUE;
-    }
-    if ( edges.bits != 0 && (child_my_bits & CENTRAL_MASK) != 0 ) {
-      int my_cnt = non_iterative_popcount( child_my_bits );
-      if ( 2 * my_cnt - 64 >= beta ) {
-        int s_full = count_stable_indexed( side_to_move, child_my_bits, new_opp_bits, &edges );
-        lower_bound = 2 * s_full - 64;
-        if ( lower_bound >= beta ) {
-          *etc_tried_ptr = candidates[i].sq;
-          *etc_cutoff_score = lower_bound;
-          if ( selectivity == 0 ) order_diag_exact.nws_stability_cutoffs++;
-          return TRUE;
+  if ( ((my_bits | opp_bits) & CORNER_MASK) != 0 || ((my_bits | opp_bits) & BORDER_MASK) != 0 ) {
+    int my_base_cnt = non_iterative_popcount( my_bits );
+    for ( i = 0; i < candidate_count; i++ ) {
+      int my_cnt = my_base_cnt + 1 + candidates[i].flipped;
+      if ( 2 * my_cnt - 64 < beta )
+        continue;
+      BitBoard child_my_bits = candidates[i].child_my_bits;
+      if ( (child_my_bits & BORDER_MASK) == 0 )
+        continue;
+      FULL_ANDNOT( new_opp_bits, opp_bits, candidates[i].flips );
+      EdgeIndices edges;
+      int my_edge_stable = count_edge_stable_indexed( side_to_move, child_my_bits, new_opp_bits, &edges );
+      int lower_bound = 2 * my_edge_stable - 64;
+      if ( lower_bound >= beta ) {
+        *etc_tried_ptr = candidates[i].sq;
+        *etc_cutoff_score = lower_bound;
+        if ( selectivity == 0 ) order_diag_exact.nws_stability_cutoffs++;
+        return TRUE;
+      }
+      if ( edges.bits != 0 && (child_my_bits & CENTRAL_MASK) != 0 ) {
+        int max_stable = my_edge_stable + non_iterative_popcount( child_my_bits & CENTRAL_MASK );
+        if ( 2 * max_stable - 64 >= beta ) {
+          int s_full = count_stable_indexed( side_to_move, child_my_bits, new_opp_bits, &edges );
+          lower_bound = 2 * s_full - 64;
+          if ( lower_bound >= beta ) {
+            *etc_tried_ptr = candidates[i].sq;
+            *etc_cutoff_score = lower_bound;
+            if ( selectivity == 0 ) order_diag_exact.nws_stability_cutoffs++;
+            return TRUE;
+          }
         }
       }
     }
@@ -2229,12 +2237,15 @@ end_search_nws( BitBoard my_bits,
         return alpha;
       }
       if ( edges.bits != 0 && (opp_bits & CENTRAL_MASK) != 0 ) {
-        int s_full = count_stable_indexed( oppcol, opp_bits, my_bits, &edges );
-        if ( level <= MAX_SEARCH_DEPTH )
-          tls.stable_discs[oppcol][level] |= (oppcol == BLACKSQ ? last_black_stable : last_white_stable);
-        upper_bound = 64 - 2 * s_full;
-        if ( upper_bound <= alpha ) {
-          return alpha;
+        int max_stable = s_edge + non_iterative_popcount( opp_bits & CENTRAL_MASK );
+        if ( 64 - 2 * max_stable <= alpha ) {
+          int s_full = count_stable_indexed( oppcol, opp_bits, my_bits, &edges );
+          if ( level <= MAX_SEARCH_DEPTH )
+            tls.stable_discs[oppcol][level] |= edges.bits;
+          upper_bound = 64 - 2 * s_full;
+          if ( upper_bound <= alpha ) {
+            return alpha;
+          }
         }
       }
     }
@@ -2253,12 +2264,15 @@ end_search_nws( BitBoard my_bits,
         return lower_bound;
       }
       if ( edges.bits != 0 && (my_bits & CENTRAL_MASK) != 0 ) {
-        int s_full = count_stable_indexed( side_to_move, my_bits, opp_bits, &edges );
-        if ( level <= MAX_SEARCH_DEPTH )
-          tls.stable_discs[side_to_move][level] |= (side_to_move == BLACKSQ ? last_black_stable : last_white_stable);
-        lower_bound = 2 * s_full - 64;
-        if ( lower_bound >= beta ) {
-          return lower_bound;
+        int max_stable = s_edge + non_iterative_popcount( my_bits & CENTRAL_MASK );
+        if ( 2 * max_stable - 64 >= beta ) {
+          int s_full = count_stable_indexed( side_to_move, my_bits, opp_bits, &edges );
+          if ( level <= MAX_SEARCH_DEPTH )
+            tls.stable_discs[side_to_move][level] |= edges.bits;
+          lower_bound = 2 * s_full - 64;
+          if ( lower_bound >= beta ) {
+            return lower_bound;
+          }
         }
       }
     }
@@ -2668,7 +2682,7 @@ end_search_pvs( BitBoard my_bits,
       if ( edges.bits != 0 && (opp_bits & CENTRAL_MASK) != 0 ) {
         int s_full = count_stable_indexed( oppcol, opp_bits, my_bits, &edges );
         if ( level <= MAX_SEARCH_DEPTH )
-          tls.stable_discs[oppcol][level] |= (oppcol == BLACKSQ ? last_black_stable : last_white_stable);
+          tls.stable_discs[oppcol][level] |= edges.bits;
         upper_bound = 64 - 2 * s_full;
         if ( upper_bound <= alpha ) {
           pv_depth[level] = level;
@@ -2702,7 +2716,7 @@ end_search_pvs( BitBoard my_bits,
       if ( edges.bits != 0 && (my_bits & CENTRAL_MASK) != 0 ) {
         int s_full = count_stable_indexed( side_to_move, my_bits, opp_bits, &edges );
         if ( level <= MAX_SEARCH_DEPTH )
-          tls.stable_discs[side_to_move][level] |= (side_to_move == BLACKSQ ? last_black_stable : last_white_stable);
+          tls.stable_discs[side_to_move][level] |= edges.bits;
         lower_bound = 2 * s_full - 64;
         if ( lower_bound >= beta ) {
           pv_depth[level] = level;
@@ -3176,11 +3190,11 @@ end_tree_wrapper( int level,
 
     (void) count_edge_stable_indexed( BLACKSQ, b_bits, w_bits, &eb );
     (void) count_stable_indexed( BLACKSQ, b_bits, w_bits, &eb );
-    tls.stable_discs[BLACKSQ][0] = last_black_stable;
+    tls.stable_discs[BLACKSQ][0] = eb.bits;
 
     (void) count_edge_stable_indexed( WHITESQ, w_bits, b_bits, &ew );
     (void) count_stable_indexed( WHITESQ, w_bits, b_bits, &ew );
-    tls.stable_discs[WHITESQ][0] = last_white_stable;
+    tls.stable_discs[WHITESQ][0] = ew.bits;
   }
   else if ( level <= MAX_SEARCH_DEPTH ) {
     tls.stable_discs[BLACKSQ][level] = 0;
