@@ -21,7 +21,7 @@ BitBoard square_mask[100];
 BitBoard neighborhood_mask[100];
 int bit_position[100];
 int square_of_bit[64];
-FlipRays flip_rays[64];
+FlipRays flip_rays[100];
 
 
 
@@ -99,18 +99,23 @@ init_bitboard( void ) {
   for ( i = 1; i <= 8; i++ )
     for ( j = 1; j <= 8; j++ ) {
       int pos = 10 * i + j;
-      FlipRays *r = &flip_rays[8 * (i - 1) + (j - 1)];
+      FlipRays *r = &flip_rays[pos];
       for ( k = 0; k < 8; k++ ) {
 	BitBoard ray = 0;
 	int ci = i + dir_di[k];
 	int cj = j + dir_dj[k];
-	if ( (ci >= 1) && (ci <= 8) && (cj >= 1) && (cj <= 8) ) {
+	int ci2 = ci + dir_di[k];
+	int cj2 = cj + dir_dj[k];
+	/* A flip along direction k requires at least 2 squares on the board
+	   (one opponent disc at (ci, cj) and at least one bracketing square
+	   at or beyond (ci2, cj2)). */
+	if ( (ci2 >= 1) && (ci2 <= 8) && (cj2 >= 1) && (cj2 <= 8) ) {
 	  neighborhood_mask[pos] |= 1ull << (8 * (ci - 1) + (cj - 1));
-	}
-	while ( (ci >= 1) && (ci <= 8) && (cj >= 1) && (cj <= 8) ) {
-	  ray |= 1ull << (8 * (ci - 1) + (cj - 1));
-	  ci += dir_di[k];
-	  cj += dir_dj[k];
+	  while ( (ci >= 1) && (ci <= 8) && (cj >= 1) && (cj <= 8) ) {
+	    ray |= 1ull << (8 * (ci - 1) + (cj - 1));
+	    ci += dir_di[k];
+	    cj += dir_dj[k];
+	  }
 	}
 	if ( k < 4 )
 	  r->dn[k] = ray;
@@ -119,6 +124,3 @@ init_bitboard( void ) {
       }
     }
 }
-
-
-

@@ -2,7 +2,27 @@
   "mode": "screen",
   "threads": 1,
   "hash_bits": 22,
-  "created_at": "2026-10-13T12:07:57Z",
+  "created_at": "2026-10-14T02:44:52Z",
+  "provenance": {
+    "commit": "793a8949a664ebb0efab578072a32fd54fb3598d",
+    "src_dirty": true,
+    "binary_mtime": 1791943970.8296452,
+    "written_at": 1791945892.7255769,
+    "argv": [
+      "./scripts/eval_candidate.py",
+      "--mode",
+      "screen",
+      "--threads",
+      "1",
+      "--hash-bits",
+      "22",
+      "--skip-tests",
+      "--save-baseline",
+      "scripts/baselines/master_screen_t1_h22.json",
+      "--save-json",
+      "scripts/baselines/baseline_screen_t1.json"
+    ]
+  },
   "results": {
     "FFO #45": {
       "correct": true,
@@ -12,9 +32,9 @@
       "expected_moves": [
         "b2"
       ],
-      "nodes": 204044825,
-      "time_sec": 8.5,
-      "nps": 24141480,
+      "nodes": 203615944,
+      "time_sec": 7.3,
+      "nps": 28057682,
       "error": null
     },
     "FFO #50": {
@@ -25,9 +45,9 @@
       "expected_moves": [
         "d8"
       ],
-      "nodes": 492049198,
-      "time_sec": 29.2,
-      "nps": 16864719,
+      "nodes": 489782604,
+      "time_sec": 25.4,
+      "nps": 19265825,
       "error": null
     }
   }

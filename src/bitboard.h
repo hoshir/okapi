@@ -82,7 +82,7 @@ typedef struct {
   BitBoard up[4];
 } FlipRays;
 
-extern FlipRays flip_rays[64];
+extern FlipRays flip_rays[100];
 
 
 

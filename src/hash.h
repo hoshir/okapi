@@ -126,6 +126,8 @@ extern unsigned int hash_put_value2[3][128];
 /* XORs of hash_value* - used for disk flipping. */
 extern unsigned int hash_flip1[128];
 extern unsigned int hash_flip2[128];
+extern unsigned long long hash_flip_bit[64];
+extern unsigned long long hash_put_packed[3][128];
 
 /* 64-bit hash mask for the two different sides to move. */
 extern unsigned int hash_color1[3];

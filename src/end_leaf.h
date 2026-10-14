@@ -69,22 +69,17 @@ static INLINE void
 end_hash_diff( const BitBoard new_my_bits, const BitBoard my_bits,
 	       int color, int sq,
 	       unsigned int *diff1, unsigned int *diff2 ) {
-  BitBoard fl;
-  int bit, index;
-  unsigned int d1 = hash_put_value1[color][sq];
-  unsigned int d2 = hash_put_value2[color][sq];
+  BitBoard fl = (new_my_bits ^ my_bits) & ~square_mask[sq];
+  unsigned long long d = hash_put_packed[color][sq];
 
-  fl = (new_my_bits ^ my_bits) & ~square_mask[sq];
   while ( fl != 0 ) {
-    bit = FIRST_BIT( fl );
+    int bit = FIRST_BIT( fl );
     fl &= fl - 1;
-    index = 10 * (bit / 8 + 1) + (bit % 8) + 1;
-    d1 ^= hash_flip1[index];
-    d2 ^= hash_flip2[index];
+    d ^= hash_flip_bit[bit];
   }
 
-  *diff1 = d1;
-  *diff2 = d2;
+  *diff1 = (unsigned int) d;
+  *diff2 = (unsigned int) (d >> 32);
 }
 
 int
