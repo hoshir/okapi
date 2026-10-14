@@ -40,6 +40,9 @@ void
 toggle_midgame_hash_usage( int allow_read, int allow_write );
 
 void
+set_midgame_full_width_depth( int depth );
+
+void
 clear_midgame_abort( void );
 
 int

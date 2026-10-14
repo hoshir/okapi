@@ -74,8 +74,9 @@
 
 
 
-static _Thread_local int allow_midgame_hash_probe;
+static _Thread_local int allow_midgame_hash_probe = TRUE;
 static _Thread_local int allow_midgame_hash_update;
+static _Thread_local int midgame_full_width_depth = FULL_WIDTH_DEPTH;
 static _Thread_local int best_mid_move, best_mid_root_move;
 static _Thread_local int midgame_abort;
 static _Thread_local int do_check_midgame_abort = TRUE;
@@ -103,6 +104,7 @@ setup_midgame( void ) {
 
   allow_midgame_hash_probe = TRUE;
   allow_midgame_hash_update = TRUE;
+  midgame_full_width_depth = FULL_WIDTH_DEPTH;
   for ( i = 0; i <= 61; i++ )
     stage_reached[i] = FALSE;
 
@@ -152,6 +154,11 @@ void
 toggle_midgame_hash_usage( int allow_read, int allow_write ) {
   allow_midgame_hash_probe = allow_read;
   allow_midgame_hash_update = allow_write;
+}
+
+void
+set_midgame_full_width_depth( int depth ) {
+  midgame_full_width_depth = (depth > 0) ? depth : FULL_WIDTH_DEPTH;
 }
 
 
@@ -680,7 +687,7 @@ tree_search( int level,
 	 being less than some predefined constant */
 
       shallow_remains = mpc_cut[remains].cut_depth[cut];
-      if ( level + shallow_remains < FULL_WIDTH_DEPTH )
+      if ( level + shallow_remains < midgame_full_width_depth )
 	continue;
 
       if  ( shallow_remains > 1 ) {  /* "Deep" shallow search */
