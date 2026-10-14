@@ -1751,6 +1751,8 @@ end_order_moves_presearch( ThreadState *ts,
       int k_limit = search_order_topk;
       if ( k_limit > surv_count )
         k_limit = surv_count;
+      int ts_vals[4] = { 0, 0, 0, 0 };
+      int ts_promoted[4] = { 0, 0, 0, 0 };
       for ( i = 0; i < k_limit; i++ ) {
         int m = surv[i].sq;
         unsigned int saved_parity = ts->ts_region_parity;
@@ -1767,14 +1769,30 @@ end_order_moves_presearch( ThreadState *ts,
         ts->ts_hash2 ^= diff2;
         ts->ts_disks_played = 60 - empties;
         ts->ts_region_parity = saved_parity;
+        if ( i < 4 )
+          ts_vals[i] = v;
 
         if ( v > ff_thr ) {
           int mob = non_iterative_popcount( surv[i].opp_moves );
           int wipe = (v > WIPEOUT_THRESHOLD * 128);
           v += wipe ? 2000000 : 1000000;
           v -= (wipe ? 2 : 1) * 460 * search_order_fastw / 8 * mob;
+          ev_stage[m] = v;
+          if ( i < 4 )
+            ts_promoted[i] = 1;
         }
-        ev_stage[m] = v;
+        else if ( empties >= 28 ) {
+          ev_stage[m] = v;
+        }
+      }
+      if ( empties < 28 && k_limit >= 2 && !ts_promoted[0] && !ts_promoted[1] &&
+           (empties < 20 || curr_alpha >= 18) && (ts_vals[1] > ts_vals[0] + 256) ) {
+        int m0 = surv[0].sq, m1 = surv[1].sq;
+        if ( ev_stage[m0] > ev_stage[m1] ) {
+          int tmp_ev = ev_stage[m0];
+          ev_stage[m0] = ev_stage[m1];
+          ev_stage[m1] = tmp_ev;
+        }
       }
     }
   }
@@ -3268,9 +3286,24 @@ end_game( int side_to_move,
 
     last_window_center = end_aspiration_center( (int)(scaled * 128.0), 60 );
 
+    sync_board_from_bitboards( root_my_bits, root_opp_bits, side_to_move, empties );
+    int stage = 60 - empties;
+    int saved_pv00 = pv[0][0];
+    int ts_val = tree_search( 0, 6, side_to_move, -INFINITE_EVAL, INFINITE_EVAL, TRUE, FALSE, TRUE );
+    pv[0][0] = saved_pv00;
+    double bias = 0.0;
+    for ( int st = stage; st <= 60; st++ ) {
+      if ( end_stats_available[st][6] ) {
+        bias = end_mean[st][6];
+        break;
+      }
+    }
+    int rts_adj_val = ts_val - (int) llround( bias * 128.0 );
+    last_window_center = end_aspiration_center( rts_adj_val, 60 );
+
     if ( getenv( "PASS_DIAG" ) != NULL ) {
-      fprintf( stderr, "PASS_DIAG: INITIAL_PREDICTION center=%d est=%d scaled=%.2f\n",
-               last_window_center, est, scaled );
+      fprintf( stderr, "PASS_DIAG: INITIAL_PREDICTION center=%d est=%d scaled=%.2f ts_val=%d rts_adj_val=%d\n",
+               last_window_center, est, scaled, ts_val, rts_adj_val );
     }
   }
 
