@@ -141,6 +141,9 @@ void
 determine_pattern_indices( void );
 
 void
+determine_pattern_indices_bitboard( BitBoard b_bits, BitBoard w_bits );
+
+void
 update_pattern_indices( int color, int move, BitBoard flipped, int dir );
 
 void
