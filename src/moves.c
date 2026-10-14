@@ -184,20 +184,19 @@ game_in_progress( void ) {
 static INLINE void
 apply_flips( BitBoard mask, int side_to_move, int update_hash,
 	     unsigned int *diff1, unsigned int *diff2 ) {
-  unsigned int d1 = 0, d2 = 0;
+  unsigned long long h_acc = 0;
 
   while ( mask != 0 ) {
-    int sq = square_of_bit[FIRST_BIT( mask )];
+    int bit = FIRST_BIT( mask );
     mask &= mask - 1;
+    int sq = square_of_bit[bit];
     board[sq] = side_to_move;
-    if ( update_hash ) {
-      d1 ^= hash_flip1[sq];
-      d2 ^= hash_flip2[sq];
-    }
+    if ( update_hash )
+      h_acc ^= hash_flip_bit[bit];
   }
 
-  *diff1 = d1;
-  *diff2 = d2;
+  *diff1 = (unsigned int) h_acc;
+  *diff2 = (unsigned int) (h_acc >> 32);
 }
 
 
@@ -221,6 +220,7 @@ undo_flips( BitBoard mask, int side_to_move, int move ) {
 
   board_bits[side_to_move] &= ~(mask | square_mask[move]);
   board_bits[oppcol] |= mask;
+  board_bits[EMPTY] |= square_mask[move];
 
   update_pattern_indices( side_to_move, move, mask, -1 );
 }
@@ -258,6 +258,7 @@ make_move( int side_to_move, int move, int update_hash ) {
 
   board_bits[side_to_move] = new_my_bits;
   board_bits[OPP( side_to_move )] = opp_bits & ~mask;
+  board_bits[EMPTY] &= ~square_mask[move];
   flip_mask[disks_played] = mask;
 
   apply_flips( mask, side_to_move, update_hash, &diff1, &diff2 );
@@ -317,6 +318,7 @@ make_move_no_hash( int side_to_move, int move ) {
 
   board_bits[side_to_move] = new_my_bits;
   board_bits[OPP( side_to_move )] = opp_bits & ~mask;
+  board_bits[EMPTY] &= ~square_mask[move];
   flip_mask[disks_played] = mask;
 
   apply_flips( mask, side_to_move, FALSE, &diff1, &diff2 );

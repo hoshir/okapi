@@ -151,11 +151,12 @@ reorder_move_list( int stage ) {
   int nonempty_pos;
   int empty_buffer[MOVE_ORDER_SIZE];
   int nonempty_buffer[MOVE_ORDER_SIZE];
+  BitBoard empty_bits = board_bits[EMPTY];
 
   empty_pos = 0;
   for ( i = 0; i < MOVE_ORDER_SIZE; i++ ) {
     move = sorted_move_order[stage][i];
-    if ( (board[move] == EMPTY) || (i < dont_touch) ) {
+    if ( (empty_bits & square_mask[move]) || (i < dont_touch) ) {
       empty_buffer[empty_pos] = move;
       empty_pos++;
     }
@@ -163,7 +164,7 @@ reorder_move_list( int stage ) {
   nonempty_pos = MOVE_ORDER_SIZE - 1;
   for ( i = MOVE_ORDER_SIZE - 1; i >= 0; i-- ) {
     move = sorted_move_order[stage][i];
-    if ( (board[move] != EMPTY) && (i >= dont_touch) ) {
+    if ( !(empty_bits & square_mask[move]) && (i >= dont_touch) ) {
       nonempty_buffer[nonempty_pos] = move;
       nonempty_pos--;
     }

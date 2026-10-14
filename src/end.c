@@ -1031,32 +1031,16 @@ static void __attribute__((unused))
 sync_board_from_bitboards( BitBoard my_bits, BitBoard opp_bits, int side_to_move, int empties ) {
   BitBoard b_bits = (side_to_move == BLACKSQ ? my_bits : opp_bits);
   BitBoard w_bits = (side_to_move == BLACKSQ ? opp_bits : my_bits);
-  int i, j;
 
   board_bits[BLACKSQ] = b_bits;
   board_bits[WHITESQ] = w_bits;
   board_bits[EMPTY] = ~(b_bits | w_bits);
 
-  for ( i = 1; i <= 8; i++ ) {
-    for ( j = 1; j <= 8; j++ ) {
-      int pos = 10 * i + j;
-      BitBoard mask = square_mask[pos];
-      if ( b_bits & mask )
-	board[pos] = BLACKSQ;
-      else if ( w_bits & mask )
-	board[pos] = WHITESQ;
-      else
-	board[pos] = EMPTY;
-    }
-  }
-
   disks_played = 60 - empties;
-  int b_count = non_iterative_popcount( b_bits );
-  int w_count = non_iterative_popcount( w_bits );
-  piece_count[BLACKSQ][disks_played] = b_count;
-  piece_count[WHITESQ][disks_played] = w_count;
+  piece_count[BLACKSQ][disks_played] = non_iterative_popcount( b_bits );
+  piece_count[WHITESQ][disks_played] = non_iterative_popcount( w_bits );
 
-  determine_pattern_indices();
+  determine_pattern_indices_bitboard( b_bits, w_bits );
 }
 
 
@@ -3193,9 +3177,7 @@ end_tree_wrapper( int level,
   (void) max_depth;
   int selective_cutoff;
   BitBoard my_bits, opp_bits;
-  Board saved_root_board;
   ThreadState *ts = &tls;
-  memcpy( saved_root_board, ts->ts_board, sizeof( Board ) );
 
   set_bitboards( ts->ts_board, side_to_move, &my_bits, &opp_bits );
 
@@ -3234,7 +3216,6 @@ end_tree_wrapper( int level,
 			       level,
 			       selectivity,
 			       &selective_cutoff );
-  memcpy( ts->ts_board, saved_root_board, sizeof( Board ) );
   return result + komi_shift;
 }
 
@@ -3506,9 +3487,36 @@ end_game( int side_to_move,
       }
     }
     else {
-      static const int sel_schedule[] = { 6, 3, 2, 1 };
+      static int sel_schedule[16] = { 6, 3, 2, 1 };
+      static int sel_schedule_len = -1;
+      static int sel_schedule_custom = FALSE;
+      if ( sel_schedule_len == -1 ) {
+	char *env_sched = getenv( "SEL_SCHEDULE" );
+	if ( env_sched != NULL ) {
+	  sel_schedule_custom = TRUE;
+	  if ( strcmp( env_sched, "none" ) == 0 || strcmp( env_sched, "0" ) == 0 ) {
+	    sel_schedule_len = 0;
+	  } else {
+	    int cnt = 0;
+	    char buf[128];
+	    strncpy( buf, env_sched, sizeof( buf ) - 1 );
+	    buf[sizeof( buf ) - 1] = '\0';
+	    char *tok = strtok( buf, "," );
+	    while ( tok != NULL && cnt < 16 ) {
+	      int v = atoi( tok );
+	      if ( v > 0 )
+		sel_schedule[cnt++] = v;
+	      tok = strtok( NULL, "," );
+	    }
+	    sel_schedule_len = cnt;
+	  }
+	} else {
+	  sel_schedule_len = 4;
+	}
+      }
+      int num_passes = sel_schedule_custom ? sel_schedule_len : ((empties >= 27) ? 3 : 4);
       int pass_idx;
-      for ( pass_idx = 0; pass_idx < 4 &&
+      for ( pass_idx = 0; pass_idx < num_passes &&
 	      !is_panic_abort() && !force_return; pass_idx++ ) {
 	selectivity = sel_schedule[pass_idx];
 	alpha = last_window_center - 1;

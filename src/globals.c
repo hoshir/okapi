@@ -37,8 +37,6 @@ set_board_bits( void ) {
 
   board_bits[BLACKSQ] = 0;
   board_bits[WHITESQ] = 0;
-  board_bits[EMPTY] = 0;
-
   for ( i = 1; i <= 8; i++ )
     for ( j = 1; j <= 8; j++ ) {
       int pos = 10 * i + j;
@@ -47,4 +45,5 @@ set_board_bits( void ) {
       else if ( board[pos] == WHITESQ )
 	board_bits[WHITESQ] |= square_mask[pos];
     }
+  board_bits[EMPTY] = ~(board_bits[BLACKSQ] | board_bits[WHITESQ]);
 }

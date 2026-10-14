@@ -492,8 +492,9 @@ static const struct {
    sparse form needed.  The doubled table serves the flipped discs,
    whose trit moves by two. */
 
-static unsigned short pattern_weight[64][EVAL_PATTERN_SLOTS];
-static unsigned short pattern_weight2[64][EVAL_PATTERN_SLOTS];
+static unsigned short pattern_weight[64][EVAL_PATTERN_SLOTS] __attribute__((aligned(16)));
+static unsigned short pattern_weight2[64][EVAL_PATTERN_SLOTS] __attribute__((aligned(16)));
+static unsigned short empty_pattern_index[EVAL_PATTERN_SLOTS] __attribute__((aligned(16)));
 
 
 void
@@ -506,7 +507,11 @@ init_pattern_dependencies( void ) {
       pattern_weight2[sq][p] = 0;
     }
 
-  for ( p = 0; p < EVAL_PATTERN_COUNT; p++ )
+  for ( p = 0; p < EVAL_PATTERN_SLOTS; p++ )
+    empty_pattern_index[p] = 0;
+
+  for ( p = 0; p < EVAL_PATTERN_COUNT; p++ ) {
+    unsigned short e_idx = 0;
     for ( i = 0; i < eval_pattern[p].len; i++ ) {
       unsigned short w = (unsigned short)
 	pow3[eval_pattern[p].len - 1 - i];
@@ -515,7 +520,10 @@ init_pattern_dependencies( void ) {
       sq = bit_position[eval_pattern[p].squares[i]];
       pattern_weight[sq][p] = w;
       pattern_weight2[sq][p] = 2 * w;
+      e_idx += w;
     }
+    empty_pattern_index[p] = e_idx;
+  }
 }
 
 
@@ -537,6 +545,73 @@ determine_pattern_indices( void ) {
   }
   for ( p = EVAL_PATTERN_COUNT; p < EVAL_PATTERN_SLOTS; p++ )
     eval_pattern_index[p] = 0;
+}
+
+
+/*
+  DETERMINE_PATTERN_INDICES_BITBOARD
+  Compute all 50 base-3 pattern indices directly from (b_bits, w_bits)
+  using NEON vector additions/subtractions, without reading or writing
+  the 100-element board[] array.
+*/
+
+void
+determine_pattern_indices_bitboard( BitBoard b_bits, BitBoard w_bits ) {
+  unsigned short *pi = eval_pattern_index;
+
+#if defined( __ARM_NEON )
+  uint16x8_t p0 = vld1q_u16( empty_pattern_index      );
+  uint16x8_t p1 = vld1q_u16( empty_pattern_index +  8 );
+  uint16x8_t p2 = vld1q_u16( empty_pattern_index + 16 );
+  uint16x8_t p3 = vld1q_u16( empty_pattern_index + 24 );
+  uint16x8_t p4 = vld1q_u16( empty_pattern_index + 32 );
+  uint16x8_t p5 = vld1q_u16( empty_pattern_index + 40 );
+  uint16x8_t p6 = vld1q_u16( empty_pattern_index + 48 );
+
+  for ( BitBoard m = b_bits; m != 0; m &= m - 1 ) {
+    const unsigned short *w = pattern_weight[FIRST_BIT( m )];
+    p0 = vsubq_u16( p0, vld1q_u16( w      ) );
+    p1 = vsubq_u16( p1, vld1q_u16( w +  8 ) );
+    p2 = vsubq_u16( p2, vld1q_u16( w + 16 ) );
+    p3 = vsubq_u16( p3, vld1q_u16( w + 24 ) );
+    p4 = vsubq_u16( p4, vld1q_u16( w + 32 ) );
+    p5 = vsubq_u16( p5, vld1q_u16( w + 40 ) );
+    p6 = vsubq_u16( p6, vld1q_u16( w + 48 ) );
+  }
+
+  for ( BitBoard m = w_bits; m != 0; m &= m - 1 ) {
+    const unsigned short *w = pattern_weight[FIRST_BIT( m )];
+    p0 = vaddq_u16( p0, vld1q_u16( w      ) );
+    p1 = vaddq_u16( p1, vld1q_u16( w +  8 ) );
+    p2 = vaddq_u16( p2, vld1q_u16( w + 16 ) );
+    p3 = vaddq_u16( p3, vld1q_u16( w + 24 ) );
+    p4 = vaddq_u16( p4, vld1q_u16( w + 32 ) );
+    p5 = vaddq_u16( p5, vld1q_u16( w + 40 ) );
+    p6 = vaddq_u16( p6, vld1q_u16( w + 48 ) );
+  }
+
+  vst1q_u16( pi,      p0 );
+  vst1q_u16( pi +  8, p1 );
+  vst1q_u16( pi + 16, p2 );
+  vst1q_u16( pi + 24, p3 );
+  vst1q_u16( pi + 32, p4 );
+  vst1q_u16( pi + 40, p5 );
+  vst1q_u16( pi + 48, p6 );
+#else
+  int j;
+  for ( j = 0; j < EVAL_PATTERN_SLOTS; j++ )
+    pi[j] = empty_pattern_index[j];
+  for ( BitBoard m = b_bits; m != 0; m &= m - 1 ) {
+    const unsigned short *w = pattern_weight[FIRST_BIT( m )];
+    for ( j = 0; j < EVAL_PATTERN_SLOTS; j++ )
+      pi[j] -= w[j];
+  }
+  for ( BitBoard m = w_bits; m != 0; m &= m - 1 ) {
+    const unsigned short *w = pattern_weight[FIRST_BIT( m )];
+    for ( j = 0; j < EVAL_PATTERN_SLOTS; j++ )
+      pi[j] += w[j];
+  }
+#endif
 }
 
 
