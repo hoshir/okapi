@@ -113,6 +113,16 @@ init_probcut( void ) {
   set_probcut( 18, 6 );
   set_probcut( 18, 8 );
   set_probcut( 20, 8 );
+  for ( i = 24; i <= 32; i++ ) {
+    int src = (i & 1) ? 33 : 34;
+    int d;
+    for ( d = 0; d <= MAX_CORR_DEPTH; d++ ) {
+      end_mean[i][d] = end_mean[src][d];
+      end_sigma[i][d] = end_sigma[src][d];
+      end_stats_available[i][d] = end_stats_available[src][d];
+    }
+  }
+
   set_end_probcut( 13, 1 );
   set_end_probcut( 14, 1 );
   set_end_probcut( 15, 2 );
@@ -128,4 +138,6 @@ init_probcut( void ) {
   set_end_probcut( 25, 4 );
   set_end_probcut( 26, 4 );
   set_end_probcut( 27, 4 );
+  for ( i = 28; i <= 36; i++ )
+    set_end_probcut( i, 4 );
 }

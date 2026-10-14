@@ -2228,7 +2228,7 @@ end_search_nws( ThreadState *ts,
 		     alpha_bound, beta_bound, use_hash, FALSE, pass_legal );
       if ( shallow_val >= beta_bound ) {
 	if ( use_hash )
-	  add_hash_ts( ts, ENDGAME_MODE, alpha, 0,
+	  add_hash_ts( ts, ENDGAME_MODE, beta, 0,
 		       ENDGAME_SCORE | LOWER_BOUND, empties, selectivity );
 	*selective_cutoff = TRUE;
 	ts->ts_disks_played = saved_disks_played;
@@ -2236,7 +2236,7 @@ end_search_nws( ThreadState *ts,
       }
       if ( shallow_val <= alpha_bound ) {
 	if ( use_hash )
-	  add_hash_ts( ts, ENDGAME_MODE, beta, 0,
+	  add_hash_ts( ts, ENDGAME_MODE, alpha, 0,
 		       ENDGAME_SCORE | UPPER_BOUND, empties, selectivity );
 	*selective_cutoff = TRUE;
 	ts->ts_disks_played = saved_disks_played;
@@ -2683,7 +2683,7 @@ end_search_pvs( ThreadState *ts,
 		       alpha_bound, beta_bound, use_hash, FALSE, pass_legal );
 	if ( shallow_val >= beta_bound ) {
 	  if ( use_hash )
-	    add_hash_ts( ts, ENDGAME_MODE, alpha, 0,
+	    add_hash_ts( ts, ENDGAME_MODE, beta, 0,
 			 ENDGAME_SCORE | LOWER_BOUND, empties, selectivity );
 	  *selective_cutoff = TRUE;
 	  ts->ts_disks_played = saved_disks_played;
@@ -2691,7 +2691,7 @@ end_search_pvs( ThreadState *ts,
 	}
 	if ( shallow_val <= alpha_bound ) {
 	  if ( use_hash )
-	    add_hash_ts( ts, ENDGAME_MODE, beta, 0,
+	    add_hash_ts( ts, ENDGAME_MODE, alpha, 0,
 			 ENDGAME_SCORE | UPPER_BOUND, empties, selectivity );
 	  *selective_cutoff = TRUE;
 	  ts->ts_disks_played = saved_disks_played;

@@ -480,6 +480,8 @@ add_hash_ts( const ThreadState *ts,
   int old_draft = 0;
   int old_is_old = FALSE;
   int old_flags = 0;
+  int old_sel = 0;
+  unsigned int old_mv = 0;
   int min_priority = 999999;
   int change_encouragment;
   unsigned int base, target_slot, victim_slot;
@@ -515,6 +517,8 @@ add_hash_ts( const ThreadState *ts,
       old_draft = k1_p & DRAFT_VALUE_MASK;
       old_is_old = (((k1_p & DRAFT_GEN_MASK) >> DRAFT_GEN_SHIFT) != curr_gen);
       old_flags = (k1_p >> 8) & 0xFF;
+      old_sel = (k1_p >> 16) & 0xFF;
+      old_mv = mv;
       break;
     }
 
@@ -559,6 +563,9 @@ add_hash_ts( const ThreadState *ts,
     int new_is_endgame = (flags & ENDGAME_SCORE) != 0;
     if ( old_is_endgame && !new_is_endgame )
       return;
+    if ( !old_is_old && old_is_endgame && new_is_endgame &&
+         (old_sel < selectivity) && (old_draft >= draft) )
+      return;
     if ( !old_is_old && (!new_is_endgame || old_is_endgame) &&
          (old_draft > draft + change_encouragment + 2) )
       return;
@@ -588,10 +595,17 @@ add_hash_ts( const ThreadState *ts,
   entry.key1 = code1;
   entry.key2 = code2;
   entry.eval = score;
-  entry.move[0] = best;
-  entry.move[1] = 0;
-  entry.move[2] = 0;
-  entry.move[3] = 0;
+  if ( hit && best == 0 && (old_flags & ENDGAME_SCORE) && (old_mv & 0xFF) != 0 ) {
+    entry.move[0] = old_mv & 0xFF;
+    entry.move[1] = (old_mv >> 8) & 0xFF;
+    entry.move[2] = (old_mv >> 16) & 0xFF;
+    entry.move[3] = (old_mv >> 24) & 0xFF;
+  } else {
+    entry.move[0] = best;
+    entry.move[1] = 0;
+    entry.move[2] = 0;
+    entry.move[3] = 0;
+  }
   entry.flags = (short) flags;
   entry.draft = (short) draft;
   entry.selectivity = selectivity;
