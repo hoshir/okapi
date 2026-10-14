@@ -181,6 +181,23 @@ total=$(awk "BEGIN { printf \"%.1f\", $suite_end - $suite_start }")
 
 rm -f "$POSFILE"
 
+if [ "$MODE" = "quick" ]; then
+  ffo40_pos="O--OOOOX-OOOOOOXOOXXOOOXOOXOOOXXOOOOOOXX---OOOOX----O--X-------- X"
+  ffo40_max_nodes=15000000
+  ffo40_nodes=$(cd build/bin && printf "%s\n" "$ffo40_pos" | \
+    ./scrzebra -n 1 -h 22 -e 0 -line 1 -script /dev/stdin /dev/stdout 2>&1 | \
+    awk '/Total nodes:/ { print $3 }')
+  if [ -z "$ffo40_nodes" ]; then
+    echo "FAIL  FFO#40 (1t node gate): could not parse Total nodes"
+    failed=1
+  elif [ "$ffo40_nodes" -gt "$ffo40_max_nodes" ]; then
+    echo "FAIL  FFO#40 (1t node gate): $ffo40_nodes nodes > budget $ffo40_max_nodes"
+    failed=1
+  else
+    echo "ok    FFO#40 (1t node gate): $ffo40_nodes nodes <= $ffo40_max_nodes"
+  fi
+fi
+
 if [ -n "$failed" ]; then
   echo "check_ffo: FAILED   (total ${total}s)"
   exit 1

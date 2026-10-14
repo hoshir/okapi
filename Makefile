@@ -82,6 +82,7 @@ FLIPTEST_EXE = $(BINDIR)/fliptest
 THREADTEST_EXE = $(BINDIR)/threadtest
 HASHTEST_EXE = $(BINDIR)/hashtest
 ASPTEST_EXE = $(BINDIR)/aspirationtest
+INVTEST_EXE = $(BINDIR)/search_invariants_test
 HOLETEST_EXE = $(BINDIR)/test_hole_parity
 
 LIB          = $(BUILDDIR)/libzebra.a
@@ -140,34 +141,39 @@ libzebra.a	: $(LIB)
 #     flip implementations on random positions (see tests/fliptest.c)
 #  2. aspirationtest: the root aspiration center must be an even score
 #     (see tests/aspirationtest.c)
-#  3. check_ffo.sh: solves a fast subset of the FFO endgame test suite
+#  3. search_invariants_test: bitboard/NEON pattern indices, stability
+#     bounds, and TT flag/selectivity isolation invariants
+#  4. check_ffo.sh: solves a fast subset of the FFO endgame test suite
 #     and verifies the scores against the published answers
 #
 # Override the search threads with e.g. "make test FFO_THREADS=4"; see
 # where that is set above.
 
-test		: $(FLIPTEST_EXE) $(THREADTEST_EXE) $(HASHTEST_EXE) $(ASPTEST_EXE) scrzebra
+test		: $(FLIPTEST_EXE) $(THREADTEST_EXE) $(HASHTEST_EXE) $(ASPTEST_EXE) $(INVTEST_EXE) scrzebra
 	$(FLIPTEST_EXE)
 	$(THREADTEST_EXE)
 	$(HASHTEST_EXE)
 	$(ASPTEST_EXE)
+	$(INVTEST_EXE)
 	sh $(TESTDIR)/check_ffo.sh quick "$(FFO_THREADS)"
 
 # Solves ALL positions in tests/ffotest.scr and verifies the results.
 # Takes several minutes -- about 4.8 on an 8-core machine, with FFO #55
 # taking ~1.8 minutes.
-test-full	: $(FLIPTEST_EXE) $(THREADTEST_EXE) $(HASHTEST_EXE) $(ASPTEST_EXE) scrzebra
+test-full	: $(FLIPTEST_EXE) $(THREADTEST_EXE) $(HASHTEST_EXE) $(ASPTEST_EXE) $(INVTEST_EXE) scrzebra
 	$(FLIPTEST_EXE)
 	$(THREADTEST_EXE)
 	$(HASHTEST_EXE)
 	$(ASPTEST_EXE)
+	$(INVTEST_EXE)
 	sh $(TESTDIR)/check_ffo.sh full "$(FFO_THREADS)"
 
-test-standard	: $(FLIPTEST_EXE) $(THREADTEST_EXE) $(HASHTEST_EXE) $(ASPTEST_EXE) scrzebra
+test-standard	: $(FLIPTEST_EXE) $(THREADTEST_EXE) $(HASHTEST_EXE) $(ASPTEST_EXE) $(INVTEST_EXE) scrzebra
 	$(FLIPTEST_EXE)
 	$(THREADTEST_EXE)
 	$(HASHTEST_EXE)
 	$(ASPTEST_EXE)
+	$(INVTEST_EXE)
 	sh $(TESTDIR)/check_ffo.sh standard "$(FFO_THREADS)"
 
 $(FLIPTEST_EXE)	: $(TESTDIR)/fliptest.c $(LIB) | $(BINDIR)
@@ -181,6 +187,9 @@ $(HASHTEST_EXE)	: $(TESTDIR)/hashtest.c $(LIB) | $(BINDIR)
 
 $(ASPTEST_EXE)	: $(TESTDIR)/aspirationtest.c $(LIB) | $(BINDIR)
 	$(CC) -o $@ $(CFLAGS) $(TESTDIR)/aspirationtest.c $(LIB) $(LDFLAGS)
+
+$(INVTEST_EXE)	: $(TESTDIR)/search_invariants_test.c $(LIB) | $(BINDIR)
+	$(CC) -o $@ $(CFLAGS) $(TESTDIR)/search_invariants_test.c $(LIB) $(LDFLAGS)
 
 holetest	: $(HOLETEST_EXE)
 	$(HOLETEST_EXE)

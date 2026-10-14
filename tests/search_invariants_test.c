@@ -1,0 +1,282 @@
+/*
+   File:          search_invariants_test.c
+   Contents:      Unit and regression tests for core search, bitboard,
+                  NEON pattern index, stability bound, and TT invariants.
+*/
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+#include "constant.h"
+#include "globals.h"
+#include "bitboard.h"
+#include "bitbcnt.h"
+#include "bitbmob.h"
+#include "bitbtest.h"
+#include "doflip.h"
+#include "unflip.h"
+#include "moves.h"
+#include "patterns.h"
+#include "stable.h"
+#include "hash.h"
+#include "tlstate.h"
+
+#define NUM_ACTIVE_PATTERNS  46
+
+static int failures = 0;
+
+#define CHECK( cond, ... )                                  \
+  do {                                                      \
+    if ( !(cond) ) {                                        \
+      if ( failures < 10 ) {                                \
+	fprintf( stderr, "FAIL: " __VA_ARGS__ );            \
+	fprintf( stderr, "\n" );                            \
+      }                                                     \
+      failures++;                                           \
+    }                                                       \
+  } while ( 0 )
+
+
+/*
+  TEST_BITBOARD_AND_PATTERN_INVARIANTS
+  Plays random move sequences with make_move / unmake_move and verifies:
+  1. board_bits[EMPTY] == ~(board_bits[BLACKSQ] | board_bits[WHITESQ])
+  2. Incremental eval_pattern_index[0..45] matches both scalar
+     determine_pattern_indices() and NEON determine_pattern_indices_bitboard()
+     on every ply, both going down and after unmake_move.
+*/
+static void
+test_bitboard_and_pattern_invariants( void ) {
+  int game, ply, i, j, sq;
+  unsigned short inc_idx[48];
+  unsigned short scalar_idx[48];
+  unsigned short bb_idx[48];
+  int played_moves[64];
+  int played_sides[64];
+
+  for ( game = 0; game < 500; game++ ) {
+    for ( i = 0; i < 128; i++ )
+      board[i] = OUTSIDE;
+    for ( i = 1; i <= 8; i++ )
+      for ( j = 1; j <= 8; j++ )
+	board[10 * i + j] = EMPTY;
+
+    board[44] = WHITESQ;
+    board[55] = WHITESQ;
+    board[45] = BLACKSQ;
+    board[54] = BLACKSQ;
+
+    disks_played = 0;
+    set_board_bits();
+    determine_pattern_indices();
+
+    int side = BLACKSQ;
+    int depth = 0;
+
+    for ( ply = 0; ply < 40; ply++ ) {
+      BitBoard b_bits = board_bits[BLACKSQ];
+      BitBoard w_bits = board_bits[WHITESQ];
+      BitBoard e_bits = board_bits[EMPTY];
+
+      CHECK( (b_bits & w_bits) == 0,
+	     "game %d ply %d: black and white bitboards overlap", game, ply );
+      CHECK( e_bits == ~(b_bits | w_bits),
+	     "game %d ply %d: board_bits[EMPTY] out of sync", game, ply );
+
+      memcpy( inc_idx, eval_pattern_index, sizeof( inc_idx ) );
+      determine_pattern_indices();
+      memcpy( scalar_idx, eval_pattern_index, sizeof( scalar_idx ) );
+      determine_pattern_indices_bitboard( b_bits, w_bits );
+      memcpy( bb_idx, eval_pattern_index, sizeof( bb_idx ) );
+      memcpy( eval_pattern_index, inc_idx, sizeof( inc_idx ) );
+
+      for ( i = 0; i < NUM_ACTIVE_PATTERNS; i++ ) {
+	CHECK( inc_idx[i] == scalar_idx[i],
+	       "game %d ply %d pattern %d: incremental %u != scalar %u",
+	       game, ply, i, (unsigned) inc_idx[i], (unsigned) scalar_idx[i] );
+	CHECK( bb_idx[i] == scalar_idx[i],
+	       "game %d ply %d pattern %d: bitboard NEON %u != scalar %u",
+	       game, ply, i, (unsigned) bb_idx[i], (unsigned) scalar_idx[i] );
+      }
+
+      generate_all( side );
+      if ( move_count[disks_played] == 0 ) {
+	side = OPP( side );
+	generate_all( side );
+	if ( move_count[disks_played] == 0 )
+	  break;
+      }
+
+      int m_idx = rand() % move_count[disks_played];
+      sq = move_list[disks_played][m_idx];
+      int flipped = make_move( side, sq, TRUE );
+      CHECK( flipped > 0, "game %d ply %d: legal move %d flipped 0 discs", game, ply, sq );
+
+      played_moves[depth] = sq;
+      played_sides[depth] = side;
+      depth++;
+      side = OPP( side );
+    }
+
+    while ( depth > 0 ) {
+      depth--;
+      unmake_move( played_sides[depth], played_moves[depth] );
+
+      BitBoard b_bits = board_bits[BLACKSQ];
+      BitBoard w_bits = board_bits[WHITESQ];
+      CHECK( board_bits[EMPTY] == ~(b_bits | w_bits),
+	     "game %d unmake depth %d: board_bits[EMPTY] out of sync", game, depth );
+
+      memcpy( inc_idx, eval_pattern_index, sizeof( inc_idx ) );
+      determine_pattern_indices_bitboard( b_bits, w_bits );
+      for ( i = 0; i < NUM_ACTIVE_PATTERNS; i++ ) {
+	CHECK( inc_idx[i] == eval_pattern_index[i],
+	       "game %d unmake depth %d pattern %d: incremental %u != bitboard %u",
+	       game, depth, i, (unsigned) inc_idx[i], (unsigned) eval_pattern_index[i] );
+      }
+      memcpy( eval_pattern_index, inc_idx, sizeof( inc_idx ) );
+    }
+  }
+}
+
+
+/*
+  TEST_STABILITY_INVARIANTS
+  Verifies on random positions that edge and full stability counts are
+  monotonic subsets of each player's discs and that the induced lower/upper
+  endgame score bounds never cross (2*s_my - 64 <= 64 - 2*s_opp).
+*/
+static void
+test_stability_invariants( void ) {
+  int trial, i, j, sq;
+
+  for ( trial = 0; trial < 2000; trial++ ) {
+    int fill = 50 + (rand() % 45);
+    BitBoard b_bits, w_bits;
+
+    for ( i = 0; i < 128; i++ )
+      board[i] = OUTSIDE;
+    for ( i = 1; i <= 8; i++ )
+      for ( j = 1; j <= 8; j++ ) {
+	sq = 10 * i + j;
+	if ( (rand() % 100) < fill )
+	  board[sq] = (rand() & 1) ? BLACKSQ : WHITESQ;
+	else
+	  board[sq] = EMPTY;
+      }
+
+    set_bitboards( board, BLACKSQ, &b_bits, &w_bits );
+    int b_cnt = non_iterative_popcount( b_bits );
+    int w_cnt = non_iterative_popcount( w_bits );
+
+    EdgeIndices b_edges = { 0 }, w_edges = { 0 };
+    int b_edge = count_edge_stable_indexed( BLACKSQ, b_bits, w_bits, &b_edges );
+    int w_edge = count_edge_stable_indexed( WHITESQ, w_bits, b_bits, &w_edges );
+
+    CHECK( (b_edges.bits & ~b_bits) == 0,
+	   "trial %d: black edge stable bits outside black bitboard", trial );
+    CHECK( (w_edges.bits & ~w_bits) == 0,
+	   "trial %d: white edge stable bits outside white bitboard", trial );
+    CHECK( b_edge == non_iterative_popcount( b_edges.bits ),
+	   "trial %d: b_edge count mismatch", trial );
+    CHECK( w_edge == non_iterative_popcount( w_edges.bits ),
+	   "trial %d: w_edge count mismatch", trial );
+
+    int b_full = count_stable_indexed( BLACKSQ, b_bits, w_bits, &b_edges );
+    int w_full = count_stable_indexed( WHITESQ, w_bits, b_bits, &w_edges );
+
+    CHECK( b_full >= b_edge && b_full <= b_cnt,
+	   "trial %d: b_full %d out of range [%d, %d]", trial, b_full, b_edge, b_cnt );
+    CHECK( w_full >= w_edge && w_full <= w_cnt,
+	   "trial %d: w_full %d out of range [%d, %d]", trial, w_full, w_edge, w_cnt );
+    CHECK( (b_edges.bits & w_edges.bits) == 0,
+	   "trial %d: black and white stable sets overlap", trial );
+
+    int lower_bound = 2 * b_full - 64;
+    int upper_bound = 64 - 2 * w_full;
+    CHECK( lower_bound <= upper_bound,
+	   "trial %d: stability lower_bound %d > upper_bound %d",
+	   trial, lower_bound, upper_bound );
+  }
+}
+
+
+/*
+  TEST_TT_ISOLATION_INVARIANTS
+  Verifies that TT entries preserve selectivity, flags (ENDGAME_SCORE,
+  MIDGAME_SCORE, HEURISTIC_PRESEARCH_MOVE), and 4-move lists across
+  add_hash_extended_ts / find_hash_key so selective or presearch entries
+  cannot masquerade as exact (selectivity == 0) endgame bounds.
+*/
+static void
+test_tt_isolation_invariants( void ) {
+  ThreadState *ts = &tls;
+  HashEntry entry;
+  int moves_in[4] = { 34, 43, 56, 65 };
+
+  init_hash( 14 );
+  setup_hash( TRUE );
+
+  ts->ts_hash1 = 0x12345678u;
+  ts->ts_hash2 = 0x9abcdef0u;
+
+  /* 1. Store a presearch entry (HEURISTIC_PRESEARCH_MOVE) */
+  add_hash_extended_ts( ts, ENDGAME_MODE, 12, moves_in,
+			ENDGAME_SCORE | EXACT_VALUE | HEURISTIC_PRESEARCH_MOVE,
+			10, 0 );
+  find_hash_key( &entry, ts->ts_hash1, ts->ts_hash2 );
+
+  CHECK( entry.draft == 10, "TT presearch draft mismatch: %d", entry.draft );
+  CHECK( (entry.flags & HEURISTIC_PRESEARCH_MOVE) != 0,
+	 "TT presearch flag lost" );
+  /* Exact hash_hit guard: !(entry.flags & HEURISTIC_PRESEARCH_MOVE) must be FALSE */
+  int exact_hash_hit = (entry.draft != NO_HASH_MOVE) &&
+		       (entry.flags & ENDGAME_SCORE) &&
+		       !(entry.flags & HEURISTIC_PRESEARCH_MOVE);
+  CHECK( !exact_hash_hit, "HEURISTIC_PRESEARCH_MOVE must not trigger exact hash_hit" );
+
+  /* 2. Store a selective endgame entry (selectivity = 2) at draft = 24 */
+  ts->ts_hash1 = 0x2468ace0u;
+  ts->ts_hash2 = 0x13579bdfu;
+  add_hash_extended_ts( ts, ENDGAME_MODE, 6, moves_in,
+			ENDGAME_SCORE | LOWER_BOUND,
+			24, 2 );
+  find_hash_key( &entry, ts->ts_hash1, ts->ts_hash2 );
+
+  CHECK( entry.draft == 24, "TT selective draft mismatch: %d", entry.draft );
+  CHECK( entry.selectivity == 2, "TT selectivity mismatch: %d", entry.selectivity );
+  CHECK( entry.eval == 6, "TT eval mismatch: %d", entry.eval );
+  CHECK( entry.move[0] == 34 && entry.move[1] == 43 &&
+	 entry.move[2] == 56 && entry.move[3] == 65,
+	 "TT move[0..3] list not preserved" );
+  /* In exact solve (selectivity == 0), entry.selectivity <= 0 must be FALSE */
+  CHECK( !(entry.selectivity <= 0),
+	 "Selective TT entry (sel=2) must not satisfy exact bound cutoff (sel<=0)" );
+
+  free_hash();
+}
+
+
+int
+main( void ) {
+  srand( 42 );
+
+  init_flip_stack();
+  init_bitboard();
+  init_moves();
+  init_patterns();
+  init_pattern_dependencies();
+  init_stable();
+
+  test_bitboard_and_pattern_invariants();
+  test_stability_invariants();
+  test_tt_isolation_invariants();
+
+  if ( failures != 0 ) {
+    fprintf( stderr, "search_invariants_test: %d failure(s)\n", failures );
+    return 1;
+  }
+  printf( "search_invariants_test: PASSED (500 random games, 2000 stability boards, TT isolation checks)\n" );
+  return 0;
+}

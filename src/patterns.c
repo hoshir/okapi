@@ -424,8 +424,8 @@ compute_line_patterns( int *in_board ) {
    end of the update is the true one.  The count is padded to a
    multiple of eight so the tail is a whole vector. */
 
-#define EVAL_PATTERN_COUNT   50
-#define EVAL_PATTERN_SLOTS   56
+#define EVAL_PATTERN_COUNT   46
+#define EVAL_PATTERN_SLOTS   48
 
 
 static const struct {
@@ -477,11 +477,7 @@ static const struct {
   { 10, { 52, 42, 32, 22, 12, 51, 41, 31, 21, 11 } },	/* corner52 */
   { 10, { 57, 47, 37, 27, 17, 58, 48, 38, 28, 18 } },	/* corner52 */
   { 10, { 42, 52, 62, 72, 82, 41, 51, 61, 71, 81 } },	/* corner52 */
-  { 10, { 47, 57, 67, 77, 87, 48, 58, 68, 78, 88 } },	/* corner52 */
-  { 10, { 41, 32, 31, 23, 22, 21, 14, 13, 12, 11 } },	/* corner10 */
-  { 10, { 51, 62, 61, 73, 72, 71, 84, 83, 82, 81 } },	/* corner10 */
-  { 10, { 48, 37, 38, 26, 27, 28, 15, 16, 17, 18 } },	/* corner10 */
-  { 10, { 58, 67, 68, 76, 77, 78, 85, 86, 87, 88 } }	/* corner10 */
+  { 10, { 47, 57, 67, 77, 87, 48, 58, 68, 78, 88 } }	/* corner52 */
 };
 
 /* The trit weight of every square in every pattern, laid out densely
@@ -550,7 +546,7 @@ determine_pattern_indices( void ) {
 
 /*
   DETERMINE_PATTERN_INDICES_BITBOARD
-  Compute all 50 base-3 pattern indices directly from (b_bits, w_bits)
+  Compute all 46 base-3 pattern indices directly from (b_bits, w_bits)
   using NEON vector additions/subtractions, without reading or writing
   the 100-element board[] array.
 */
@@ -566,7 +562,6 @@ determine_pattern_indices_bitboard( BitBoard b_bits, BitBoard w_bits ) {
   uint16x8_t p3 = vld1q_u16( empty_pattern_index + 24 );
   uint16x8_t p4 = vld1q_u16( empty_pattern_index + 32 );
   uint16x8_t p5 = vld1q_u16( empty_pattern_index + 40 );
-  uint16x8_t p6 = vld1q_u16( empty_pattern_index + 48 );
 
   for ( BitBoard m = b_bits; m != 0; m &= m - 1 ) {
     const unsigned short *w = pattern_weight[FIRST_BIT( m )];
@@ -576,7 +571,6 @@ determine_pattern_indices_bitboard( BitBoard b_bits, BitBoard w_bits ) {
     p3 = vsubq_u16( p3, vld1q_u16( w + 24 ) );
     p4 = vsubq_u16( p4, vld1q_u16( w + 32 ) );
     p5 = vsubq_u16( p5, vld1q_u16( w + 40 ) );
-    p6 = vsubq_u16( p6, vld1q_u16( w + 48 ) );
   }
 
   for ( BitBoard m = w_bits; m != 0; m &= m - 1 ) {
@@ -587,7 +581,6 @@ determine_pattern_indices_bitboard( BitBoard b_bits, BitBoard w_bits ) {
     p3 = vaddq_u16( p3, vld1q_u16( w + 24 ) );
     p4 = vaddq_u16( p4, vld1q_u16( w + 32 ) );
     p5 = vaddq_u16( p5, vld1q_u16( w + 40 ) );
-    p6 = vaddq_u16( p6, vld1q_u16( w + 48 ) );
   }
 
   vst1q_u16( pi,      p0 );
@@ -596,7 +589,6 @@ determine_pattern_indices_bitboard( BitBoard b_bits, BitBoard w_bits ) {
   vst1q_u16( pi + 24, p3 );
   vst1q_u16( pi + 32, p4 );
   vst1q_u16( pi + 40, p5 );
-  vst1q_u16( pi + 48, p6 );
 #else
   int j;
   for ( j = 0; j < EVAL_PATTERN_SLOTS; j++ )
@@ -646,7 +638,6 @@ update_pattern_indices( int color, int move, BitBoard flipped, int dir ) {
     p3 = op( p3, vld1q_u16( w + 24 ) );				\
     p4 = op( p4, vld1q_u16( w + 32 ) );				\
     p5 = op( p5, vld1q_u16( w + 40 ) );				\
-    p6 = op( p6, vld1q_u16( w + 48 ) );				\
   }
 
 #define APPLY_MASK( op )					\
@@ -666,7 +657,6 @@ update_pattern_indices( int color, int move, BitBoard flipped, int dir ) {
     uint16x8_t p3 = vld1q_u16( pi + 24 );
     uint16x8_t p4 = vld1q_u16( pi + 32 );
     uint16x8_t p5 = vld1q_u16( pi + 40 );
-    uint16x8_t p6 = vld1q_u16( pi + 48 );
 
     if ( subtract )
       APPLY_MASK( vsubq_u16 )
@@ -679,7 +669,6 @@ update_pattern_indices( int color, int move, BitBoard flipped, int dir ) {
     vst1q_u16( pi + 24, p3 );
     vst1q_u16( pi + 32, p4 );
     vst1q_u16( pi + 40, p5 );
-    vst1q_u16( pi + 48, p6 );
   }
 
 #undef APPLY_MASK

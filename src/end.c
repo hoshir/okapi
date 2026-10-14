@@ -1668,46 +1668,15 @@ end_order_moves_presearch( ThreadState *ts,
       fast_pattern_depth = env_fp ? atoi( env_fp ) : 13;
     }
 
-    static int fast_pattern_mode = -1;
-    if ( fast_pattern_mode == -1 ) {
-      char *env_fpm = getenv( "FAST_PATTERN_MODE" );
-      fast_pattern_mode = env_fpm ? atoi( env_fpm ) : 0;
-    }
-
-    static int fast_pattern_scale = -1;
-    if ( fast_pattern_scale == -1 ) {
-      char *env_fps = getenv( "FAST_PATTERN_SCALE" );
-      if ( env_fps )
-        fast_pattern_scale = atoi( env_fps );
-      else
-        fast_pattern_scale = (fast_pattern_mode == 1) ? 100 : 30;
-    }
-
-    static int no_pattern_depth = -1;
-    if ( no_pattern_depth == -1 ) {
-      char *env_np = getenv( "NO_PATTERN_DEPTH" );
-      no_pattern_depth = env_np ? atoi( env_np ) : 0;
-    }
-
     int top_fast = surv[0].fast_score;
     for ( i = 0; i < surv_count; i++ ) {
       int m = surv[i].sq;
-      if ( empties <= no_pattern_depth ) {
-        ev_stage[m] = surv[i].fast_score;
-      }
-      else if ( i == 0 || (top_fast - surv[i].fast_score <= lazy_margin) ) {
+      if ( i == 0 || (top_fast - surv[i].fast_score <= lazy_margin) ) {
         int p_score;
         if ( empties <= fast_pattern_depth ) {
           if ( selectivity == 0 )
             order_diag_exact.nws_fast_pattern_evals++;
-          if ( fast_pattern_mode == 1 )
-            p_score = end_pattern_evaluate_c33( surv[i].child_my_bits, surv[i].new_opp_bits );
-          else if ( fast_pattern_mode == 2 )
-            p_score = end_pattern_evaluate_c33_d8( surv[i].child_my_bits, surv[i].new_opp_bits );
-          else
-            p_score = end_pattern_evaluate_c33_r24( surv[i].child_my_bits, surv[i].new_opp_bits );
-          if ( fast_pattern_scale != 100 )
-            p_score = (p_score * fast_pattern_scale) / 100;
+          p_score = (end_pattern_evaluate_c33_r24( surv[i].child_my_bits, surv[i].new_opp_bits ) * 30) / 100;
         } else {
           if ( selectivity == 0 )
             order_diag_exact.nws_pattern_evals++;
@@ -2062,118 +2031,6 @@ end_presearch_ab( BitBoard my_bits, BitBoard opp_bits,
 
 
 /*
-  END_MPC_SEARCH
-  Self-contained bitboard alpha-beta search for endgame Multi-ProbCut (MPC).
-  Operates entirely on 64-bit bitboards without board-array conversions or TT pollution.
-*/
-static int
-end_mpc_search( BitBoard my_bits, BitBoard opp_bits, int side_to_move,
-                int depth, int empties, int alpha, int beta ) {
-  if ( is_panic_abort() || force_return )
-    return alpha;
-
-  INCREMENT_COUNTER( nodes );
-
-  if ( depth <= 0 ) {
-    int val = end_pattern_evaluate( my_bits, opp_bits );
-    if ( (region_parity != 0) && (empties & 1) )
-      val += REGION_PARITY_BONUS;
-    return val;
-  }
-
-  BitBoard moves = generate_all_c( my_bits, opp_bits );
-  if ( moves == 0 ) {
-    BitBoard opp_moves = generate_all_c( opp_bits, my_bits );
-    if ( opp_moves == 0 ) {
-      int disc_diff = non_iterative_popcount( my_bits ) - non_iterative_popcount( opp_bits );
-      int final_score = (disc_diff > 0) ? (disc_diff + empties) :
-			((disc_diff < 0) ? (disc_diff - empties) : 0);
-      return final_score * 128;
-    }
-    return -end_mpc_search( opp_bits, my_bits, OPP( side_to_move ),
-			    depth, empties, -beta, -alpha );
-  }
-
-  /* Fast static move ordering for shallow depth */
-  int moves_arr[64];
-  int scores_arr[64];
-  int n_moves = 0;
-
-  BitBoard rem_moves = moves;
-  while ( rem_moves != 0 ) {
-    int bit = FIRST_BIT( rem_moves );
-    rem_moves &= rem_moves - 1;
-    int sq = square_of_bit[bit];
-
-    BitBoard new_my_bits;
-    TestFlips_bitboard_to( sq, my_bits, opp_bits, &new_my_bits );
-    BitBoard flipped = new_my_bits & ~my_bits & ~square_mask[sq];
-    BitBoard new_opp = opp_bits ^ flipped;
-    BitBoard opp_replies = generate_all_c( new_opp, new_my_bits );
-    int opp_mob = non_iterative_popcount( opp_replies );
-    int opp_corners = non_iterative_popcount( opp_replies & 0x8100000000000081ull );
-
-    int score = - 128 * opp_mob - 256 * opp_corners;
-    if ( opp_mob == 0 ) score += 1024;
-    if ( quadrant_mask[sq] & region_parity ) score += 128;
-    BitBoard bb = square_mask[sq];
-    if ( bb & CORNER_MASK ) score += 512;
-    else if ( bb & 0x0042000000004200ull ) score -= 256;
-
-    moves_arr[n_moves] = sq;
-    scores_arr[n_moves] = score;
-    n_moves++;
-  }
-
-  /* Simple insertion sort */
-  for ( int i = 1; i < n_moves; i++ ) {
-    int m = moves_arr[i];
-    int s = scores_arr[i];
-    int j = i - 1;
-    while ( j >= 0 && scores_arr[j] < s ) {
-      moves_arr[j + 1] = moves_arr[j];
-      scores_arr[j + 1] = scores_arr[j];
-      j--;
-    }
-    moves_arr[j + 1] = m;
-    scores_arr[j + 1] = s;
-  }
-
-  int best_val = -INFINITE_EVAL;
-
-  for ( int i = 0; i < n_moves; i++ ) {
-    int sq = moves_arr[i];
-    BitBoard new_my_bits;
-    TestFlips_bitboard_to( sq, my_bits, opp_bits, &new_my_bits );
-
-    region_parity ^= quadrant_mask[sq];
-    int val = -end_mpc_search( opp_bits & ~new_my_bits,
-			       new_my_bits,
-			       OPP( side_to_move ),
-			       depth - 1,
-			       empties - 1,
-			       -beta,
-			       -alpha );
-    region_parity ^= quadrant_mask[sq];
-
-    if ( is_panic_abort() || force_return )
-      return alpha;
-
-    if ( val > best_val ) {
-      best_val = val;
-      if ( val > alpha ) {
-	alpha = val;
-	if ( alpha >= beta )
-	  return alpha;
-      }
-    }
-  }
-
-  return best_val;
-}
-
-
-/*
   END_SEARCH_NWS
   Dedicated Null-Window Search (NWS) core.
   Optimized for Cut and All nodes (beta == alpha + 1).
@@ -2340,13 +2197,7 @@ end_search_nws( ThreadState *ts,
 
   if ( USE_MPC && (level > 2) && (selectivity > 0) ) {
     int cut;
-    static int use_bb_mpc = -1;
-    if ( use_bb_mpc == -1 ) {
-      use_bb_mpc = (getenv( "BITBOARD_MPC" ) != NULL);
-    }
-    if ( !use_bb_mpc ) {
-      sync_board_from_bitboards( my_bits, opp_bits, side_to_move, empties );
-    }
+    sync_board_from_bitboards( my_bits, opp_bits, side_to_move, empties );
     for ( cut = 0; cut < use_end_cut[stage]; cut++ ) {
       int shallow_remains = end_mpc_depth[stage][cut];
       int mpc_bias = ceil( end_mean[stage][shallow_remains] * 128.0 );
@@ -2354,17 +2205,9 @@ end_search_nws( ThreadState *ts,
 			     end_percentile[selectivity] * 128.0 );
       int beta_bound = 128 * beta + mpc_bias + mpc_window;
       int alpha_bound = 128 * alpha + mpc_bias - mpc_window;
-      int shallow_val;
-      if ( use_bb_mpc ) {
-	shallow_val =
-	  end_mpc_search( my_bits, opp_bits, side_to_move,
-			  shallow_remains, empties,
-			  alpha_bound, beta_bound );
-      } else {
-	shallow_val =
-	  tree_search( level, level + shallow_remains, side_to_move,
-		       alpha_bound, beta_bound, use_hash, FALSE, pass_legal );
-      }
+      int shallow_val =
+	tree_search( level, level + shallow_remains, side_to_move,
+		     alpha_bound, beta_bound, use_hash, FALSE, pass_legal );
       if ( shallow_val >= beta_bound ) {
 	if ( use_hash )
 	  add_hash_ts( ts, ENDGAME_MODE, alpha, 0,
@@ -2809,13 +2652,7 @@ end_search_pvs( ThreadState *ts,
   /* Use endgame multi-prob-cut to selectively prune the tree */
   if ( USE_MPC && (level > 2) && (selectivity > 0) ) {
     int cut;
-    static int use_bb_mpc = -1;
-    if ( use_bb_mpc == -1 ) {
-      use_bb_mpc = (getenv( "BITBOARD_MPC" ) != NULL);
-    }
-    if ( !use_bb_mpc ) {
-      sync_board_from_bitboards( my_bits, opp_bits, side_to_move, empties );
-    }
+    sync_board_from_bitboards( my_bits, opp_bits, side_to_move, empties );
     for ( cut = 0; cut < use_end_cut[stage]; cut++ ) {
 	int shallow_remains = end_mpc_depth[stage][cut];
 	int mpc_bias = ceil( end_mean[stage][shallow_remains] * 128.0 );
@@ -2823,17 +2660,9 @@ end_search_pvs( ThreadState *ts,
 			       end_percentile[selectivity] * 128.0 );
 	int beta_bound = 128 * beta + mpc_bias + mpc_window;
 	int alpha_bound = 128 * alpha + mpc_bias - mpc_window;
-	int shallow_val;
-	if ( use_bb_mpc ) {
-	  shallow_val =
-	    end_mpc_search( my_bits, opp_bits, side_to_move,
-			    shallow_remains, empties,
-			    alpha_bound, beta_bound );
-	} else {
-	  shallow_val =
-	    tree_search( level, level + shallow_remains, side_to_move,
-			 alpha_bound, beta_bound, use_hash, FALSE, pass_legal );
-	}
+	int shallow_val =
+	  tree_search( level, level + shallow_remains, side_to_move,
+		       alpha_bound, beta_bound, use_hash, FALSE, pass_legal );
 	if ( shallow_val >= beta_bound ) {
 	  if ( use_hash )
 	    add_hash_ts( ts, ENDGAME_MODE, alpha, 0,
