@@ -41,7 +41,7 @@ CountFlips_bitboard( int sq, BitBoard my_bits ) {
   if ( (neighborhood_mask[sq] & ~my_bits) == 0 )
     return 0;
 
-  const FlipRays *r = &flip_rays[bit_position[sq]];
+  const FlipRays *r = &flip_rays[sq];
   BitBoard flips = 0;
   BitBoard ray, t, f;
   int i;

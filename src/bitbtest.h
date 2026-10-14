@@ -49,7 +49,9 @@ highest_guarded_bit( BitBoard b ) {
 static ALWAYS_INLINE int
 TestFlips_bitboard_to( int sq, BitBoard my_bits, BitBoard opp_bits,
 		       BitBoard *new_my_bits ) {
-  const FlipRays *r = &flip_rays[bit_position[sq]];
+  if ( (neighborhood_mask[sq] & opp_bits) == 0 )
+    return 0;
+  const FlipRays *r = &flip_rays[sq];
   BitBoard flips = 0;
   BitBoard ray, t, f;
   int i;

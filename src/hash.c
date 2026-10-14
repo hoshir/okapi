@@ -66,6 +66,8 @@ unsigned int hash_put_value1[3][128];
 unsigned int hash_put_value2[3][128];
 unsigned int hash_flip1[128];
 unsigned int hash_flip2[128];
+unsigned long long hash_flip_bit[64];
+unsigned long long hash_put_packed[3][128];
 unsigned int hash_color1[3];
 unsigned int hash_color2[3];
 unsigned int hash_flip_color1;
@@ -316,7 +318,17 @@ setup_hash( int clear ) {
     hash_put_value2[BLACKSQ][j] = hash_value2[BLACKSQ][j] ^ hash_flip_color2;
     hash_put_value1[WHITESQ][j] = hash_value1[WHITESQ][j] ^ hash_flip_color1;
     hash_put_value2[WHITESQ][j] = hash_value2[WHITESQ][j] ^ hash_flip_color2;
+    hash_put_packed[BLACKSQ][j] =
+      ((unsigned long long) hash_put_value2[BLACKSQ][j] << 32) | hash_put_value1[BLACKSQ][j];
+    hash_put_packed[WHITESQ][j] =
+      ((unsigned long long) hash_put_value2[WHITESQ][j] << 32) | hash_put_value1[WHITESQ][j];
   }
+  for ( i = 1; i <= 8; i++ )
+    for ( j = 1; j <= 8; j++ ) {
+      int bit = 8 * (i - 1) + (j - 1);
+      pos = 10 * i + j;
+      hash_flip_bit[bit] = ((unsigned long long) hash_flip2[pos] << 32) | hash_flip1[pos];
+    }
 }
 
 

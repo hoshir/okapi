@@ -374,7 +374,7 @@ solve_three_empty( ThreadState *ts,
     if ( q2 & par ) {
       int tmp = sq1; sq1 = sq2; sq2 = tmp;
     } else {
-      int tmp = sq1; sq1 = sq3; sq3 = tmp;
+      int tmp = sq3; sq3 = sq2; sq2 = sq1; sq1 = tmp;
     }
   }
 
