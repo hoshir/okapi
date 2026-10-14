@@ -88,6 +88,12 @@ typedef struct {
   /* Monotonically tracked stable discs along the search path, indexed by [color][level]. */
   BitBoard stable_discs[3][MAX_SEARCH_DEPTH + 1];
 
+  /* Cached flip bitboards and endgame interior state per search level. */
+  BitBoard ts_cached_flips[MAX_SEARCH_DEPTH + 1][100];
+  int ts_cached_flipped[MAX_SEARCH_DEPTH + 1][100];
+  int ts_split_nesting;
+  double ts_last_panic_check;
+
   /* Counted once per node, so it is on the hottest path there is. */
   CounterType ts_nodes;
 } ThreadState;
@@ -111,6 +117,7 @@ extern _Thread_local ThreadState tls;
 #define end_best_move       (tls.ts_end_best_move)
 #define end_best_root_move  (tls.ts_end_best_root_move)
 #define nodes               (tls.ts_nodes)
+#define last_panic_check    (tls.ts_last_panic_check)
 
 
 

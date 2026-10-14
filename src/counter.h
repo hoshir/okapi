@@ -31,17 +31,34 @@ typedef struct {
 
 
 
-void
-reset_counter( CounterType *counter );
+#define DECIMAL_BASIS            100000000
 
-double
-counter_value( CounterType *counter );
+static ALWAYS_INLINE void
+reset_counter( CounterType *counter ) {
+  counter->lo = 0;
+  counter->hi = 0;
+}
 
-void
-adjust_counter( CounterType *counter );
+static ALWAYS_INLINE void
+adjust_counter( CounterType *counter ) {
+  while ( counter->lo >= DECIMAL_BASIS ) {
+    counter->lo -= DECIMAL_BASIS;
+    counter->hi++;
+  }
+}
 
-void
-add_counter( CounterType *sum, CounterType *term );
+static ALWAYS_INLINE double
+counter_value( CounterType *counter ) {
+  adjust_counter( counter );
+  return ((double) DECIMAL_BASIS) * counter->hi + counter->lo;
+}
+
+static ALWAYS_INLINE void
+add_counter( CounterType *sum, CounterType *term ) {
+  sum->lo += term->lo;
+  sum->hi += term->hi;
+  adjust_counter( sum );
+}
 
 
 

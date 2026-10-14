@@ -67,7 +67,6 @@
 
 /* Global variables */
 
-_Thread_local double last_panic_check = 0.0;
 int ponder_depth[100];
 int current_ponder_depth;
 

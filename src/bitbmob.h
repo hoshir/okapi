@@ -20,7 +20,7 @@
    across the board edge.  The +-8 shifts use the unmasked discs. */
 #define INNER_MASK  0x7E7E7E7E7E7E7E7Eull
 
-static INLINE BitBoard
+static ALWAYS_INLINE BitBoard
 generate_all_c( const BitBoard my_bits,
 	        const BitBoard opp_bits ) {
   BitBoard moves;
@@ -54,13 +54,13 @@ generate_all_c( const BitBoard my_bits,
   return moves;
 }
 
-static INLINE BitBoard
+static ALWAYS_INLINE BitBoard
 bitboard_moves( const BitBoard my_bits,
 		const BitBoard opp_bits ) {
   return generate_all_c( my_bits, opp_bits );
 }
 
-static INLINE int
+static ALWAYS_INLINE int
 bitboard_mobility( const BitBoard my_bits,
 		   const BitBoard opp_bits ) {
   return non_iterative_popcount( generate_all_c( my_bits, opp_bits ) );

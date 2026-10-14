@@ -468,12 +468,13 @@ set_hash_transformation( unsigned int trans1, unsigned int trans2 ) {
 */
 
 void
-add_hash( int reverse_mode,
-	  int score,
-	  int best,
-	  int flags,
-	  int draft,
-	  int selectivity ) {
+add_hash_ts( const ThreadState *ts,
+	     int reverse_mode,
+	     int score,
+	     int best,
+	     int flags,
+	     int draft,
+	     int selectivity ) {
   int i;
   int hit = FALSE;
   int old_draft = 0;
@@ -489,8 +490,8 @@ add_hash( int reverse_mode,
   assert( abs( score ) != SEARCH_ABORT );
 
   (void) reverse_mode;
-  code1 = hash2 ^ hash_trans2;
-  code2 = hash1 ^ hash_trans1;
+  code1 = ts->ts_hash2 ^ hash_trans2;
+  code2 = ts->ts_hash1 ^ hash_trans1;
 
   base = BUCKET_MASK( code1 & hash_mask );
   victim_slot = base;
@@ -597,6 +598,16 @@ add_hash( int reverse_mode,
   wide_to_compact( &entry, &hash_table[target_slot] );
 }
 
+void
+add_hash( int reverse_mode,
+	  int score,
+	  int best,
+	  int flags,
+	  int draft,
+	  int selectivity ) {
+  add_hash_ts( &tls, reverse_mode, score, best, flags, draft, selectivity );
+}
+
 
 /*
    ADD_HASH_EXTENDED
@@ -605,8 +616,8 @@ add_hash( int reverse_mode,
 */
 
 void
-add_hash_extended( int reverse_mode, int score, int *best, int flags,
-		   int draft, int selectivity ) {
+add_hash_extended_ts( const ThreadState *ts, int reverse_mode, int score, int *best,
+		      int flags, int draft, int selectivity ) {
   int i;
   int hit = FALSE;
   int old_draft = 0;
@@ -620,8 +631,8 @@ add_hash_extended( int reverse_mode, int score, int *best, int flags,
   HashEntry entry;
 
   (void) reverse_mode;
-  code1 = hash2 ^ hash_trans2;
-  code2 = hash1 ^ hash_trans1;
+  code1 = ts->ts_hash2 ^ hash_trans2;
+  code2 = ts->ts_hash1 ^ hash_trans1;
 
   base = BUCKET_MASK( code1 & hash_mask );
   victim_slot = base;
@@ -751,22 +762,27 @@ add_hash_extended( int reverse_mode, int score, int *best, int flags,
   wide_to_compact( &entry, &hash_table[target_slot] );
 }
 
+void
+add_hash_extended( int reverse_mode, int score, int *best, int flags,
+		   int draft, int selectivity ) {
+  add_hash_extended_ts( &tls, reverse_mode, score, best, flags, draft, selectivity );
+}
+
 
 /*
-   FIND_HASH
-   Search the hash table for the current position using 4-way set-associativity.
+   FIND_HASH_KEY / FIND_HASH
+   Search the hash table for the given 64-bit key using 4-way set-associativity.
    All 4 bucket slots in the 64-byte cache line are probed.
 */   
 
-void REGPARM(2)
-find_hash( HashEntry *entry, int reverse_mode ) {
+void
+find_hash_key( HashEntry *entry, unsigned int h1, unsigned int h2 ) {
   int i;
   unsigned int base;
   unsigned int code1, code2;
 
-  (void) reverse_mode;
-  code1 = hash2 ^ hash_trans2;
-  code2 = hash1 ^ hash_trans1;
+  code1 = h2 ^ hash_trans2;
+  code2 = h1 ^ hash_trans1;
 
   base = BUCKET_MASK( code1 & hash_mask );
 
@@ -812,88 +828,10 @@ find_hash( HashEntry *entry, int reverse_mode ) {
   entry->move[3] = 0;
 }
 
-
-/*
-   FIND_SHALLOW_HASH
-   Direct-mapped probe into the shallow hash table for low-depth endgame nodes.
-*/
-
-void REGPARM(1)
-find_shallow_hash( HashEntry *entry, const ThreadState *ts ) {
-  int index;
-  unsigned int code1, code2;
-  unsigned int k2_raw, k1_p, mv;
-  int ev;
-
-  if ( shallow_hash_table == NULL ) {
-    entry->draft = NO_HASH_MOVE;
-    entry->flags = UPPER_BOUND;
-    entry->eval = INFINITE_EVAL;
-    entry->move[0] = 0;
-    return;
-  }
-
-  code1 = ts->ts_hash2 ^ hash_trans2;
-  code2 = ts->ts_hash1 ^ hash_trans1;
-
-  index = code1 & shallow_hash_mask;
-
-  k2_raw = __atomic_load_n( &shallow_hash_table[index].key2, __ATOMIC_ACQUIRE );
-  ev = __atomic_load_n( &shallow_hash_table[index].eval, __ATOMIC_RELAXED );
-  mv = __atomic_load_n( &shallow_hash_table[index].moves, __ATOMIC_RELAXED );
-  k1_p = __atomic_load_n( &shallow_hash_table[index].key1_selectivity_flags_draft, __ATOMIC_RELAXED );
-
-  if ( (k2_raw ^ (unsigned int) ev ^ mv ^ k1_p) == code2 ) {
-    if ( ((k1_p ^ code1) & KEY1_MASK) == 0 ) {
-      compact_to_wide( entry, code2, ev, mv, k1_p );
-      return;
-    }
-  }
-
-  entry->draft = NO_HASH_MOVE;
-  entry->flags = UPPER_BOUND;
-  entry->eval = INFINITE_EVAL;
-  entry->move[0] = 0;
-  entry->move[1] = 0;
-  entry->move[2] = 0;
-  entry->move[3] = 0;
-}
-
-
-/*
-   ADD_SHALLOW_HASH
-   Direct-mapped store into the shallow hash table.
-*/
-
-void
-add_shallow_hash( int score,
-		  int best,
-		  int flags,
-		  int draft,
-		  const ThreadState *ts ) {
-  unsigned int index;
-  unsigned int code1, code2;
-  HashEntry entry;
-
-  if ( shallow_hash_table == NULL )
-    return;
-
-  code1 = ts->ts_hash2 ^ hash_trans2;
-  code2 = ts->ts_hash1 ^ hash_trans1;
-
-  index = code1 & shallow_hash_mask;
-
-  entry.key1 = code1;
-  entry.key2 = code2;
-  entry.eval = score;
-  entry.move[0] = best;
-  entry.move[1] = 0;
-  entry.move[2] = 0;
-  entry.move[3] = 0;
-  entry.flags = (short) flags;
-  entry.draft = (short) draft;
-  entry.selectivity = 0;
-  wide_to_compact( &entry, &shallow_hash_table[index] );
+void REGPARM(2)
+find_hash( HashEntry *entry, int reverse_mode ) {
+  (void) reverse_mode;
+  find_hash_key( entry, hash1, hash2 );
 }
 
 

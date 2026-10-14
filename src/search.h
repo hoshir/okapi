@@ -18,6 +18,7 @@
 #include "constant.h"
 #include "counter.h"
 #include "globals.h"
+#include "moves.h"
 
 
 
@@ -158,8 +159,28 @@ disc_count( int side_to_move );
 void
 sort_moves( int list_size );
 
-int
-select_move( int first, int list_size );
+static ALWAYS_INLINE int
+select_move( int first, int list_size ) {
+  int i, best, best_eval, temp_move;
+  int dp = disks_played;
+  int *ev = evals[dp];
+  int *ml = move_list[dp];
+
+  best = first;
+  best_eval = ev[ml[first]];
+  for ( i = first + 1; i < list_size; i++ )
+    if ( ev[ml[i]] > best_eval ) {
+      best = i;
+      best_eval = ev[ml[i]];
+    }
+  if ( best != first ) {
+    temp_move = ml[first];
+    ml[first] = ml[best];
+    ml[best] = temp_move;
+  }
+
+  return ml[first];
+}
 
 int
 float_move( int move, int list_size );

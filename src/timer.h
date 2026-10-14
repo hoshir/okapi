@@ -21,16 +21,14 @@ extern "C" {
 
 
 
+#include "tlstate.h"
+
 extern int current_ponder_depth;
 extern int ponder_depth[100];
 
 extern double frozen_ponder_time;
 
 extern int frozen_ponder_depth;
-
-/* Holds the value of the variable NODES the last time the
-   timer module was called to check if a panic abort occured. */
-extern _Thread_local double last_panic_check;
 
 
 
