@@ -30,6 +30,8 @@ extern "C" {
 
 #ifndef USE_SHALLOW_TT
 #define USE_SHALLOW_TT               TRUE
+#endif
+#ifndef SHALLOW_TT_MIN_DEPTH
 #define SHALLOW_TT_MIN_DEPTH         5
 #endif
 

@@ -75,16 +75,6 @@
 
 
 
-/* Use stability pruning? */
-#ifndef USE_STABILITY
-#define USE_STABILITY                TRUE
-#endif
-
-/* Use shallow transposition table for low-depth endgame nodes? */
-#ifndef USE_SHALLOW_TT
-#define USE_SHALLOW_TT               TRUE
-#define SHALLOW_TT_MIN_DEPTH         5
-#endif
 
 
 /* Pseudo-probabilities corresponding to the percentiles.
@@ -1004,26 +994,6 @@ sync_board_from_bitboards( BitBoard my_bits, BitBoard opp_bits, int side_to_move
 
 
 /*
-  UPDATE_BEST_LIST
-*/
-
-static void
-update_best_list( int *best_list, int move, int best_list_index,
-		  int *best_list_length ) {
-  int i;
-
-  if ( best_list_index < *best_list_length )
-    for ( i = best_list_index; i >= 1; i-- )
-      best_list[i] = best_list[i - 1];
-  else {
-    for ( i = 3; i >= 1; i-- )
-      best_list[i] = best_list[i - 1];
-    if ( *best_list_length < 4 )
-      (*best_list_length)++;
-  }
-  best_list[0] = move;
-}
-/*
   PARALLEL ROOT SIBLINGS
 
   Young-brothers-wait: the first root move is searched on its own, and
@@ -1164,7 +1134,7 @@ dispatch_siblings( ThreadState *ts,
 		   int side_to_move, int level, int empties,
 		   int disc_diff, int alpha, int beta,
 		   int selectivity, int searched_move,
-		   const int *best_list, int best_list_length,
+		   const int *hash_moves, int hash_hit,
 		   int pre_search_done,
 		   int *proven, int *proven_score, int *proven_cutoff,
 		   int *cutoff_move, int *cutoff_score, int *cutoff_selective ) {
@@ -1179,14 +1149,17 @@ dispatch_siblings( ThreadState *ts,
     used[i] = FALSE;
   used[searched_move] = TRUE;
 
-  /* 1. First priority: remaining moves in best_list (hash moves) */
-  for ( i = 0; i < best_list_length; i++ ) {
-    sq = best_list[i];
-    if ( !used[sq] && !((my_bits | opp_bits) & square_mask[sq]) &&
-	 (TestFlips_wrapper_to( sq, my_bits, opp_bits, &dummy_flips ) > 0) ) {
-      used[sq] = TRUE;
-      if ( count < MAX_ROOT_MOVES )
-	sp->moves[count++] = sq;
+  /* 1. First priority: remaining moves in TT entry (hash_moves[0..3]) */
+  if ( hash_hit ) {
+    for ( i = 0; i < 4; i++ ) {
+      sq = hash_moves[i];
+      if ( (unsigned int) sq < 100 && !used[sq] &&
+	   !((my_bits | opp_bits) & square_mask[sq]) &&
+	   (TestFlips_wrapper_to( sq, my_bits, opp_bits, &dummy_flips ) > 0) ) {
+	used[sq] = TRUE;
+	if ( count < MAX_ROOT_MOVES )
+	  sp->moves[count++] = sq;
+      }
     }
   }
 
@@ -1358,6 +1331,11 @@ end_order_moves_presearch( ThreadState *ts,
     move = smo[shallow_index];
     if ( legal_moves & square_mask[move] ) {
       legal_moves &= ~square_mask[move];
+      if ( can_split && proven[move] && (proven_score[move] <= curr_alpha) ) {
+	ev_stage[move] = -INFINITE_EVAL;
+	mlist_stage[mcnt++] = move;
+	continue;
+      }
       BitBoard child_my_bits;
       int flipped = TestFlips_wrapper_to( move, my_bits, opp_bits, &child_my_bits );
       if ( flipped > 0 ) {
@@ -1893,8 +1871,7 @@ end_search_nws( ThreadState *ts,
   int move_index;
   int first;
   int pre_search_done, etc_tried;
-  int best_list_index, best_list_length;
-  int best_list[8];
+  int hash_move, best_move, best_list_length;
   int proven[100], proven_score[100], proven_cutoff[100];
   int siblings_dispatched = FALSE;
   int can_split;
@@ -1943,27 +1920,20 @@ end_search_nws( ThreadState *ts,
   pre_search_done = FALSE;
   etc_tried = 0;
 
-  /* Initialize move list and check hash table moves */
-  move_count[stage] = 0;
-  best_list_length = 0;
-  for ( i = 0; i < 8; i++ )
-    best_list[i] = 0;
-
-  if ( hash_hit ) {
-    best_list[0] = entry.move[0];
-    best_list_length = 1;
-  }
+  /* Initialize move list and check hash table move */
+  hash_move = hash_hit ? entry.move[0] : 0;
+  best_move = hash_move;
+  best_list_length = hash_hit ? 1 : 0;
+  move_count[stage] = best_list_length;
 
   /* 5. NWS Move loop */
-  for ( move_index = 0, best_list_index = 0; TRUE;
-	move_index++, best_list_index++ ) {
+  for ( move_index = 0; TRUE; move_index++ ) {
     int child_selective_cutoff;
     BitBoard new_my_bits;
     BitBoard new_opp_bits;
 
-    if ( best_list_index < best_list_length ) {
-      move = best_list[best_list_index];
-      move_count[stage]++;
+    if ( move_index < best_list_length ) {
+      move = hash_move;
     }
     else {
       if ( !pre_search_done ) {
@@ -1971,17 +1941,16 @@ end_search_nws( ThreadState *ts,
 	if ( end_order_moves_presearch( ts, level, empties, side_to_move,
 					my_bits, opp_bits, beta, alpha,
 					selectivity, use_hash,
-					best_list, best_list_length,
+					&hash_move, best_list_length,
 					can_split, proven, proven_score,
 					&etc_tried,
 					&etc_cutoff_score ) ) {
-	  best_list[0] = etc_tried;
 	  if ( selectivity > 0 )
 	    *selective_cutoff = TRUE;
 	  if ( use_hash )
-	    add_hash_extended_ts( ts, ENDGAME_MODE, etc_cutoff_score, best_list,
-				  ENDGAME_SCORE | LOWER_BOUND, empties,
-				  *selective_cutoff ? selectivity : 0 );
+	    add_hash_ts( ts, ENDGAME_MODE, etc_cutoff_score, etc_tried,
+			 ENDGAME_SCORE | LOWER_BOUND, empties,
+			 *selective_cutoff ? selectivity : 0 );
 	  ts->ts_disks_played = saved_disks_played;
 	  return etc_cutoff_score;
 	}
@@ -2006,43 +1975,43 @@ end_search_nws( ThreadState *ts,
       }
     }
 
-    unsigned int diff1, diff2;
-    int pred, succ;
-    int flipped;
-    if ( pre_search_done && level <= MAX_SEARCH_DEPTH ) {
-      flipped = ts->ts_cached_flipped[level][move];
-      new_my_bits = ts->ts_cached_flips[level][move];
-    }
-    else {
-      flipped = TestFlips_wrapper_to( move, my_bits, opp_bits, &new_my_bits );
-    }
-    FULL_ANDNOT( new_opp_bits, opp_bits, new_my_bits );
-
-    end_make_move( ts, move, new_my_bits, my_bits, side_to_move, &diff1, &diff2, &pred, &succ );
-
-    if ( level + 1 <= MAX_SEARCH_DEPTH ) {
-      ts->stable_discs[BLACKSQ][level + 1] = ts->stable_discs[BLACKSQ][level];
-      ts->stable_discs[WHITESQ][level + 1] = ts->stable_discs[WHITESQ][level];
-      if ( pre_search_done && level <= MAX_SEARCH_DEPTH )
-        ts->stable_discs[side_to_move][level + 1] |= ts->ts_cached_stable[level][move];
-    }
-
-    int new_disc_diff = -disc_diff - 2 * flipped - 1;
-
     if ( can_split && proven[move] && (proven_score[move] <= alpha) ) {
       curr_val = proven_score[move];
       child_selective_cutoff = proven_cutoff[move];
     }
     else {
+      unsigned int diff1, diff2;
+      int pred, succ;
+      int flipped;
+      if ( pre_search_done && level <= MAX_SEARCH_DEPTH ) {
+        flipped = ts->ts_cached_flipped[level][move];
+        new_my_bits = ts->ts_cached_flips[level][move];
+      }
+      else {
+        flipped = TestFlips_wrapper_to( move, my_bits, opp_bits, &new_my_bits );
+      }
+      FULL_ANDNOT( new_opp_bits, opp_bits, new_my_bits );
+
+      end_make_move( ts, move, new_my_bits, my_bits, side_to_move, &diff1, &diff2, &pred, &succ );
+
+      if ( level + 1 <= MAX_SEARCH_DEPTH ) {
+        ts->stable_discs[BLACKSQ][level + 1] = ts->stable_discs[BLACKSQ][level];
+        ts->stable_discs[WHITESQ][level + 1] = ts->stable_discs[WHITESQ][level];
+        if ( pre_search_done && level <= MAX_SEARCH_DEPTH )
+          ts->stable_discs[side_to_move][level + 1] |= ts->ts_cached_stable[level][move];
+      }
+
+      int new_disc_diff = -disc_diff - 2 * flipped - 1;
+
       curr_val = -end_search_nws( ts, new_opp_bits, new_my_bits,
 				  -beta, OPP( side_to_move ),
 				  empties - 1, new_disc_diff,
 				  (pre_search_done && level <= MAX_SEARCH_DEPTH) ? 2 : TRUE,
 				  level + 1,
 				  selectivity, &child_selective_cutoff );
-    }
 
-    end_unmake_move( ts, move, diff1, diff2, pred, succ );
+      end_unmake_move( ts, move, diff1, diff2, pred, succ );
+    }
 
     if ( abs( curr_val ) >= 20000 || is_panic_abort() || force_return || SPLIT_ABANDONED() ) {
       ts->ts_disks_played = saved_disks_played;
@@ -2052,11 +2021,10 @@ end_search_nws( ThreadState *ts,
     /* Cutoff check in NWS: any score >= beta causes an immediate cutoff */
     if ( curr_val >= beta ) {
       *selective_cutoff = child_selective_cutoff;
-      update_best_list( best_list, move, best_list_index, &best_list_length );
       if ( use_hash )
-	add_hash_extended_ts( ts, ENDGAME_MODE, curr_val, best_list,
-			      ENDGAME_SCORE | LOWER_BOUND, empties,
-			      *selective_cutoff ? selectivity : 0 );
+	add_hash_ts( ts, ENDGAME_MODE, curr_val, move,
+		     ENDGAME_SCORE | LOWER_BOUND, empties,
+		     *selective_cutoff ? selectivity : 0 );
       ts->ts_disks_played = saved_disks_played;
       return curr_val;
     }
@@ -2066,8 +2034,8 @@ end_search_nws( ThreadState *ts,
     if ( child_selective_cutoff )
       *selective_cutoff = TRUE;
 
-    if ( (best_list_index >= best_list_length) && (best_list_length < 4) )
-      best_list[best_list_length++] = move;
+    if ( first && best_move == 0 )
+      best_move = move;
 
     if ( !siblings_dispatched && first &&
 	 (empties >= PARALLEL_SPLIT_DEPTH + SPLIT_NESTING_MARGIN * ts->ts_split_nesting) &&
@@ -2081,15 +2049,14 @@ end_search_nws( ThreadState *ts,
       int cut_move = 0, cut_score = 0, cut_selective = 0;
       if ( dispatch_siblings( ts, my_bits, opp_bits, side_to_move, level,
 			      empties, disc_diff, alpha, beta, selectivity, move,
-			      best_list, best_list_length, pre_search_done,
+			      entry.move, hash_hit, pre_search_done,
 			      proven, proven_score, proven_cutoff,
 			      &cut_move, &cut_score, &cut_selective ) ) {
 	*selective_cutoff = cut_selective;
-	update_best_list( best_list, cut_move, best_list_index, &best_list_length );
 	if ( use_hash )
-	  add_hash_extended_ts( ts, ENDGAME_MODE, cut_score, best_list,
-				ENDGAME_SCORE | LOWER_BOUND, empties,
-				*selective_cutoff ? selectivity : 0 );
+	  add_hash_ts( ts, ENDGAME_MODE, cut_score, cut_move,
+		       ENDGAME_SCORE | LOWER_BOUND, empties,
+		       *selective_cutoff ? selectivity : 0 );
 	ts->ts_disks_played = saved_disks_played;
 	return cut_score;
       }
@@ -2105,9 +2072,9 @@ end_search_nws( ThreadState *ts,
   /* 6. All-node fail-low or pass/terminal */
   if ( !first ) {
     if ( use_hash ) {
-      add_hash_extended_ts( ts, ENDGAME_MODE, best, best_list,
-			    ENDGAME_SCORE | UPPER_BOUND, empties,
-			    *selective_cutoff ? selectivity : 0 );
+      add_hash_ts( ts, ENDGAME_MODE, best, best_move,
+		   ENDGAME_SCORE | UPPER_BOUND, empties,
+		   *selective_cutoff ? selectivity : 0 );
     }
     ts->ts_disks_played = saved_disks_played;
     return best;
@@ -2339,8 +2306,8 @@ end_search_pvs( ThreadState *ts,
   int update_pv, first;
   int curr_alpha;
   int pre_search_done, etc_tried;
-  int best_list_index, best_list_length;
-  int best_list[8];
+  int best_list_length, best_move;
+  int best_list[2];
   int proven[100], proven_score[100], proven_cutoff[100];
   int siblings_dispatched = FALSE;
   int can_split;
@@ -2391,46 +2358,25 @@ end_search_pvs( ThreadState *ts,
   etc_tried = 0;
   curr_alpha = alpha;
 
-  /* Initialize move list and check hash table moves */
-  move_count[stage] = 0;
+  /* Initialize move list and check root/hash priority moves */
   best_list_length = 0;
-  for ( i = 0; i < 8; i++ )
-    best_list[i] = 0;
-  if ( hash_hit ) {
-    best_list[0] = entry.move[0];
-    best_list_length = 1;
+  if ( level == 0 && ts->ts_end_best_root_move != 0 &&
+       bb_valid_move( ts->ts_end_best_root_move, my_bits, opp_bits ) ) {
+    best_list[best_list_length++] = ts->ts_end_best_root_move;
   }
-
-  if ( level == 0 && ts->ts_end_best_root_move != 0 && bb_valid_move( ts->ts_end_best_root_move, my_bits, opp_bits ) ) {
-    int pos = -1;
-    for ( i = 0; i < best_list_length; i++ ) {
-      if ( best_list[i] == ts->ts_end_best_root_move ) { pos = i; break; }
-    }
-    if ( pos > 0 ) {
-      for ( i = pos; i > 0; i-- ) {
-        best_list[i] = best_list[i - 1];
-      }
-      best_list[0] = ts->ts_end_best_root_move;
-    }
-    else if ( pos < 0 ) {
-      /* Prepend to best_list[0] */
-      for ( i = best_list_length; i > 0; i-- ) {
-        best_list[i] = best_list[i - 1];
-      }
-      best_list[0] = ts->ts_end_best_root_move;
-      best_list_length++;
-    }
+  if ( hash_hit && (best_list_length == 0 || entry.move[0] != best_list[0]) ) {
+    best_list[best_list_length++] = entry.move[0];
   }
+  best_move = (best_list_length > 0) ? best_list[0] : 0;
+  move_count[stage] = best_list_length;
 
-  for ( move_index = 0, best_list_index = 0; TRUE;
-	  move_index++, best_list_index++ ) {
+  for ( move_index = 0; TRUE; move_index++ ) {
     int child_selective_cutoff;
     BitBoard new_my_bits;
     BitBoard new_opp_bits;
 
-    if ( best_list_index < best_list_length ) {
-	move = best_list[best_list_index];
-	move_count[stage]++;
+    if ( move_index < best_list_length ) {
+	move = best_list[move_index];
     }
     else {
 	if ( !pre_search_done ) {
@@ -2442,13 +2388,12 @@ end_search_pvs( ThreadState *ts,
 					  can_split, proven, proven_score,
 					  &etc_tried,
 					  &etc_cutoff_score ) ) {
-	    best_list[0] = etc_tried;
 	    if ( selectivity > 0 )
 	      *selective_cutoff = TRUE;
 	    if ( use_hash )
-	      add_hash_extended_ts( ts, ENDGAME_MODE, etc_cutoff_score, best_list,
-				    ENDGAME_SCORE | LOWER_BOUND, empties,
-				    *selective_cutoff ? selectivity : 0 );
+	      add_hash_ts( ts, ENDGAME_MODE, etc_cutoff_score, etc_tried,
+			   ENDGAME_SCORE | LOWER_BOUND, empties,
+			   *selective_cutoff ? selectivity : 0 );
 	    pv_depth[level] = level + 1;
 	    pv[level][level] = etc_tried;
 	    if ( level == 0 )
@@ -2483,29 +2428,37 @@ end_search_pvs( ThreadState *ts,
 	send_sweep( "%c%c", TO_SQUARE( move ) );
     }
 
-    unsigned int diff1, diff2;
-    int pred, succ;
-    int flipped;
-    if ( pre_search_done && level <= MAX_SEARCH_DEPTH ) {
-      flipped = ts->ts_cached_flipped[level][move];
-      new_my_bits = ts->ts_cached_flips[level][move];
+    update_pv = FALSE;
+    if ( !first && can_split && proven[move] && (proven_score[move] <= MAX( best, curr_alpha )) ) {
+      curr_alpha = MAX( best, curr_alpha );
+      curr_val = proven_score[move];
+      child_selective_cutoff = proven_cutoff[move];
     }
     else {
-      flipped = TestFlips_wrapper_to( move, my_bits, opp_bits, &new_my_bits );
-    }
-    FULL_ANDNOT( new_opp_bits, opp_bits, new_my_bits );
+      unsigned int diff1, diff2;
+      int pred, succ;
+      int flipped;
+      if ( pre_search_done && level <= MAX_SEARCH_DEPTH ) {
+        flipped = ts->ts_cached_flipped[level][move];
+        new_my_bits = ts->ts_cached_flips[level][move];
+      }
+      else {
+        flipped = TestFlips_wrapper_to( move, my_bits, opp_bits, &new_my_bits );
+      }
+      FULL_ANDNOT( new_opp_bits, opp_bits, new_my_bits );
 
-    end_make_move( ts, move, new_my_bits, my_bits, side_to_move, &diff1, &diff2, &pred, &succ );
+      end_make_move( ts, move, new_my_bits, my_bits, side_to_move, &diff1, &diff2, &pred, &succ );
 
-    if ( level + 1 <= MAX_SEARCH_DEPTH ) {
+      if ( level + 1 <= MAX_SEARCH_DEPTH ) {
 	ts->stable_discs[BLACKSQ][level + 1] = ts->stable_discs[BLACKSQ][level];
 	ts->stable_discs[WHITESQ][level + 1] = ts->stable_discs[WHITESQ][level];
-    }
+	if ( pre_search_done && level <= MAX_SEARCH_DEPTH )
+	  ts->stable_discs[side_to_move][level + 1] |= ts->ts_cached_stable[level][move];
+      }
 
-    int new_disc_diff = -disc_diff - 2 * flipped - 1;
+      int new_disc_diff = -disc_diff - 2 * flipped - 1;
 
-    update_pv = FALSE;
-    if ( first ) {
+      if ( first ) {
 	best = curr_val =
 	  -end_search_pvs( ts, new_opp_bits, new_my_bits,
 			   -beta, -curr_alpha, OPP( side_to_move ),
@@ -2515,19 +2468,16 @@ end_search_pvs( ThreadState *ts,
 	if ( level == 0 )
 	  ts->ts_end_best_root_move = move;
 	curr_alpha = MAX( best, curr_alpha );
-    }
-    else {
+      }
+      else {
 	curr_alpha = MAX( best, curr_alpha );
-	if ( can_split && proven[move] && (proven_score[move] <= curr_alpha) ) {
-	  curr_val = proven_score[move];
-	  child_selective_cutoff = proven_cutoff[move];
-	}
-	else
-	  curr_val =
-	    -end_search_nws( ts, new_opp_bits, new_my_bits,
-			     -(curr_alpha + 1), OPP( side_to_move ),
-			     empties - 1, new_disc_diff, TRUE, level + 1,
-			     selectivity, &child_selective_cutoff );
+	curr_val =
+	  -end_search_nws( ts, new_opp_bits, new_my_bits,
+			   -(curr_alpha + 1), OPP( side_to_move ),
+			   empties - 1, new_disc_diff,
+			   (pre_search_done && level <= MAX_SEARCH_DEPTH) ? 2 : TRUE,
+			   level + 1,
+			   selectivity, &child_selective_cutoff );
 
 	if ( (curr_val > curr_alpha) && (curr_val < beta) ) {
 	  if ( selectivity > 0 )
@@ -2555,14 +2505,15 @@ end_search_pvs( ThreadState *ts,
 	  if ( (level == 0) && !is_panic_abort() && !force_return )
 	    ts->ts_end_best_root_move = move;
 	}
+      }
+
+      end_unmake_move( ts, move, diff1, diff2, pred, succ );
     }
 
     if ( best >= beta )
 	*selective_cutoff = child_selective_cutoff;
     else if ( child_selective_cutoff )
 	*selective_cutoff = TRUE;
-
-    end_unmake_move( ts, move, diff1, diff2, pred, succ );
 
     if ( abs( curr_val ) >= 20000 || is_panic_abort() || force_return || SPLIT_ABANDONED() ) {
 	ts->ts_disks_played = saved_disks_played;
@@ -2587,7 +2538,7 @@ end_search_pvs( ThreadState *ts,
     }
 
     if ( update_pv ) {
-	update_best_list( best_list, move, best_list_index, &best_list_length );
+	best_move = move;
 	pv[level][level] = move;
 	if ( pv_depth[level + 1] > level + 1 )
 	  pv_depth[level] = pv_depth[level + 1];
@@ -2598,16 +2549,12 @@ end_search_pvs( ThreadState *ts,
     }
     if ( best >= beta ) {
 	if ( use_hash )
-	  add_hash_extended_ts( ts, ENDGAME_MODE, best, best_list,
-				ENDGAME_SCORE | LOWER_BOUND, empties,
-				*selective_cutoff ? selectivity : 0 );
+	  add_hash_ts( ts, ENDGAME_MODE, best, best_move,
+		       ENDGAME_SCORE | LOWER_BOUND, empties,
+		       *selective_cutoff ? selectivity : 0 );
 	ts->ts_disks_played = saved_disks_played;
 	return best;
     }
-
-    if ( (best_list_index >= best_list_length) && !update_pv &&
-	   (best_list_length < 4) )
-	best_list[best_list_length++] = move;
 
     if ( !siblings_dispatched && first &&
 	 (empties >= PARALLEL_SPLIT_DEPTH + SPLIT_NESTING_MARGIN * ts->ts_split_nesting) &&
@@ -2621,20 +2568,20 @@ end_search_pvs( ThreadState *ts,
       int cut_move = 0, cut_score = 0, cut_selective = 0;
       if ( dispatch_siblings( ts, my_bits, opp_bits, side_to_move, level,
 			      empties, disc_diff, curr_alpha, beta, selectivity, move,
-			      best_list, best_list_length, pre_search_done,
+			      entry.move, hash_hit, pre_search_done,
 			      proven, proven_score, proven_cutoff,
 			      &cut_move, &cut_score, &cut_selective ) ) {
 	best = cut_score;
 	*selective_cutoff = cut_selective;
-	best_list[0] = cut_move;
+	best_move = cut_move;
 	pv[level][level] = cut_move;
 	pv_depth[level] = level + 1;
 	if ( level == 0 )
 	  ts->ts_end_best_root_move = cut_move;
 	if ( use_hash )
-	  add_hash_extended_ts( ts, ENDGAME_MODE, best, best_list,
-				ENDGAME_SCORE | LOWER_BOUND, empties,
-				*selective_cutoff ? selectivity : 0 );
+	  add_hash_ts( ts, ENDGAME_MODE, best, cut_move,
+		       ENDGAME_SCORE | LOWER_BOUND, empties,
+		       *selective_cutoff ? selectivity : 0 );
 	ts->ts_disks_played = saved_disks_played;
 	return best;
       }
@@ -2654,8 +2601,8 @@ end_search_pvs( ThreadState *ts,
 	  flags |= EXACT_VALUE;
 	else
 	  flags |= UPPER_BOUND;
-	add_hash_extended_ts( ts, ENDGAME_MODE, best, best_list, flags, empties,
-			      *selective_cutoff ? selectivity : 0 );
+	add_hash_ts( ts, ENDGAME_MODE, best, best_move, flags, empties,
+		     *selective_cutoff ? selectivity : 0 );
     }
     ts->ts_disks_played = saved_disks_played;
     return best;
@@ -2941,7 +2888,6 @@ end_game( int side_to_move,
   last_window_center = 0;
 
   if ( !wld && (empties >= 16) ) {
-    set_bitboards( board, side_to_move, &root_my_bits, &root_opp_bits );
     int stage = 60 - empties;
     int saved_pv00 = pv[0][0];
     int ts_val = 0, ts_val_6 = 0;
@@ -2954,16 +2900,13 @@ end_game( int side_to_move,
         ts_val_6 = ts_val;
     }
     set_midgame_full_width_depth( 0 );
+    if ( end_best_root_move == 0 && bb_valid_move( pv[0][0], root_my_bits, root_opp_bits ) )
+      end_best_root_move = pv[0][0];
     pv[0][0] = saved_pv00;
     int rts_adj_6 = ts_val_6 - (int) llround( end_mean[stage][6] * 128.0 );
     int rts_adj_8 = ts_val - (int) llround( end_mean[stage][8] * 128.0 );
     int rts_adj_val = (abs( rts_adj_6 ) >= 14 * 128) ? rts_adj_6 : rts_adj_8;
     last_window_center = end_aspiration_center( rts_adj_val, 60 );
-
-    if ( getenv( "PASS_DIAG" ) != NULL ) {
-      fprintf( stderr, "PASS_DIAG: INITIAL_PREDICTION center=%d ts_val=%d rts_adj_val=%d\n",
-               last_window_center, ts_val, rts_adj_val );
-    }
   }
 
   if ( empties > DISABLE_SELECTIVITY ) {
@@ -3008,32 +2951,8 @@ end_game( int side_to_move,
       }
     }
     else {
-      static int sel_schedule[16] = { 6, 3, 2 };
-      static int sel_schedule_len = -1;
-      if ( sel_schedule_len == -1 ) {
-	char *env_sched = getenv( "SEL_SCHEDULE" );
-	if ( env_sched != NULL ) {
-	  if ( strcmp( env_sched, "none" ) == 0 || strcmp( env_sched, "0" ) == 0 ) {
-	    sel_schedule_len = 0;
-	  } else {
-	    int cnt = 0;
-	    char buf[128];
-	    strncpy( buf, env_sched, sizeof( buf ) - 1 );
-	    buf[sizeof( buf ) - 1] = '\0';
-	    char *tok = strtok( buf, "," );
-	    while ( tok != NULL && cnt < 16 ) {
-	      int v = atoi( tok );
-	      if ( v > 0 )
-		sel_schedule[cnt++] = v;
-	      tok = strtok( NULL, "," );
-	    }
-	    sel_schedule_len = cnt;
-	  }
-	} else {
-	  sel_schedule_len = 3;
-	}
-      }
-      int num_passes = sel_schedule_len;
+      static const int sel_schedule[] = { 6, 3, 2 };
+      int num_passes = (int)(sizeof( sel_schedule ) / sizeof( sel_schedule[0] ));
       int pass_idx;
       for ( pass_idx = 0; pass_idx < num_passes &&
 	      !is_panic_abort() && !force_return; pass_idx++ ) {
@@ -3050,33 +2969,20 @@ end_game( int side_to_move,
 	root_eval = end_tree_wrapper( 0, empties, side_to_move,
 				      alpha, beta, selectivity, TRUE );
 
-	if ( root_eval <= alpha ) {
+	if ( root_eval <= alpha || root_eval >= beta ) {
+	  int step_dir = (root_eval <= alpha) ? -2 : 2;
 	  int steps = 0;
 	  do {
-	    last_window_center -= 2;
+	    last_window_center += step_dir;
 	    alpha = last_window_center - 1;
 	    beta = last_window_center + 1;
 	    if ( is_panic_abort() || force_return || ++steps >= 32 )
 	      break;
 	    root_eval = end_tree_wrapper( 0, empties, side_to_move,
 					  alpha, beta, selectivity, TRUE );
-	  } while ( root_eval <= alpha );
+	  } while ( (step_dir < 0) ? (root_eval <= alpha) : (root_eval >= beta) );
 	  root_eval = last_window_center;
-	  total_steps = -steps;
-	}
-	else if ( root_eval >= beta ) {
-	  int steps = 0;
-	  do {
-	    last_window_center += 2;
-	    alpha = last_window_center - 1;
-	    beta = last_window_center + 1;
-	    if ( is_panic_abort() || force_return || ++steps >= 32 )
-	      break;
-	    root_eval = end_tree_wrapper( 0, empties, side_to_move,
-					  alpha, beta, selectivity, TRUE );
-	  } while ( root_eval >= beta );
-	  root_eval = last_window_center;
-	  total_steps = steps;
+	  total_steps = (step_dir < 0) ? -steps : steps;
 	}
 
 	adjust_counter( &nodes );

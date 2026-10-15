@@ -292,10 +292,6 @@ add_shallow_hash( int score,
   __atomic_store_n( &shallow_hash_table[index].key2, xor_key2, __ATOMIC_RELEASE );
 }
 
-void dump_tt_distribution( const char *label );
-void reset_tt_stats( void );
-void print_tt_stats( const char *label );
-
 
 
 #ifdef __cplusplus
