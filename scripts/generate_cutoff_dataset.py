@@ -47,10 +47,6 @@ RECT24_SQS = [
     [38, 46, 54, 62, 39, 47, 55, 63]
 ]
 
-DIAG8_SQS = [
-    [63, 54, 45, 36, 27, 18, 9, 0],
-    [56, 49, 42, 35, 28, 21, 14, 7]
-]
 
 SHIFTS = [
     (1, INNER_MASK, lambda x: (x << 1) & MASK_64, lambda x: x >> 1),
@@ -68,7 +64,7 @@ def generate_all_moves(my_bits: int, opp_bits: int) -> List[int]:
     moves_bb = 0
     empty = ~(my_bits | opp_bits) & MASK_64
     for _, mask, step, _ in SHIFTS:
-        eff_mask = mask if mask != MASK_64 else opp_bits
+        eff_mask = opp_bits & mask
         flip = step(my_bits) & eff_mask
         flip |= step(flip) & eff_mask
         flip |= step(flip) & eff_mask
@@ -88,7 +84,7 @@ def make_move_bitboard(my_bits: int, opp_bits: int, sq: int) -> Tuple[int, int]:
     sq_bit = 1 << sq
     flips = 0
     for _, mask, step, _ in SHIFTS:
-        eff_mask = mask if mask != MASK_64 else opp_bits
+        eff_mask = opp_bits & mask
         curr = step(sq_bit) & eff_mask
         ray = 0
         while curr != 0:
@@ -104,8 +100,8 @@ def make_move_bitboard(my_bits: int, opp_bits: int, sq: int) -> Tuple[int, int]:
     return new_my, new_opp
 
 
-def extract_18_indices(my_bits: int, opp_bits: int) -> List[int]:
-    """Extracts 18 pattern indices from bitboards matching src/end_patterns.c."""
+def extract_16_indices(my_bits: int, opp_bits: int) -> List[int]:
+    """Extracts 16 pattern indices from bitboards matching src/end_patterns.c."""
     indices = []
     # 4 Corner 3x3
     for sqs in CORNER33_SQS:
@@ -134,16 +130,12 @@ def extract_18_indices(my_bits: int, opp_bits: int) -> List[int]:
             idx = idx * 3 + (1 - ob + mb)
         indices.append(idx)
 
-    # 2 Diagonals
-    for sqs in DIAG8_SQS:
-        idx = 0
-        for s in sqs:
-            mb = (my_bits >> s) & 1
-            ob = (opp_bits >> s) & 1
-            idx = idx * 3 + (1 - ob + mb)
-        indices.append(idx)
-
     return indices
+
+
+def extract_18_indices(my_bits: int, opp_bits: int) -> List[int]:
+    return extract_16_indices(my_bits, opp_bits)
+
 
 
 def run_cutoff_collection(repo_root: Path, log_path: Path, positions_file: Optional[Path] = None, max_games: int = 50):

@@ -67,9 +67,6 @@
 #define LOW_LEVEL_DEPTH              8
 #define HASH_DEPTH                   (LOW_LEVEL_DEPTH + 1)
 
-/* The disc difference when special wipeout move ordering is tried.
-   This means more aggressive use of fastest first. */
-#define WIPEOUT_THRESHOLD            60
 #define REGION_PARITY_BONUS          64
 #define FAST_PATTERN_DEPTH           13
 #define LAZY_PATTERN_MARGIN          768
@@ -1685,23 +1682,10 @@ end_order_moves_presearch( ThreadState *ts,
             (empties == 23 && level >= 2)) )
         d += 1;
       int upper = (-curr_alpha + 8) * 128;
-      int ff_thr;
-      {
-        int st = stage, dd = (d > MAX_END_CORR_DEPTH) ? MAX_END_CORR_DEPTH : d;
-        double mean = 0.0, sig = 100.0;
-        for ( ; st <= 60; st++ )
-          if ( end_stats_available[st][dd] ) {
-            mean = end_mean[st][dd];
-            sig = 0.45 * end_sigma[st][dd];
-            break;
-          }
-        ff_thr = 128 * curr_alpha + (int) ceil( (mean + sig) * 128.0 );
-        if ( ff_thr > WIPEOUT_THRESHOLD * 128 )
-          ff_thr = WIPEOUT_THRESHOLD * 128;
-      }
+      int ff_thr = 128 * curr_alpha + (int) ceil( (end_mean[stage][d] + 0.45 * end_sigma[stage][d]) * 128.0 );
       int k_limit = (ORDER_TS_TOPK < surv_count) ? ORDER_TS_TOPK : surv_count;
-      int ts_vals[4] = { 0, 0, 0, 0 };
-      int ts_promoted[4] = { 0, 0, 0, 0 };
+      int any_promoted = 0;
+      int v0 = 0;
       BitBoard b_parent = (side_to_move == BLACKSQ) ? my_bits : opp_bits;
       BitBoard w_parent = (side_to_move == BLACKSQ) ? opp_bits : my_bits;
       int parent_b_cnt = non_iterative_popcount( b_parent );
@@ -1736,42 +1720,19 @@ end_order_moves_presearch( ThreadState *ts,
         ts->ts_hash2 ^= diff2;
         ts->ts_disks_played = 60 - empties;
         ts->ts_region_parity = saved_parity;
-        if ( i < 4 )
-          ts_vals[i] = v;
+        if ( i == 0 )
+          v0 = v;
 
         if ( v > ff_thr ) {
           int mob = non_iterative_popcount( surv[i].opp_moves );
-          int wipe = (v > WIPEOUT_THRESHOLD * 128);
-          v += wipe ? 2000000 : 1000000;
-          v -= (wipe ? 920 : 460) * mob;
-          ev_stage[m] = v;
-          if ( i < 4 )
-            ts_promoted[i] = 1;
+          ev_stage[m] = 1000000 + v - 460 * mob;
+          any_promoted = 1;
         }
-        else if ( empties >= 28 ) {
-          ev_stage[m] = v;
+        else if ( i > 0 && !any_promoted && (empties < 20 || curr_alpha >= 18) && v > v0 + 256 ) {
+          ev_stage[m] = ev_stage[surv[0].sq] + (v - v0);
         }
-        if ( i == 1 && !ts_promoted[0] && !ts_promoted[1] && surv_count >= 3 && d <= 4 )
+        if ( i == 1 && !any_promoted && surv_count >= 3 && d <= 4 )
           k_limit = 3;
-      }
-      if ( empties < 28 && k_limit >= 2 && !ts_promoted[0] && !ts_promoted[1] &&
-           (k_limit < 3 || !ts_promoted[2]) && (empties < 20 || curr_alpha >= 18) ) {
-        int best_k = 1;
-        int max_v = ts_vals[1];
-        for ( i = 2; i < k_limit; i++ ) {
-          if ( ts_vals[i] > max_v ) {
-            max_v = ts_vals[i];
-            best_k = i;
-          }
-        }
-        if ( max_v > ts_vals[0] + 256 ) {
-          int m0 = surv[0].sq, mb = surv[best_k].sq;
-          if ( ev_stage[m0] > ev_stage[mb] ) {
-            int tmp_ev = ev_stage[m0];
-            ev_stage[m0] = ev_stage[mb];
-            ev_stage[mb] = tmp_ev;
-          }
-        }
       }
     }
   }
@@ -2994,21 +2955,8 @@ end_game( int side_to_move,
     }
     set_midgame_full_width_depth( 0 );
     pv[0][0] = saved_pv00;
-    double bias6 = 0.0, bias8 = 0.0;
-    for ( int st = stage; st <= 60; st++ ) {
-      if ( end_stats_available[st][6] ) {
-        bias6 = end_mean[st][6];
-        break;
-      }
-    }
-    for ( int st = stage; st <= 60; st++ ) {
-      if ( end_stats_available[st][8] ) {
-        bias8 = end_mean[st][8];
-        break;
-      }
-    }
-    int rts_adj_6 = ts_val_6 - (int) llround( bias6 * 128.0 );
-    int rts_adj_8 = ts_val - (int) llround( bias8 * 128.0 );
+    int rts_adj_6 = ts_val_6 - (int) llround( end_mean[stage][6] * 128.0 );
+    int rts_adj_8 = ts_val - (int) llround( end_mean[stage][8] * 128.0 );
     int rts_adj_val = (abs( rts_adj_6 ) >= 14 * 128) ? rts_adj_6 : rts_adj_8;
     last_window_center = end_aspiration_center( rts_adj_val, 60 );
 

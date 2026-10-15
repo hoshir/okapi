@@ -1,21 +1,15 @@
 #!/usr/bin/env python3
-"""train_ltr_endgame.py - Ultra-Lightweight 4-Pattern Endgame Move Ordering Trainer.
+"""train_ltr_endgame.py - Calibrated 3-Pattern Endgame Move Ordering Trainer.
 
-Implements ticket EVAL-009 (Egaroucid Paradigm):
-Trains an ultra-compact 4-pattern model on exact-solved WTHOR games (data/ltr_exact_solved_15yr.pt)
-using Soft-Target Knowledge Distillation + Listwise LTR.
-
-Pattern Architecture (91,854 states = 183.7 KB):
-1. Corner 3x3: 9 squares, 3^9 = 19,683 states (4 corners)
-2. Edge + 2X: 10 squares, 3^10 = 59,049 states (4 edges)
-3. 2x4 Rectangle: 8 squares, 3^8 = 6,561 states (8 octants)
-4. Diagonal 8: 8 squares, 3^8 = 6,561 states (2 diagonals)
-
-Exports weights directly to src/end_patterns_data.h for 100% L2 cache residency.
+Trains an ultra-compact 3-pattern model (Corner 3x3, Edge+2X, 2x4 Rectangle; 85,293 weights = 170.6 KB)
+on exact-solved WTHOR games (data/ltr_exact_solved_15yr.pt) using Soft-Target Knowledge Distillation + Listwise LTR.
+Applies exact spatial mirror tying (m33, m8x2, mirror8) and reference header standard deviation normalization.
+Exports weights directly to src/end_patterns_data.h as `const int16_t end_pattern_weights[85293]`.
 """
 
 import argparse
 import os
+import re
 import sys
 import time
 from pathlib import Path
@@ -34,8 +28,7 @@ from coeffs_tool import init_mirror_maps, _MIRROR_MAPS
 CORNER33_COUNT = 19683
 EDGE2X_COUNT = 59049
 RECT24_COUNT = 6561
-DIAG8_COUNT = 6561
-TOTAL_WEIGHTS = CORNER33_COUNT + EDGE2X_COUNT + RECT24_COUNT + DIAG8_COUNT  # 91854
+TOTAL_WEIGHTS = CORNER33_COUNT + EDGE2X_COUNT + RECT24_COUNT  # 85293
 
 
 class EndgameLTRDataset(Dataset):
@@ -44,8 +37,10 @@ class EndgameLTRDataset(Dataset):
     def __init__(self, samples: List[dict], scores: Optional[List[float]] = None, has_scores: Optional[List[bool]] = None, label_smoothing: float = 0.05):
         self.items = []
         for i, s in enumerate(samples):
-            if "child_features_18" in s:
-                move_indices = s["child_features_18"]
+            if "child_features_16" in s:
+                move_indices = s["child_features_16"]
+            elif "child_features_18" in s:
+                move_indices = [m[:16] for m in s["child_features_18"]]
             else:
                 child_feats = s.get("child_features", [])
                 if len(child_feats) < 2:
@@ -55,8 +50,7 @@ class EndgameLTRDataset(Dataset):
                     c33 = [f[34], f[35], f[36], f[37]]
                     e2x = [f[0], f[1], f[2], f[3]]
                     r24 = [((f[idx] // 243) % 81) * 81 + (f[idx] % 81) for idx in range(38, 46)]
-                    d8 = [f[16], f[17]]
-                    move_indices.append(c33 + e2x + r24 + d8)  # 18 indices
+                    move_indices.append(c33 + e2x + r24)  # 16 indices
 
             k = len(move_indices)
             if k < 2:
@@ -74,7 +68,7 @@ class EndgameLTRDataset(Dataset):
             has_sc = bool(has_scores[i]) if (has_scores is not None and i < len(has_scores)) else (scores is not None and scores[i] != 0.0)
 
             self.items.append((
-                torch.tensor(move_indices, dtype=torch.long),  # (k, 18)
+                torch.tensor(move_indices, dtype=torch.long),  # (k, 16)
                 targets,                                       # (k,)
                 best_idx,
                 score_val,
@@ -93,7 +87,7 @@ def collate_fn(batch):
     max_k = max(item[0].shape[0] for item in batch)
     batch_size = len(batch)
 
-    padded_indices = torch.zeros((batch_size, max_k, 18), dtype=torch.long)
+    padded_indices = torch.zeros((batch_size, max_k, 16), dtype=torch.long)
     padded_targets = torch.zeros((batch_size, max_k), dtype=torch.float32)
     mask = torch.zeros((batch_size, max_k), dtype=torch.bool)
     best_indices = torch.zeros(batch_size, dtype=torch.long)
@@ -113,38 +107,33 @@ def collate_fn(batch):
 
 
 class EndgamePatternModel(nn.Module):
-    """Ultra-lightweight 4-pattern move ordering model with exact color anti-symmetry."""
+    """Calibrated 3-pattern move ordering model with exact spatial mirror tying."""
 
     def __init__(self):
         super().__init__()
         self.c33_emb = nn.Embedding(CORNER33_COUNT, 1)
         self.e2x_emb = nn.Embedding(EDGE2X_COUNT, 1)
         self.r24_emb = nn.Embedding(RECT24_COUNT, 1)
-        self.d8_emb = nn.Embedding(DIAG8_COUNT, 1)
 
         # Initialize weights to zero
         nn.init.zeros_(self.c33_emb.weight)
         nn.init.zeros_(self.e2x_emb.weight)
         nn.init.zeros_(self.r24_emb.weight)
-        nn.init.zeros_(self.d8_emb.weight)
 
-    def _eval_raw(self, indices: torch.Tensor) -> torch.Tensor:
-        c33_scores = self.c33_emb(indices[:, :, 0:4]).squeeze(-1).sum(dim=-1)
-        e2x_scores = self.e2x_emb(indices[:, :, 4:8]).squeeze(-1).sum(dim=-1)
-        r24_scores = self.r24_emb(indices[:, :, 8:16]).squeeze(-1).sum(dim=-1)
-        d8_scores = self.d8_emb(indices[:, :, 16:18]).squeeze(-1).sum(dim=-1)
-        return c33_scores + e2x_scores + r24_scores + d8_scores
+        init_mirror_maps()
+        self.register_buffer("m33", torch.tensor(_MIRROR_MAPS["mirror33"], dtype=torch.long))
+        self.register_buffer("m8x2", torch.tensor(_MIRROR_MAPS["mirror8x2"], dtype=torch.long))
 
     def forward(self, indices: torch.Tensor) -> torch.Tensor:
-        """indices: (batch_size, max_k, 18)
-        Enforces mathematically exact color anti-symmetry: f(x) = 0.5 * (f_raw(x) - f_raw(inv(x))).
-        """
-        inv_indices = indices.clone()
-        inv_indices[:, :, 0:4] = 19682 - inv_indices[:, :, 0:4]
-        inv_indices[:, :, 4:8] = 59048 - inv_indices[:, :, 4:8]
-        inv_indices[:, :, 8:16] = 6560 - inv_indices[:, :, 8:16]
-        inv_indices[:, :, 16:18] = 6560 - inv_indices[:, :, 16:18]
-        return 0.5 * (self._eval_raw(indices) - self._eval_raw(inv_indices))
+        """indices: (batch_size, max_k, 16)"""
+        c_idx = self.m33[indices[:, :, 0:4]]
+        e_idx = self.m8x2[indices[:, :, 4:8]]
+        r_idx = indices[:, :, 8:16]
+
+        c33_scores = self.c33_emb(c_idx).squeeze(-1).sum(dim=-1)
+        e2x_scores = self.e2x_emb(e_idx).squeeze(-1).sum(dim=-1)
+        r24_scores = self.r24_emb(r_idx).squeeze(-1).sum(dim=-1)
+        return c33_scores + e2x_scores + r24_scores
 
 
 def evaluate_model(model: nn.Module, loader: DataLoader, device: torch.device, temp: float = 1.0, mse_weight: float = 0.02) -> Tuple[float, float, float, float, float, float]:
@@ -206,33 +195,88 @@ def evaluate_model(model: nn.Module, loader: DataLoader, device: torch.device, t
     return total_loss, avg_ltr, avg_mse, avg_mae, top1_pct, top2_pct
 
 
-def export_c_header(model: EndgamePatternModel, output_path: Path, weight_scale: float = 128.0):
-    init_mirror_maps()
-    m33 = _MIRROR_MAPS["mirror33"]
-    m8x2 = _MIRROR_MAPS["mirror8x2"]
-    m8 = _MIRROR_MAPS["mirror8"]
+def load_header_weights(path: Path) -> torch.Tensor:
+    with open(path, "r") as f:
+        text = f.read()
+    match = re.search(r"end_pattern_weights\[\d+\]\s*=\s*\{([^}]+)\};", text)
+    if not match:
+        raise ValueError(f"Could not find end_pattern_weights array in {path}")
+    raw_nums = [int(x) for x in re.findall(r"-?\d+", match.group(1))]
+    assert len(raw_nums) == TOTAL_WEIGHTS, f"Expected {TOTAL_WEIGHTS} weights, found {len(raw_nums)}"
+    return torch.tensor(raw_nums, dtype=torch.float32)
 
-    w_c33 = model.c33_emb.weight.detach().cpu().squeeze(-1).numpy()
-    w_e2x = model.e2x_emb.weight.detach().cpu().squeeze(-1).numpy()
-    w_r24 = model.r24_emb.weight.detach().cpu().squeeze(-1).numpy()
-    w_d8  = model.d8_emb.weight.detach().cpu().squeeze(-1).numpy()
 
-    # Pre-symmetrize color anti-symmetry: w = 0.5 * (w - w_inv)
-    w_c33_sym = 0.5 * (w_c33 - w_c33[::-1])
-    w_e2x_sym = 0.5 * (w_e2x - w_e2x[::-1])
-    w_r24_sym = 0.5 * (w_r24 - w_r24[::-1])
-    w_d8_sym  = 0.5 * (w_d8  - w_d8[::-1])
+def export_c_header(
+    model: EndgamePatternModel,
+    output_path: Path,
+    ref_header: Path,
+    val_loader: DataLoader,
+    weight_scale: float = 128.0,
+    c33_overlap_scale: float = 15.0 / 16.0,
+    e2x_overlap_scale: float = 1.0,
+):
+    m33 = model.m33.cpu()
+    m8x2 = model.m8x2.cpu()
+    w_c33 = model.c33_emb.weight.detach().cpu().squeeze(-1)[m33] * weight_scale
+    w_e2x = model.e2x_emb.weight.detach().cpu().squeeze(-1)[m8x2] * weight_scale
+    w_r24 = model.r24_emb.weight.detach().cpu().squeeze(-1) * weight_scale
 
-    # Symmetrize tables with spatial maps and ensure 100% color anti-symmetry
-    full_c33 = [int(round(float(0.5 * (w_c33_sym[m33[i]] - w_c33_sym[m33[19682 - i]])) * weight_scale)) for i in range(CORNER33_COUNT)]
-    full_e2x = [int(round(float(0.5 * (w_e2x_sym[m8x2[i]] - w_e2x_sym[m8x2[59048 - i]])) * weight_scale)) for i in range(EDGE2X_COUNT)]
-    full_r24 = [int(round(float(0.5 * (w_r24_sym[i] - w_r24_sym[6560 - i])) * weight_scale)) for i in range(RECT24_COUNT)]
-    full_d8  = [int(round(float(0.5 * (w_d8_sym[m8[i]] - w_d8_sym[m8[6560 - i]])) * weight_scale)) for i in range(DIAG8_COUNT)]
+    # Reference standard deviation normalization if ref_header exists
+    if ref_header and ref_header.exists():
+        print(f"Normalizing group stds against reference header {ref_header}...")
+        w_ref = load_header_weights(ref_header)
+        ref_c33 = w_ref[0:19683]
+        ref_e2x = w_ref[19683:19683+59049]
+        ref_r24 = w_ref[19683+59049:TOTAL_WEIGHTS]
+
+        all_c33, all_e2x, all_r24 = [], [], []
+        all_ref_c33, all_ref_e2x, all_ref_r24 = [], [], []
+        with torch.no_grad():
+            for padded_indices, _, mask, _, _, _ in val_loader:
+                valid_moves = padded_indices[mask].cpu()
+                c_idx = valid_moves[:, 0:4]
+                e_idx = valid_moves[:, 4:8]
+                r_idx = valid_moves[:, 8:16]
+
+                all_c33.append(w_c33[c_idx].sum(dim=-1))
+                all_e2x.append(w_e2x[e_idx].sum(dim=-1))
+                all_r24.append(w_r24[r_idx].sum(dim=-1))
+
+                all_ref_c33.append(ref_c33[c_idx].sum(dim=-1))
+                all_ref_e2x.append(ref_e2x[e_idx].sum(dim=-1))
+                all_ref_r24.append(ref_r24[r_idx].sum(dim=-1))
+
+        std_c33 = torch.cat(all_c33).std().item()
+        std_e2x = torch.cat(all_e2x).std().item()
+        std_r24 = torch.cat(all_r24).std().item()
+
+        ref_std_c33 = torch.cat(all_ref_c33).std().item()
+        ref_std_e2x = torch.cat(all_ref_e2x).std().item()
+        ref_std_r24 = torch.cat(all_ref_r24).std().item()
+
+        if std_c33 > 1e-5:
+            w_c33 *= (ref_std_c33 / std_c33)
+        if std_e2x > 1e-5:
+            w_e2x *= (ref_std_e2x / std_e2x)
+        if std_r24 > 1e-5:
+            w_r24 *= (ref_std_r24 / std_r24)
+        print(f"Scaled group stds: c33 {std_c33:.2f}->{ref_std_c33:.2f}, e2x {std_e2x:.2f}->{ref_std_e2x:.2f}, r24 {std_r24:.2f}->{ref_std_r24:.2f}")
+
+    if c33_overlap_scale != 1.0:
+        w_c33 *= c33_overlap_scale
+        print(f"Applied c33 spatial overlap scale: {c33_overlap_scale:.4f}")
+    if e2x_overlap_scale != 1.0:
+        w_e2x *= e2x_overlap_scale
+        print(f"Applied e2x spatial overlap scale: {e2x_overlap_scale:.4f}")
+
+    full_c33 = [int(round(float(v))) for v in w_c33.tolist()]
+    full_e2x = [int(round(float(v))) for v in w_e2x.tolist()]
+    full_r24 = [int(round(float(v))) for v in w_r24.tolist()]
 
     def clamp_i16(v):
         return max(-32767, min(32767, v))
 
-    full_weights = [clamp_i16(v) for v in (full_c33 + full_e2x + full_r24 + full_d8)]
+    full_weights = [clamp_i16(v) for v in (full_c33 + full_e2x + full_r24)]
     assert len(full_weights) == TOTAL_WEIGHTS, f"Expected {TOTAL_WEIGHTS} weights, got {len(full_weights)}"
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -240,17 +284,16 @@ def export_c_header(model: EndgamePatternModel, output_path: Path, weight_scale:
         f.write("/*\n")
         f.write("  File:       end_patterns_data.h\n")
         f.write("  Generated:  scripts/train_ltr_endgame.py\n")
-        f.write("  Model:      Calibrated 4-Pattern Move Ordering & Disc Evaluator (EVAL-010 / Reform 3)\n")
-        f.write("  Geometry:   Corner 3x3 (19683), Edge+2X (59049), 2x4 Rect (6561), Diag 8 (6561)\n")
-        f.write(f"  Total:      {TOTAL_WEIGHTS} entries (183.7 KB), 100% L2 cache resident\n")
+        f.write("  Model:      Calibrated 3-Pattern Move Ordering Evaluator\n")
+        f.write("  Geometry:   Corner 3x3 (19683), Edge+2X (59049), 2x4 Rect (6561)\n")
+        f.write(f"  Total:      {TOTAL_WEIGHTS} entries (170.6 KB), 100% L2 cache resident\n")
         f.write(f"  Scale:      1 disc = {weight_scale} fixed-point units\n")
         f.write("*/\n\n")
         f.write("#ifndef END_PATTERNS_DATA_H\n")
         f.write("#define END_PATTERNS_DATA_H\n\n")
         f.write("#include <stdint.h>\n\n")
-        f.write(f"static const int16_t end_pattern_weights[{TOTAL_WEIGHTS}] = {{\n")
+        f.write(f"const int16_t end_pattern_weights[{TOTAL_WEIGHTS}] = {{\n")
 
-        # Format 12 numbers per line
         chunk_size = 12
         for i in range(0, len(full_weights), chunk_size):
             chunk = full_weights[i:i + chunk_size]
@@ -267,31 +310,20 @@ def export_c_header(model: EndgamePatternModel, output_path: Path, weight_scale:
 
 
 def load_c_header(model: EndgamePatternModel, header_path: Path, weight_scale: float = 128.0):
-    import re
-    print(f"Loading initial weights from {header_path}...")
-    with open(header_path, "r") as f:
-        text = f.read()
-    match = re.search(r"end_pattern_weights\[\d+\]\s*=\s*\{([^}]+)\};", text)
-    if not match:
-        raise ValueError(f"Could not find end_pattern_weights array in {header_path}")
-    raw_nums = [int(x) for x in re.findall(r"-?\d+", match.group(1))]
-    assert len(raw_nums) == TOTAL_WEIGHTS, f"Expected {TOTAL_WEIGHTS} weights, found {len(raw_nums)}"
-
-    w_c33 = torch.tensor(raw_nums[0:19683], dtype=torch.float32) / weight_scale
-    w_e2x = torch.tensor(raw_nums[19683:19683+59049], dtype=torch.float32) / weight_scale
-    w_r24 = torch.tensor(raw_nums[19683+59049:19683+59049+6561], dtype=torch.float32) / weight_scale
-    w_d8  = torch.tensor(raw_nums[19683+59049+6561:19683+59049+6561+6561], dtype=torch.float32) / weight_scale
+    w_all = load_header_weights(header_path)
+    w_c33 = w_all[0:19683] / weight_scale
+    w_e2x = w_all[19683:19683+59049] / weight_scale
+    w_r24 = w_all[19683+59049:TOTAL_WEIGHTS] / weight_scale
 
     with torch.no_grad():
         model.c33_emb.weight.copy_(w_c33.unsqueeze(-1))
         model.e2x_emb.weight.copy_(w_e2x.unsqueeze(-1))
         model.r24_emb.weight.copy_(w_r24.unsqueeze(-1))
-        model.d8_emb.weight.copy_(w_d8.unsqueeze(-1))
     print(f"Loaded {TOTAL_WEIGHTS} initial weights from {header_path} successfully.")
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Train 4-pattern endgame move ordering model via hybrid Texel MSE + LTR distillation.")
+    parser = argparse.ArgumentParser(description="Train 3-pattern endgame move ordering model via hybrid Texel MSE + LTR distillation.")
     parser.add_argument("--data", type=Path, default=Path("data/ltr_exact_solved_15yr.pt"), help="Path to exact solved LTR dataset")
     parser.add_argument("--scores", type=Path, default=Path("data/ltr_exact_solved_15yr_scores.pt"), help="Path to exact solved scores tensor")
     parser.add_argument("--stages", type=str, default="7,8,9,10", help="Stages to include (default: 7,8,9,10 covering discs 40-58, 6-24 empties)")
@@ -306,6 +338,9 @@ def main():
     parser.add_argument("--init-header", type=Path, default=None, help="Initial weights C header to fine-tune from")
     parser.add_argument("--cutoff-data", type=Path, default=None, help="Path to search cutoff dataset to mix in")
     parser.add_argument("--cutoff-ratio", type=float, default=0.5, help="Fraction of training samples from cutoff dataset")
+    parser.add_argument("--ref-header", type=Path, default=Path("src/end_patterns_data.h"), help="Reference C header for group std normalization")
+    parser.add_argument("--c33-overlap-scale", type=float, default=15.0 / 16.0, help="Spatial overlap calibration factor for c33 (default: 15/16 = 0.9375)")
+    parser.add_argument("--e2x-overlap-scale", type=float, default=1.0, help="Spatial overlap calibration factor for e2x (default: 1.0)")
     parser.add_argument("--out-header", type=Path, default=Path("src/end_patterns_data.h"), help="Output C header file")
     parser.add_argument("--device", type=str, default=None, help="Device (mps, cuda, cpu)")
 
@@ -365,13 +400,12 @@ def main():
                 cutoff_filtered.append(s)
         print(f"Loaded {len(cutoff_filtered)} cutoff samples matching stages {sorted(target_stages)}")
 
-        # Mix datasets according to cutoff_ratio
         import random
         random.seed(42)
         num_cutoffs = min(len(cutoff_filtered), int(len(filtered_samples) * args.cutoff_ratio / max(0.01, 1.0 - args.cutoff_ratio)))
         selected_cutoffs = random.sample(cutoff_filtered, num_cutoffs) if len(cutoff_filtered) > num_cutoffs else cutoff_filtered
 
-        print(f"Mixing {len(filtered_samples)} WTHOR samples with {len(selected_cutoffs)} search cutoff samples ({len(selected_cutoffs)/(len(filtered_samples)+len(selected_cutoffs))*100:.1f}% cutoffs)...")
+        print(f"Mixing {len(filtered_samples)} WTHOR samples with {len(selected_cutoffs)} search cutoff samples...")
         filtered_samples = filtered_samples + selected_cutoffs
         filtered_scores = filtered_scores + [0.0] * len(selected_cutoffs)
         has_scores_list = has_scores_list + [False] * len(selected_cutoffs)
@@ -434,7 +468,6 @@ def main():
             scores = model(padded_indices)
             best_scores = scores.gather(1, best_indices.unsqueeze(-1)).squeeze(-1)
 
-            # MSE disc calibration loss (only on samples with ground truth score)
             if has_scores.any() and args.mse_weight > 0.0:
                 sc_best = best_scores[has_scores]
                 sc_target = target_scores[has_scores]
@@ -442,7 +475,6 @@ def main():
             else:
                 mse_loss = torch.tensor(0.0, device=device)
 
-            # LTR ranking loss
             masked_scores = scores.masked_fill(~mask, -1e9)
             log_probs = nn.functional.log_softmax(masked_scores / args.temp, dim=-1)
             ltr_loss = -(padded_targets * log_probs).sum(dim=-1).mean()
@@ -458,7 +490,6 @@ def main():
         scheduler.step()
         train_loss = total_loss / max(1, total_samples)
 
-        # Validation
         val_loss, val_ltr, val_mse, val_mae, val_top1, val_top2 = evaluate_model(model, val_loader, device, temp=args.temp, mse_weight=args.mse_weight)
         elapsed = time.time() - ep_start
         print(f"Epoch {epoch:2d}/{args.epochs} | Train Loss: {train_loss:.4f} | Val Loss: {val_loss:.4f} (LTR: {val_ltr:.4f}, MSE: {val_mse:.2f}, MAE: {val_mae:.2f}d) | Val Top-1: {val_top1:.2f}% | Val Top-2: {val_top2:.2f}% | Time: {elapsed:.1f}s")
@@ -469,7 +500,15 @@ def main():
     print(f"\nTraining complete in {time.time() - start_train_time:.1f}s. Best Val Top-1 Acc: {best_val_top1:.2f}%")
 
     # Export weights to C header
-    export_c_header(model, args.out_header, weight_scale=args.weight_scale)
+    export_c_header(
+        model,
+        args.out_header,
+        ref_header=args.ref_header,
+        val_loader=val_loader,
+        weight_scale=args.weight_scale,
+        c33_overlap_scale=args.c33_overlap_scale,
+        e2x_overlap_scale=args.e2x_overlap_scale,
+    )
 
 
 if __name__ == "__main__":
