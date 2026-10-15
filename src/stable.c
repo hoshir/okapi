@@ -114,9 +114,9 @@ edge_zardoz_stable( BitBoard *ss,
   const BitBoard full_h = full_stability_h( disc );
   const BitBoard full_v = full_stability_v( disc );
 
-  BitBoard s0 = *ss;
-  BitBoard hv_cand = ((s0 >> 1) | (s0 << 1) | full_h)
-                   & ((s0 >> 8) | (s0 << 8) | full_v)
+  BitBoard stable = *ss;
+  BitBoard hv_cand = ((stable >> 1) | (stable << 1) | full_h)
+                   & ((stable >> 8) | (stable << 8) | full_v)
                    & central_mask;
   if ( hv_cand == 0 )
     return;
@@ -124,9 +124,10 @@ edge_zardoz_stable( BitBoard *ss,
   const BitBoard full_d7 = get_full_lines( disc, 7 );
   const BitBoard full_d9 = get_full_lines( disc, 9 );
 
-  BitBoard new_stable = s0 | (full_h & full_v & full_d7 & full_d9 & central_mask);
+  BitBoard new_stable = hv_cand
+                      & ((stable >> 7) | (stable << 7) | full_d7)
+                      & ((stable >> 9) | (stable << 9) | full_d9);
 
-  BitBoard stable = 0;
   while ( (new_stable & ~stable) != 0 ) {
     stable |= new_stable;
     BitBoard stable_h = (stable >> 1) | (stable << 1) | full_h;
