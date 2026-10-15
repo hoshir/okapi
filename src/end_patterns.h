@@ -1,6 +1,6 @@
 /*
    File:       end_patterns.h
-   Contents:   Ultra-lightweight 4-pattern move ordering model (EVAL-009).
+   Contents:   Ultra-lightweight 3-group (16-pattern) move ordering model (EVAL-009..EVAL-013).
                Egaroucid-paradigm move ordering for deep endgame search.
 */
 
@@ -10,27 +10,18 @@
 #include "bitboard.h"
 #include <stdint.h>
 
-#define END_PATTERN_CORNER33_COUNT 19683
-#define END_PATTERN_EDGE2X_COUNT   59049
-#define END_PATTERN_RECT24_COUNT   6561
-#define END_PATTERN_DIAG8_COUNT    6561
-#define END_PATTERN_TOTAL_WEIGHTS  91854
+/* Pattern Group Offsets into end_pattern_weights[] */
+#define END_PATTERN_CORNER33_OFFSET  0      /* 3^9  = 19683 entries (39.4 KB) */
+#define END_PATTERN_EDGE2X_OFFSET    19683  /* 3^10 = 59049 entries (118.1 KB) */
+#define END_PATTERN_RECT24_OFFSET    78732  /* 3^8  = 6561 entries  (13.1 KB) */
+#define END_PATTERN_TOTAL_WEIGHTS    85293  /* Total: 85,293 int16_t = 170.6 KB */
 
-#define END_PATTERN_CORNER33_OFFSET 0
-#define END_PATTERN_EDGE2X_OFFSET   19683
-#define END_PATTERN_RECT24_OFFSET   (19683 + 59049)        /* 78732 */
-#define END_PATTERN_DIAG8_OFFSET    (19683 + 59049 + 6561) /* 85293 */
+extern const int16_t end_pattern_weights[END_PATTERN_TOTAL_WEIGHTS];
 
-/*
-  END_PATTERN_EVALUATE
-  Evaluates candidate move position using the 4-pattern distilled LTR model.
-  my_bits:  bitboard of player who made the move (attacker)
-  opp_bits: bitboard of opponent (defender / child's side to move)
-  Returns score in fixed-point 1/128 disc units. Higher is better for my_bits.
-*/
-int end_pattern_evaluate( BitBoard my_bits, BitBoard opp_bits );
-int end_pattern_evaluate_c33( BitBoard my_bits, BitBoard opp_bits );
-int end_pattern_evaluate_c33_d8( BitBoard my_bits, BitBoard opp_bits );
-int end_pattern_evaluate_c33_r24( BitBoard my_bits, BitBoard opp_bits );
+int
+end_pattern_evaluate( BitBoard my_bits, BitBoard opp_bits );
+
+int
+end_pattern_evaluate_c33_r24( BitBoard my_bits, BitBoard opp_bits );
 
 #endif /* END_PATTERNS_H */

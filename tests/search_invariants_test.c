@@ -18,6 +18,7 @@
 #include "unflip.h"
 #include "moves.h"
 #include "patterns.h"
+#include "end_patterns.h"
 #include "stable.h"
 #include "hash.h"
 #include "tlstate.h"
@@ -258,6 +259,86 @@ test_tt_isolation_invariants( void ) {
 }
 
 
+/*
+  TEST_END_PATTERN_INVARIANTS
+  Verifies that SWAR bit-gathering in end_pattern_evaluate() and
+  end_pattern_evaluate_c33_r24() matches bit-by-bit ternary extraction
+  across 2,000 random bitboards.
+*/
+static int
+ref_extract_ternary( BitBoard my_bits, BitBoard opp_bits, const int *bits, int len ) {
+  static const int p3[10] = { 1, 3, 9, 27, 81, 243, 729, 2187, 6561, 19683 };
+  int idx = 0;
+  for ( int i = 0; i < len; i++ ) {
+    int b = bits[i];
+    int my = (int)((my_bits >> b) & 1ULL);
+    int opp = (int)((opp_bits >> b) & 1ULL);
+    int tr = my ? 2 : (opp ? 0 : 1);
+    idx += tr * p3[i];
+  }
+  return idx;
+}
+
+static void
+test_end_pattern_invariants( void ) {
+  static const int c33_bits[4][9] = {
+    { 0, 1, 2, 8, 9, 10, 16, 17, 18 },
+    { 56, 57, 58, 48, 49, 50, 40, 41, 42 },
+    { 7, 6, 5, 15, 14, 13, 23, 22, 21 },
+    { 63, 62, 61, 55, 54, 53, 47, 46, 45 }
+  };
+  static const int e2x_bits[4][10] = {
+    { 0, 8, 16, 24, 32, 40, 48, 56, 9, 49 },
+    { 7, 15, 23, 31, 39, 47, 55, 63, 14, 54 },
+    { 0, 1, 2, 3, 4, 5, 6, 7, 9, 14 },
+    { 56, 57, 58, 59, 60, 61, 62, 63, 49, 54 }
+  };
+  static const int r24_bits[8][8] = {
+    { 0, 1, 2, 3, 8, 9, 10, 11 },
+    { 56, 57, 58, 59, 48, 49, 50, 51 },
+    { 7, 6, 5, 4, 15, 14, 13, 12 },
+    { 63, 62, 61, 60, 55, 54, 53, 52 },
+    { 0, 8, 16, 24, 1, 9, 17, 25 },
+    { 7, 15, 23, 31, 6, 14, 22, 30 },
+    { 56, 48, 40, 32, 57, 49, 41, 33 },
+    { 63, 55, 47, 39, 62, 54, 46, 38 }
+  };
+
+  const int16_t *c33_w = &end_pattern_weights[END_PATTERN_CORNER33_OFFSET];
+  const int16_t *e2x_w = &end_pattern_weights[END_PATTERN_EDGE2X_OFFSET];
+  const int16_t *r24_w = &end_pattern_weights[END_PATTERN_RECT24_OFFSET];
+
+  for ( int trial = 0; trial < 2000; trial++ ) {
+    BitBoard b_bits = 0, w_bits = 0;
+    for ( int b = 0; b < 64; b++ ) {
+      int r = rand() % 3;
+      if ( r == 0 )
+	b_bits |= (1ULL << b);
+      else if ( r == 1 )
+	w_bits |= (1ULL << b);
+    }
+
+    int ref_c33_r24 = 0;
+    for ( int k = 0; k < 4; k++ )
+      ref_c33_r24 += c33_w[ref_extract_ternary( b_bits, w_bits, c33_bits[k], 9 )];
+    for ( int k = 0; k < 8; k++ )
+      ref_c33_r24 += r24_w[ref_extract_ternary( b_bits, w_bits, r24_bits[k], 8 )];
+
+    int ref_full = ref_c33_r24;
+    for ( int k = 0; k < 4; k++ )
+      ref_full += e2x_w[ref_extract_ternary( b_bits, w_bits, e2x_bits[k], 10 )];
+
+    int got_full = end_pattern_evaluate( b_bits, w_bits );
+    int got_c33_r24 = end_pattern_evaluate_c33_r24( b_bits, w_bits );
+
+    CHECK( got_full == ref_full,
+	   "trial %d: end_pattern_evaluate %d != ref %d", trial, got_full, ref_full );
+    CHECK( got_c33_r24 == ref_c33_r24,
+	   "trial %d: end_pattern_evaluate_c33_r24 %d != ref %d", trial, got_c33_r24, ref_c33_r24 );
+  }
+}
+
+
 int
 main( void ) {
   srand( 42 );
@@ -272,11 +353,12 @@ main( void ) {
   test_bitboard_and_pattern_invariants();
   test_stability_invariants();
   test_tt_isolation_invariants();
+  test_end_pattern_invariants();
 
   if ( failures != 0 ) {
     fprintf( stderr, "search_invariants_test: %d failure(s)\n", failures );
     return 1;
   }
-  printf( "search_invariants_test: PASSED (500 random games, 2000 stability boards, TT isolation checks)\n" );
+  printf( "search_invariants_test: PASSED (500 random games, 2000 stability/end_pattern boards, TT isolation checks)\n" );
   return 0;
 }
