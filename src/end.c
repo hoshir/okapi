@@ -71,7 +71,10 @@
    This means more aggressive use of fastest first. */
 #define WIPEOUT_THRESHOLD            60
 #define REGION_PARITY_BONUS          64
-#define PRESEARCH_ORDER_BONUS        0
+#define FAST_PATTERN_DEPTH           13
+#define LAZY_PATTERN_MARGIN          768
+#define ORDER_TS_MIN_DEPTH           15
+#define ORDER_TS_TOPK                2
 
 
 
@@ -85,39 +88,6 @@
 #define USE_SHALLOW_TT               TRUE
 #define SHALLOW_TT_MIN_DEPTH         5
 #endif
-
-/* Use iterative deepening presearch? Disabled by default as verified in ARCH-021. */
-#ifndef USE_PRESEARCH
-#define USE_PRESEARCH                FALSE
-#endif
-
-static int use_presearch_flag = USE_PRESEARCH;
-
-static int cached_use_presearch = -1;
-
-void
-set_use_presearch( int enable ) {
-  use_presearch_flag = enable;
-  cached_use_presearch = enable;
-}
-
-int
-get_use_presearch( void ) {
-  if ( cached_use_presearch != -1 ) {
-    return cached_use_presearch;
-  }
-  const char *env = getenv( "USE_PRESEARCH" );
-  if ( env != NULL ) {
-    cached_use_presearch = (atoi( env ) != 0);
-    return cached_use_presearch;
-  }
-  if ( getenv( "EDAX_HYBRID" ) != NULL ) {
-    cached_use_presearch = (getenv( "SKIP_PRESEARCH" ) == NULL);
-    return cached_use_presearch;
-  }
-  cached_use_presearch = use_presearch_flag;
-  return cached_use_presearch;
-}
 
 
 /* Pseudo-probabilities corresponding to the percentiles.
@@ -1354,7 +1324,6 @@ end_order_moves_presearch( ThreadState *ts,
 			   int can_split,
 			   const int *proven,
 			   const int *proven_score,
-			   int presearch_move,
 			   int *etc_tried_ptr,
 			   int *etc_cutoff_score ) {
   int i, j;
@@ -1618,10 +1587,6 @@ end_order_moves_presearch( ThreadState *ts,
 		     (raw_opp_mob == 0 ? 4096 : 0) +
 		     (quadrant_parity ? REGION_PARITY_BONUS : 0);
 
-    if ( presearch_move != 0 && move == presearch_move ) {
-      fast_score += PRESEARCH_ORDER_BONUS;
-    }
-
     surv[surv_count].sq = move;
     surv[surv_count].fast_score = fast_score;
     surv[surv_count].child_my_bits = child_my_bits;
@@ -1649,25 +1614,13 @@ end_order_moves_presearch( ThreadState *ts,
     }
 
     /* Branch & Bound Pattern Evaluation:
-       Evaluate candidate 0, then only evaluate subsequent candidates whose fast_score + MARGIN >= best_total */
-    static int lazy_margin = -1;
-    if ( lazy_margin == -1 ) {
-      char *env_margin = getenv( "LAZY_PATTERN_MARGIN" );
-      lazy_margin = env_margin ? atoi( env_margin ) : 512;
-    }
-
-    static int fast_pattern_depth = -1;
-    if ( fast_pattern_depth == -1 ) {
-      char *env_fp = getenv( "FAST_PATTERN_DEPTH" );
-      fast_pattern_depth = env_fp ? atoi( env_fp ) : 13;
-    }
-
+       Evaluate candidate 0, then only evaluate subsequent candidates within LAZY_PATTERN_MARGIN */
     int top_fast = surv[0].fast_score;
     for ( i = 0; i < surv_count; i++ ) {
       int m = surv[i].sq;
-      if ( i == 0 || (top_fast - surv[i].fast_score <= lazy_margin) ) {
+      if ( i == 0 || (top_fast - surv[i].fast_score <= LAZY_PATTERN_MARGIN) ) {
         int p_score;
-        if ( empties <= fast_pattern_depth ) {
+        if ( empties <= FAST_PATTERN_DEPTH ) {
           p_score = end_pattern_evaluate_c33_r24( surv[i].child_my_bits, surv[i].new_opp_bits ) / 2;
         } else if ( empties <= 17 ) {
           p_score = (end_pattern_evaluate( surv[i].child_my_bits, surv[i].new_opp_bits ) * 4) / 5;
@@ -1685,29 +1638,9 @@ end_order_moves_presearch( ThreadState *ts,
 
     /* Selective shallow tree_search deepening on top-K candidates (SRCH-005)
        Evaluates shallow lookahead for the top surviving candidates at deep endgame
-       nodes (empties >= 15), providing tactical lookahead to avoid combinatorial
-       tree explosion during both selective passes and exact solve. */
-    static int search_order_min = 15, search_order_maxd = 6, search_order_exact = 1;
-    static int search_order_fastw = 8, search_order_ts = 1, search_order_topk = 2;
-    static int search_order_inited = 0;
-    if ( !search_order_inited ) {
-      char *e5 = getenv( "SEARCH_ORDER_TS" );
-      if ( e5 ) search_order_ts = atoi( e5 );
-      char *e1 = getenv( "SEARCH_ORDER_MIN" );
-      if ( e1 ) search_order_min = atoi( e1 );
-      char *e2 = getenv( "SEARCH_ORDER_MAXD" );
-      if ( e2 ) search_order_maxd = atoi( e2 );
-      char *e3 = getenv( "SEARCH_ORDER_EXACT" );
-      if ( e3 ) search_order_exact = atoi( e3 );
-      char *e4 = getenv( "SEARCH_ORDER_FASTW" );
-      if ( e4 ) search_order_fastw = atoi( e4 );
-      char *e6 = getenv( "SEARCH_ORDER_TOPK" );
-      if ( e6 ) search_order_topk = atoi( e6 );
-      search_order_inited = 1;
-    }
-
-    if ( search_order_ts && empties >= search_order_min &&
-         (selectivity > 0 || search_order_exact) ) {
+       nodes (empties >= ORDER_TS_MIN_DEPTH), providing tactical lookahead to avoid
+       combinatorial tree explosion during both selective passes and exact solve. */
+    if ( empties >= ORDER_TS_MIN_DEPTH ) {
       /* Sort surv by evals descending so top candidates can be deepened */
       for ( i = 1; i < surv_count; i++ ) {
         CandidateMove tmp = surv[i];
@@ -1721,10 +1654,7 @@ end_order_moves_presearch( ThreadState *ts,
         surv[k + 1] = tmp;
       }
 
-      int d = (empties < 15) ? 1 : (empties < 18) ? 2 : (empties < 24) ? 3 :
-        (empties < 28) ? 4 : 6;
-      if ( d > search_order_maxd )
-        d = search_order_maxd;
+      int d = (empties < 18) ? 2 : (empties < 24) ? 3 : (empties < 28) ? 4 : 6;
       if ( best_list_length == 0 &&
            ((empties >= 20 && empties <= 22) ||
             (empties == 23 && level >= 2)) )
@@ -1744,9 +1674,7 @@ end_order_moves_presearch( ThreadState *ts,
         if ( ff_thr > WIPEOUT_THRESHOLD * 128 )
           ff_thr = WIPEOUT_THRESHOLD * 128;
       }
-      int k_limit = search_order_topk;
-      if ( k_limit > surv_count )
-        k_limit = surv_count;
+      int k_limit = (ORDER_TS_TOPK < surv_count) ? ORDER_TS_TOPK : surv_count;
       int ts_vals[4] = { 0, 0, 0, 0 };
       int ts_promoted[4] = { 0, 0, 0, 0 };
       for ( i = 0; i < k_limit; i++ ) {
@@ -1772,7 +1700,7 @@ end_order_moves_presearch( ThreadState *ts,
           int mob = non_iterative_popcount( surv[i].opp_moves );
           int wipe = (v > WIPEOUT_THRESHOLD * 128);
           v += wipe ? 2000000 : 1000000;
-          v -= (wipe ? 2 : 1) * 460 * search_order_fastw / 8 * mob;
+          v -= (wipe ? 920 : 460) * mob;
           ev_stage[m] = v;
           if ( i < 4 )
             ts_promoted[i] = 1;
@@ -1817,246 +1745,6 @@ end_order_moves_presearch( ThreadState *ts,
 
 
 /*
-  END_PRESEARCH_AB
-  Pure-bitboard alpha-beta pre-search helper using 4-pattern endgame LTR model (ARCH-006).
-  Runs iterative deepening before exact endgame solve to seed Move 0 throughout the top 10 plies.
-*/
-
-static int presearch_nodes = 0;
-static int presearch_budget = 0;
-static int presearch_aborted = FALSE;
-
-static int
-end_presearch_ab( BitBoard my_bits, BitBoard opp_bits,
-		  int side_to_move, int depth, int empties,
-		  int alpha, int beta, int level, int *best_move ) {
-  if ( presearch_aborted || is_panic_abort() || force_return )
-    return alpha;
-
-  INCREMENT_COUNTER( nodes );
-  if ( ++presearch_nodes > presearch_budget ) {
-    presearch_aborted = TRUE;
-    return alpha;
-  }
-  if ( best_move != NULL )
-    *best_move = 0;
-
-  if ( depth <= 0 ) {
-    int val = end_pattern_evaluate( my_bits, opp_bits );
-    if ( (region_parity != 0) && (empties & 1) )
-      val += REGION_PARITY_BONUS;
-    return val;
-  }
-
-  /* Move Generation & Pass Handling */
-  BitBoard moves = generate_all_c( my_bits, opp_bits );
-  if ( moves == 0 ) {
-    BitBoard opp_moves = generate_all_c( opp_bits, my_bits );
-    if ( opp_moves == 0 ) {
-      int disc_diff = non_iterative_popcount( my_bits ) - non_iterative_popcount( opp_bits );
-      int final_score = (disc_diff > 0) ? (disc_diff + empties) :
-			((disc_diff < 0) ? (disc_diff - empties) : 0);
-      return final_score * 128;
-    }
-    hash1 ^= hash_flip_color1;
-    hash2 ^= hash_flip_color2;
-    int val = -end_presearch_ab( opp_bits, my_bits, OPP( side_to_move ),
-				 depth, empties, -beta, -alpha, level + 1, NULL );
-    hash1 ^= hash_flip_color1;
-    hash2 ^= hash_flip_color2;
-    return val;
-  }
-
-  /* Transposition Table Probing */
-  HashEntry entry;
-  find_hash( &entry, ENDGAME_MODE );
-  int hash_move = 0;
-  if ( entry.draft != NO_HASH_MOVE && bb_valid_move( entry.move[0], my_bits, opp_bits ) ) {
-    hash_move = entry.move[0];
-  }
-
-  if ( level > 0 && entry.draft != NO_HASH_MOVE && entry.draft >= depth &&
-       (entry.flags & HEURISTIC_PRESEARCH_MOVE) ) {
-    int tt_val;
-    if ( (entry.flags & MIDGAME_SCORE) && !(entry.flags & HEURISTIC_PRESEARCH_MOVE) ) {
-      tt_val = entry.eval;
-    } else {
-      tt_val = entry.eval * 128;
-    }
-    if ( entry.flags & EXACT_VALUE ) {
-      if ( best_move != NULL ) *best_move = hash_move;
-      return tt_val;
-    }
-    if ( (entry.flags & LOWER_BOUND) && tt_val >= beta ) {
-      if ( best_move != NULL ) *best_move = hash_move;
-      return tt_val;
-    }
-    if ( (entry.flags & UPPER_BOUND) && tt_val <= alpha ) {
-      if ( best_move != NULL ) *best_move = hash_move;
-      return tt_val;
-    }
-  }
-
-  /* Move Ordering: Move 0 = hash_move, remaining sorted by quadrant parity & corner/X */
-  int moves_arr[64];
-  int scores_arr[64];
-  int n_moves = 0;
-
-  if ( hash_move != 0 ) {
-    moves_arr[n_moves] = hash_move;
-    scores_arr[n_moves] = 100000;
-    n_moves++;
-  }
-
-  BitBoard rem_moves = moves;
-  while ( rem_moves != 0 ) {
-    int bit = FIRST_BIT( rem_moves );
-    rem_moves &= rem_moves - 1;
-    int sq = square_of_bit[bit];
-    if ( sq == hash_move )
-      continue;
-
-    BitBoard new_my_bits;
-    TestFlips_bitboard_to( sq, my_bits, opp_bits, &new_my_bits );
-    BitBoard flipped = new_my_bits & ~my_bits & ~square_mask[sq];
-    BitBoard new_my = new_my_bits;
-    BitBoard new_opp = opp_bits ^ flipped;
-    BitBoard opp_replies = generate_all_c( new_opp, new_my );
-    int opp_mob = non_iterative_popcount( opp_replies );
-    int opp_corners = non_iterative_popcount( opp_replies & 0x8100000000000081ull );
-
-    int score = - 128 * opp_mob - 256 * opp_corners;
-    if ( opp_mob == 0 ) score += 1024;
-    if ( quadrant_mask[sq] & region_parity ) score += 128;
-    BitBoard bb = square_mask[sq];
-    if ( bb & CORNER_MASK ) score += 512;
-    else if ( bb & 0x0042000000004200ull ) score -= 256;
-
-    moves_arr[n_moves] = sq;
-    scores_arr[n_moves] = score;
-    n_moves++;
-  }
-
-  for ( int i = 1; i < n_moves; i++ ) {
-    int m = moves_arr[i];
-    int s = scores_arr[i];
-    int j = i - 1;
-    while ( j >= 0 && scores_arr[j] < s ) {
-      moves_arr[j + 1] = moves_arr[j];
-      scores_arr[j + 1] = scores_arr[j];
-      j--;
-    }
-    moves_arr[j + 1] = m;
-    scores_arr[j + 1] = s;
-  }
-
-  /* Search Loop */
-  int orig_alpha = alpha;
-  int best_val = -INFINITE_EVAL;
-  int best_sq = moves_arr[0];
-
-  for ( int i = 0; i < n_moves; i++ ) {
-    int sq = moves_arr[i];
-    BitBoard new_my_bits;
-    TestFlips_bitboard_to( sq, my_bits, opp_bits, &new_my_bits );
-
-    unsigned int diff1, diff2;
-    end_hash_diff( new_my_bits, my_bits, side_to_move, sq, &diff1, &diff2 );
-    hash1 ^= diff1;
-    hash2 ^= diff2;
-    region_parity ^= quadrant_mask[sq];
-
-    int child_best = 0;
-    int val;
-    if ( i == 0 ) {
-      val = -end_presearch_ab( opp_bits & ~new_my_bits,
-			       new_my_bits,
-			       OPP( side_to_move ),
-			       depth - 1,
-			       empties - 1,
-			       -beta,
-			       -alpha,
-			       level + 1,
-			       &child_best );
-    } else {
-      val = -end_presearch_ab( opp_bits & ~new_my_bits,
-			       new_my_bits,
-			       OPP( side_to_move ),
-			       depth - 1,
-			       empties - 1,
-			       -alpha - 1,
-			       -alpha,
-			       level + 1,
-			       &child_best );
-      if ( val > alpha && val < beta ) {
-	val = -end_presearch_ab( opp_bits & ~new_my_bits,
-				 new_my_bits,
-				 OPP( side_to_move ),
-				 depth - 1,
-				 empties - 1,
-				 -beta,
-				 -alpha,
-				 level + 1,
-				 &child_best );
-      }
-    }
-
-    region_parity ^= quadrant_mask[sq];
-    hash1 ^= diff1;
-    hash2 ^= diff2;
-
-    if ( presearch_aborted || is_panic_abort() || force_return )
-      break;
-
-    if ( val > best_val ) {
-      best_val = val;
-      best_sq = sq;
-      if ( val > alpha ) {
-	alpha = val;
-	if ( alpha >= beta )
-	  break;
-      }
-    }
-  }
-
-  if ( presearch_aborted || is_panic_abort() || force_return )
-    return alpha;
-
-  /* TT Storage */
-  int flags;
-  int score_to_store;
-  if ( best_val >= beta ) {
-    flags = LOWER_BOUND;
-    score_to_store = (best_val >= 0) ? (best_val / 128) : ((best_val - 127) / 128);
-  }
-  else if ( best_val > orig_alpha ) {
-    flags = EXACT_VALUE;
-    score_to_store = (best_val >= 0) ? ((best_val + 64) / 128) : ((best_val - 64) / 128);
-  }
-  else {
-    flags = UPPER_BOUND;
-    score_to_store = (best_val >= 0) ? ((best_val + 127) / 128) : (best_val / 128);
-  }
-
-  int best_list[4];
-  best_list[0] = best_sq;
-  best_list[1] = 0;
-  best_list[2] = 0;
-  best_list[3] = 0;
-
-  if ( !presearch_aborted ) {
-    add_hash_extended( ENDGAME_MODE, score_to_store, best_list,
-		       flags | ENDGAME_SCORE | HEURISTIC_PRESEARCH_MOVE, depth, 0 );
-  }
-
-  if ( best_move != NULL )
-    *best_move = best_sq;
-
-  return best_val;
-}
-
-
-/*
   END_SEARCH_NWS
   Dedicated Null-Window Search (NWS) core.
   Optimized for Cut and All nodes (beta == alpha + 1).
@@ -2079,7 +1767,6 @@ end_search_nws( ThreadState *ts,
   int oppcol = OPP( side_to_move );
   int use_hash;
   int hash_hit = FALSE;
-  int presearch_move = 0;
   HashEntry entry;
 
   int opp_stable_checked = (pass_legal == 2);
@@ -2194,11 +1881,6 @@ end_search_nws( ThreadState *ts,
 	       bb_valid_move( entry.move[0], my_bits, opp_bits ) &&
 	       (entry.flags & ENDGAME_SCORE) &&
 	       !(entry.flags & HEURISTIC_PRESEARCH_MOVE);
-    if ( (entry.flags & HEURISTIC_PRESEARCH_MOVE) && !hash_hit && (entry.draft != NO_HASH_MOVE) &&
-	 bb_valid_move( entry.move[0], my_bits, opp_bits ) &&
-	 get_use_presearch() ) {
-      presearch_move = entry.move[0];
-    }
   }
 
   /* 4. Setup and MPC */
@@ -2287,7 +1969,6 @@ end_search_nws( ThreadState *ts,
 					selectivity, use_hash,
 					best_list, best_list_length,
 					can_split, proven, proven_score,
-					presearch_move,
 					&etc_tried,
 					&etc_cutoff_score ) ) {
 	  best_list[0] = etc_tried;
@@ -2479,7 +2160,6 @@ end_search_pvs( ThreadState *ts,
   int oppcol = OPP( side_to_move );
   int use_hash;
   int hash_hit = FALSE;
-  int presearch_move = 0;
 
   *selective_cutoff = FALSE;
 
@@ -2645,11 +2325,6 @@ end_search_pvs( ThreadState *ts,
 	       bb_valid_move( entry.move[0], my_bits, opp_bits ) &&
 	       (entry.flags & ENDGAME_SCORE) &&
 	       !(entry.flags & HEURISTIC_PRESEARCH_MOVE);
-    if ( (entry.flags & HEURISTIC_PRESEARCH_MOVE) && !hash_hit && (entry.draft != NO_HASH_MOVE) &&
-	 bb_valid_move( entry.move[0], my_bits, opp_bits ) &&
-	 get_use_presearch() ) {
-      presearch_move = entry.move[0];
-    }
   }
 
   /* 5. Recursive PVS search loop */
@@ -2761,7 +2436,6 @@ end_search_pvs( ThreadState *ts,
 					  selectivity, use_hash,
 					  best_list, best_list_length,
 					  can_split, proven, proven_score,
-					  presearch_move,
 					  &etc_tried,
 					  &etc_cutoff_score ) ) {
 	    best_list[0] = etc_tried;
@@ -3264,35 +2938,6 @@ end_game( int side_to_move,
 
   if ( !wld && (empties >= 16) ) {
     set_bitboards( board, side_to_move, &root_my_bits, &root_opp_bits );
-    int est = end_pattern_evaluate( root_my_bits, root_opp_bits );
-    /* Empty-dependent logistic sigmoidal calibration (OPTIM-SIGMOID)
-       Trained on 51,552 exact-solved endgame positions:
-       - Preserves 1:1 scale for balanced positions (|x| <= 4 discs)
-       - Smoothly transitions to 4.5x scale in blowout endgames via logistic sigmoid
-       - Selectively boosts parity-wipeout endgames with severe mobility disparity */
-    double x = est / 128.0;
-    double ax = fabs( x );
-    double w = (empties <= 16) ? 1.0 : (empties >= 28) ? 0.0 : (28.0 - empties) / 12.0;
-    double sigma = 1.0 / (1.0 + exp( -1.0 * (ax - 4.0) ));
-    double s_high = 1.0 + 3.5 * w;
-    double scale = 1.0 + (s_high - 1.0) * sigma;
-    double scaled = x * scale;
-
-    BitBoard my_moves = generate_all_c( root_my_bits, root_opp_bits );
-    BitBoard opp_moves = generate_all_c( root_opp_bits, root_my_bits );
-    int mob_diff = non_iterative_popcount( my_moves ) - non_iterative_popcount( opp_moves );
-    int disc_diff = non_iterative_popcount( root_my_bits ) - non_iterative_popcount( root_opp_bits );
-
-    if ( x > 1.0 && mob_diff >= 6 && disc_diff <= -5 ) {
-      scaled += (mob_diff - 5) * 1.5 * w;
-    }
-    else if ( x < -1.0 && mob_diff <= -6 && disc_diff >= 5 ) {
-      scaled += (mob_diff + 5) * 1.5 * w;
-    }
-
-    last_window_center = end_aspiration_center( (int)(scaled * 128.0), 60 );
-
-    sync_board_from_bitboards( root_my_bits, root_opp_bits, side_to_move, empties );
     int stage = 60 - empties;
     int saved_pv00 = pv[0][0];
     int ts_val = 0, ts_val_6 = 0;
@@ -3325,8 +2970,8 @@ end_game( int side_to_move,
     last_window_center = end_aspiration_center( rts_adj_val, 60 );
 
     if ( getenv( "PASS_DIAG" ) != NULL ) {
-      fprintf( stderr, "PASS_DIAG: INITIAL_PREDICTION center=%d est=%d scaled=%.2f ts_val=%d rts_adj_val=%d\n",
-               last_window_center, est, scaled, ts_val, rts_adj_val );
+      fprintf( stderr, "PASS_DIAG: INITIAL_PREDICTION center=%d ts_val=%d rts_adj_val=%d\n",
+               last_window_center, ts_val, rts_adj_val );
     }
   }
 
@@ -3542,67 +3187,7 @@ end_game( int side_to_move,
   /* Start non-selective solve */
   clear_panic_abort();
 
-  if ( !wld && (empties >= 16) && get_use_presearch() ) {
-    set_bitboards( board, side_to_move, &root_my_bits, &root_opp_bits );
-    prepare_to_solve( root_my_bits | root_opp_bits );
-    determine_hash_values( side_to_move, board );
 
-    int max_presearch = MIN( 14, empties - 8 );
-    int pre_best = 0;
-    int last_eval = 0;
-    presearch_nodes = 0;
-    presearch_budget = 100000;
-    presearch_aborted = FALSE;
-
-    for ( int d = 4; d <= max_presearch; d += 2 ) {
-      int cur_best = 0;
-      int val;
-      if ( d == 4 ) {
-	val = end_presearch_ab( root_my_bits, root_opp_bits,
-				side_to_move, d, empties,
-				-INFINITE_EVAL, INFINITE_EVAL,
-				0, &cur_best );
-      } else {
-	int alpha = last_eval - 256;
-	int beta = last_eval + 256;
-	val = end_presearch_ab( root_my_bits, root_opp_bits,
-				side_to_move, d, empties,
-				alpha, beta,
-				0, &cur_best );
-	if ( !presearch_aborted && !is_panic_abort() && !force_return ) {
-	  int delta = 256;
-	  while ( (val <= alpha || val >= beta) && !presearch_aborted && !is_panic_abort() && !force_return ) {
-	    if ( val <= alpha )
-	      alpha = MAX( -INFINITE_EVAL, alpha - delta );
-	    if ( val >= beta )
-	      beta = MIN( INFINITE_EVAL, beta + delta );
-	    delta = 2 * delta + 256;
-	    val = end_presearch_ab( root_my_bits, root_opp_bits,
-				    side_to_move, d, empties,
-				    alpha, beta,
-				    0, &cur_best );
-	  }
-	}
-      }
-
-      if ( presearch_aborted || is_panic_abort() || force_return )
-	break;
-
-      last_eval = val;
-      if ( cur_best != 0 && bb_valid_move( cur_best, root_my_bits, root_opp_bits ) ) {
-	pre_best = cur_best;
-      }
-    }
-
-    if ( !any_search_result && pre_best != 0 ) {
-      end_best_root_move = pre_best;
-      pv[0][0] = pre_best;
-      last_window_center = end_aspiration_center( last_eval, 62 );
-    }
-    determine_hash_values( side_to_move, board );
-    prepare_to_solve( root_my_bits | root_opp_bits );
-    adjust_counter( &nodes );
-  }
 
 
 

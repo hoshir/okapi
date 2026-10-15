@@ -2,12 +2,12 @@
   "mode": "standard",
   "threads": 8,
   "hash_bits": 22,
-  "created_at": "2026-10-15T01:46:17Z",
+  "created_at": "2026-10-15T04:26:00Z",
   "provenance": {
-    "commit": "0fb069a750f2a324e4e25de158c7402561518aaf",
+    "commit": "da677868a19fc132d8f5cfca827acebfd6b90c9b",
     "src_dirty": true,
-    "binary_mtime": 1792026408.4829514,
-    "written_at": 1792028777.132122,
+    "binary_mtime": 1792034895.1571174,
+    "written_at": 1792038422.1166599,
     "argv": [
       "./scripts/eval_candidate.py",
       "--mode",
@@ -30,9 +30,9 @@
       "expected_moves": [
         "a2"
       ],
-      "nodes": 11332020,
+      "nodes": 11463374,
       "time_sec": 0.1,
-      "nps": 121908665,
+      "nps": 133386556,
       "error": null
     },
     "FFO #41": {
@@ -43,9 +43,9 @@
       "expected_moves": [
         "h4"
       ],
-      "nodes": 16993309,
+      "nodes": 16563897,
       "time_sec": 0.2,
-      "nps": 82268548,
+      "nps": 83329461,
       "error": null
     },
     "FFO #42": {
@@ -56,9 +56,9 @@
       "expected_moves": [
         "g2"
       ],
-      "nodes": 17606481,
+      "nodes": 17066566,
       "time_sec": 0.2,
-      "nps": 99110479,
+      "nps": 83277134,
       "error": null
     },
     "FFO #48": {
@@ -69,9 +69,9 @@
       "expected_moves": [
         "f6"
       ],
-      "nodes": 95732242,
-      "time_sec": 1.1,
-      "nps": 86493445,
+      "nodes": 108937272,
+      "time_sec": 1.2,
+      "nps": 92280542,
       "error": null
     },
     "FFO #45": {
@@ -82,9 +82,9 @@
       "expected_moves": [
         "b2"
       ],
-      "nodes": 202893107,
+      "nodes": 204517910,
       "time_sec": 1.8,
-      "nps": 113799233,
+      "nps": 111017154,
       "error": null
     },
     "FFO #49": {
@@ -95,9 +95,9 @@
       "expected_moves": [
         "e1"
       ],
-      "nodes": 199074983,
+      "nodes": 200192012,
       "time_sec": 1.8,
-      "nps": 107958117,
+      "nps": 112147424,
       "error": null
     },
     "FFO #52": {
@@ -108,9 +108,9 @@
       "expected_moves": [
         "a3"
       ],
-      "nodes": 395373702,
-      "time_sec": 3.8,
-      "nps": 105292653,
+      "nodes": 403486025,
+      "time_sec": 4.2,
+      "nps": 96346543,
       "error": null
     },
     "FFO #50": {
@@ -121,9 +121,9 @@
       "expected_moves": [
         "d8"
       ],
-      "nodes": 441395772,
-      "time_sec": 5.4,
-      "nps": 82133071,
+      "nodes": 442106045,
+      "time_sec": 5.6,
+      "nps": 79455541,
       "error": null
     }
   }
