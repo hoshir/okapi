@@ -329,35 +329,17 @@ static inline int gather_r24_7( BitBoard b ) {
   Optimized via SWAR row/block bit gathering and unified ternary lookup tables.
 */
 int
-end_pattern_evaluate( BitBoard my_bits, BitBoard opp_bits ) {
-  int score = 0;
-  const int16_t *c33_w = &end_pattern_weights[END_PATTERN_CORNER33_OFFSET];
+end_pattern_evaluate_e2x( BitBoard my_bits, BitBoard opp_bits ) {
   const int16_t *e2x_w = &end_pattern_weights[END_PATTERN_EDGE2X_OFFSET];
-  const int16_t *r24_w = &end_pattern_weights[END_PATTERN_RECT24_OFFSET];
+  return e2x_w[29524 + pow3_e2x[gather_e2x_0(my_bits)] - pow3_e2x[gather_e2x_0(opp_bits)]]
+       + e2x_w[29524 + pow3_e2x[gather_e2x_1(my_bits)] - pow3_e2x[gather_e2x_1(opp_bits)]]
+       + e2x_w[29524 + pow3_e2x[gather_e2x_2(my_bits)] - pow3_e2x[gather_e2x_2(opp_bits)]]
+       + e2x_w[29524 + pow3_e2x[gather_e2x_3(my_bits)] - pow3_e2x[gather_e2x_3(opp_bits)]];
+}
 
-  /* 4 Corner 3x3 */
-  score += c33_w[9841 + pow3_c33_0[gather_c33_0(my_bits)] - pow3_c33_0[gather_c33_0(opp_bits)]];
-  score += c33_w[9841 + pow3_c33_0[gather_c33_1(my_bits)] - pow3_c33_0[gather_c33_1(opp_bits)]];
-  score += c33_w[9841 + pow3_c33_2[gather_c33_2(my_bits)] - pow3_c33_2[gather_c33_2(opp_bits)]];
-  score += c33_w[9841 + pow3_c33_2[gather_c33_3(my_bits)] - pow3_c33_2[gather_c33_3(opp_bits)]];
-
-  /* 4 Edge + 2X */
-  score += e2x_w[29524 + pow3_e2x[gather_e2x_0(my_bits)] - pow3_e2x[gather_e2x_0(opp_bits)]];
-  score += e2x_w[29524 + pow3_e2x[gather_e2x_1(my_bits)] - pow3_e2x[gather_e2x_1(opp_bits)]];
-  score += e2x_w[29524 + pow3_e2x[gather_e2x_2(my_bits)] - pow3_e2x[gather_e2x_2(opp_bits)]];
-  score += e2x_w[29524 + pow3_e2x[gather_e2x_3(my_bits)] - pow3_e2x[gather_e2x_3(opp_bits)]];
-
-  /* 8 2x4 Rectangles */
-  score += r24_w[3280 + pow3_r24_0[gather_r24_0(my_bits)] - pow3_r24_0[gather_r24_0(opp_bits)]];
-  score += r24_w[3280 + pow3_r24_0[gather_r24_1(my_bits)] - pow3_r24_0[gather_r24_1(opp_bits)]];
-  score += r24_w[3280 + pow3_r24_2[gather_r24_2(my_bits)] - pow3_r24_2[gather_r24_2(opp_bits)]];
-  score += r24_w[3280 + pow3_r24_2[gather_r24_3(my_bits)] - pow3_r24_2[gather_r24_3(opp_bits)]];
-  score += r24_w[3280 + pow3_r24_4[gather_r24_4(my_bits)] - pow3_r24_4[gather_r24_4(opp_bits)]];
-  score += r24_w[3280 + pow3_r24_5[gather_r24_5(my_bits)] - pow3_r24_5[gather_r24_5(opp_bits)]];
-  score += r24_w[3280 + pow3_r24_6[gather_r24_6(my_bits)] - pow3_r24_6[gather_r24_6(opp_bits)]];
-  score += r24_w[3280 + pow3_r24_7[gather_r24_7(my_bits)] - pow3_r24_7[gather_r24_7(opp_bits)]];
-
-  return score;
+int
+end_pattern_evaluate( BitBoard my_bits, BitBoard opp_bits ) {
+  return end_pattern_evaluate_c33_r24( my_bits, opp_bits ) + end_pattern_evaluate_e2x( my_bits, opp_bits );
 }
 
 /*
