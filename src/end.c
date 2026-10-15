@@ -1564,6 +1564,32 @@ end_order_moves_presearch( ThreadState *ts,
 	  continue;
 	}
       }
+      else if ( use_hash && (empties >= MIN_ETC_DEPTH) && (selectivity == 0) ) {
+	unsigned int diff1, diff2;
+	end_hash_diff( child_my_bits, my_bits, side_to_move, move, &diff1, &diff2 );
+	HashEntry p_entry;
+	find_hash_key( &p_entry, ts->ts_hash1 ^ diff1 ^ hash_flip_color1,
+		       ts->ts_hash2 ^ diff2 ^ hash_flip_color2 );
+	if ( (p_entry.flags & ENDGAME_SCORE) &&
+	     (p_entry.draft >= empties - 1) &&
+	     (p_entry.selectivity == 0) ) {
+	  if ( (p_entry.flags & (EXACT_VALUE | LOWER_BOUND)) && p_entry.eval >= beta ) {
+	    *etc_tried_ptr = move;
+	    *etc_cutoff_score = p_entry.eval;
+	    move_count[stage] = mcnt;
+	    return TRUE;
+	  }
+	  if ( (p_entry.flags & (EXACT_VALUE | UPPER_BOUND)) && p_entry.eval <= curr_alpha ) {
+	    if ( beta == curr_alpha + 1 ) {
+	      refuted_moves[refuted_count++] = move;
+	      continue;
+	    }
+	    ev_stage[move] = -INFINITE_EVAL;
+	    mlist_stage[mcnt++] = move;
+	    continue;
+	  }
+	}
+      }
     }
 
     int opp_corner_moves = non_iterative_popcount( opp_moves & 0x8100000000000081ull );
@@ -1613,11 +1639,13 @@ end_order_moves_presearch( ThreadState *ts,
     }
 
     /* Branch & Bound Pattern Evaluation:
-       Evaluate candidate 0, then only evaluate subsequent candidates within LAZY_PATTERN_MARGIN */
+       Evaluate candidate 0, then only evaluate subsequent candidates within LAZY_PATTERN_MARGIN
+       (or corner moves, whose high pattern value can overcome temporary opponent mobility) */
     int top_fast = surv[0].fast_score;
     for ( i = 0; i < surv_count; i++ ) {
       int m = surv[i].sq;
-      if ( i == 0 || (top_fast - surv[i].fast_score <= LAZY_PATTERN_MARGIN) ) {
+      if ( i == 0 || (top_fast - surv[i].fast_score <= LAZY_PATTERN_MARGIN) ||
+	   (square_mask[m] & CORNER_MASK) != 0 ) {
         int p_score;
         if ( empties <= FAST_PATTERN_DEPTH ) {
           p_score = end_pattern_evaluate_c33_r24( surv[i].child_my_bits, surv[i].new_opp_bits ) / 2;
