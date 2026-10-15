@@ -19,6 +19,9 @@
 extern const int16_t end_pattern_weights[END_PATTERN_TOTAL_WEIGHTS];
 
 int
+end_pattern_evaluate_e2x( BitBoard my_bits, BitBoard opp_bits );
+
+int
 end_pattern_evaluate( BitBoard my_bits, BitBoard opp_bits );
 
 int

@@ -2,25 +2,7 @@
   "mode": "standard",
   "threads": 1,
   "hash_bits": 22,
-  "created_at": "2026-10-15T04:26:00Z",
-  "provenance": {
-    "commit": "da677868a19fc132d8f5cfca827acebfd6b90c9b",
-    "src_dirty": true,
-    "binary_mtime": 1792034895.1571174,
-    "written_at": 1792038406.6322792,
-    "argv": [
-      "./scripts/eval_candidate.py",
-      "--mode",
-      "standard",
-      "--threads",
-      "1",
-      "--hash-bits",
-      "22",
-      "--skip-tests",
-      "--save-baseline",
-      "scripts/baselines/master_standard_t1_h22.json"
-    ]
-  },
+  "created_at": "2026-10-15T14:19:49Z",
   "results": {
     "FFO #40": {
       "correct": true,
@@ -30,9 +12,9 @@
       "expected_moves": [
         "a2"
       ],
-      "nodes": 10733397,
-      "time_sec": 0.3,
-      "nps": 38497450,
+      "nodes": 10820582,
+      "time_sec": 0.4,
+      "nps": 25095162,
       "error": null
     },
     "FFO #41": {
@@ -43,9 +25,9 @@
       "expected_moves": [
         "h4"
       ],
-      "nodes": 14822685,
+      "nodes": 15313401,
       "time_sec": 0.6,
-      "nps": 26403308,
+      "nps": 24752451,
       "error": null
     },
     "FFO #42": {
@@ -56,35 +38,9 @@
       "expected_moves": [
         "g2"
       ],
-      "nodes": 15611981,
+      "nodes": 15029112,
       "time_sec": 0.6,
-      "nps": 27801587,
-      "error": null
-    },
-    "FFO #48": {
-      "correct": true,
-      "score": "18-46",
-      "expected_score": "18-46",
-      "move": "f6",
-      "expected_moves": [
-        "f6"
-      ],
-      "nodes": 83274041,
-      "time_sec": 4.1,
-      "nps": 20310098,
-      "error": null
-    },
-    "FFO #49": {
-      "correct": true,
-      "score": "40-24",
-      "expected_score": "40-24",
-      "move": "e1",
-      "expected_moves": [
-        "e1"
-      ],
-      "nodes": 168507056,
-      "time_sec": 6.1,
-      "nps": 27527846,
+      "nps": 26244756,
       "error": null
     },
     "FFO #45": {
@@ -95,22 +51,35 @@
       "expected_moves": [
         "b2"
       ],
-      "nodes": 188290480,
-      "time_sec": 6.9,
-      "nps": 27391575,
+      "nodes": 175517203,
+      "time_sec": 7.1,
+      "nps": 24587331,
       "error": null
     },
-    "FFO #52": {
+    "FFO #48": {
       "correct": true,
-      "score": "32-32",
-      "expected_score": "32-32",
-      "move": "a3",
+      "score": "18-46",
+      "expected_score": "18-46",
+      "move": "f6",
       "expected_moves": [
-        "a3"
+        "f6"
       ],
-      "nodes": 204264157,
-      "time_sec": 8.3,
-      "nps": 24638708,
+      "nodes": 74082279,
+      "time_sec": 4.3,
+      "nps": 17419660,
+      "error": null
+    },
+    "FFO #49": {
+      "correct": true,
+      "score": "40-24",
+      "expected_score": "40-24",
+      "move": "e1",
+      "expected_moves": [
+        "e1"
+      ],
+      "nodes": 150531409,
+      "time_sec": 6.1,
+      "nps": 24763522,
       "error": null
     },
     "FFO #50": {
@@ -121,9 +90,22 @@
       "expected_moves": [
         "d8"
       ],
-      "nodes": 430058224,
-      "time_sec": 22.8,
-      "nps": 18855508,
+      "nodes": 439745901,
+      "time_sec": 30.4,
+      "nps": 14462441,
+      "error": null
+    },
+    "FFO #52": {
+      "correct": true,
+      "score": "32-32",
+      "expected_score": "32-32",
+      "move": "a3",
+      "expected_moves": [
+        "a3"
+      ],
+      "nodes": 191819106,
+      "time_sec": 13.3,
+      "nps": 14387144,
       "error": null
     }
   }
