@@ -1086,7 +1086,7 @@ _Thread_local short pattern_score;
 INLINE int
 pattern_evaluation( int side_to_move ) {
   int eval_phase;
-  short score;
+  int score;
 #if TIME_EVAL
   long long t0 = rdtsc();
 #endif
