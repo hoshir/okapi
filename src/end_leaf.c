@@ -456,6 +456,7 @@ solve_seven_empty( ThreadState *ts,
   ts->ts_nodes.lo++;
 
 #if USE_SHALLOW_TT
+  int tt_move = 0;
   {
     HashEntry entry;
     find_shallow_hash( &entry, ts );
@@ -466,6 +467,8 @@ solve_seven_empty( ThreadState *ts,
 	ts->ts_end_best_move = entry.move[0];
 	return entry.eval;
       }
+      if ( entry.flags & (LOWER_BOUND | EXACT_VALUE) )
+	tt_move = entry.move[0];
     }
   }
 #endif
@@ -509,6 +512,19 @@ solve_seven_empty( ThreadState *ts,
   if ( quadrant_mask[sq7] & par ) cand[n_odd++] = (6 << 8) | sq7; else m_even[n_even++] = (6 << 8) | sq7;
   for ( i = 0; i < n_even; i++ )
     cand[n_odd + i] = m_even[i];
+#if USE_SHALLOW_TT
+  if ( tt_move != 0 ) {
+    for ( i = 1; i < 7; i++ ) {
+      if ( (cand[i] & 0xFF) == tt_move ) {
+	int tmp = cand[i];
+	for ( k = i; k > 0; k-- )
+	  cand[k] = cand[k - 1];
+	cand[0] = tmp;
+	break;
+      }
+    }
+  }
+#endif
 
   for ( k = 0; k < 7; k++ ) {
     int m = cand[k] & 0xFF;
@@ -614,6 +630,7 @@ solve_eight_empty( ThreadState *ts,
   ts->ts_nodes.lo++;
 
 #if USE_SHALLOW_TT
+  int tt_move = 0;
   {
     HashEntry entry;
     find_shallow_hash( &entry, ts );
@@ -624,6 +641,8 @@ solve_eight_empty( ThreadState *ts,
 	ts->ts_end_best_move = entry.move[0];
 	return entry.eval;
       }
+      if ( entry.flags & (LOWER_BOUND | EXACT_VALUE) )
+	tt_move = entry.move[0];
     }
   }
 #endif
@@ -679,6 +698,19 @@ solve_eight_empty( ThreadState *ts,
   for ( i = 0; i < n_corner; i++ ) cand[idx_out++] = corners[i];
   for ( i = 0; i < n_odd; i++ ) cand[idx_out++] = odds[i];
   for ( i = 0; i < n_even; i++ ) cand[idx_out++] = evens[i];
+#if USE_SHALLOW_TT
+  if ( tt_move != 0 ) {
+    for ( i = 1; i < 8; i++ ) {
+      if ( (cand[i] & 0xFF) == tt_move ) {
+	int tmp = cand[i];
+	for ( k = i; k > 0; k-- )
+	  cand[k] = cand[k - 1];
+	cand[0] = tmp;
+	break;
+      }
+    }
+  }
+#endif
 
   for ( k = 0; k < 8; k++ ) {
     int m = cand[k] & 0xFF;
