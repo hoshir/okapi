@@ -2,12 +2,12 @@
   "mode": "screen",
   "threads": 1,
   "hash_bits": 22,
-  "created_at": "2026-10-15T01:45:04Z",
+  "created_at": "2026-10-15T04:26:00Z",
   "provenance": {
-    "commit": "0fb069a750f2a324e4e25de158c7402561518aaf",
+    "commit": "da677868a19fc132d8f5cfca827acebfd6b90c9b",
     "src_dirty": true,
-    "binary_mtime": 1792026408.4829514,
-    "written_at": 1792028704.6545222,
+    "binary_mtime": 1792034895.1571174,
+    "written_at": 1792038349.118177,
     "argv": [
       "./scripts/eval_candidate.py",
       "--mode",
@@ -30,9 +30,9 @@
       "expected_moves": [
         "b2"
       ],
-      "nodes": 188675301,
-      "time_sec": 6.8,
-      "nps": 27780726,
+      "nodes": 188290480,
+      "time_sec": 7.1,
+      "nps": 26400212,
       "error": null
     },
     "FFO #50": {
@@ -43,9 +43,9 @@
       "expected_moves": [
         "d8"
       ],
-      "nodes": 432390252,
-      "time_sec": 22.9,
-      "nps": 18843730,
+      "nodes": 430058224,
+      "time_sec": 23.0,
+      "nps": 18723111,
       "error": null
     }
   }
