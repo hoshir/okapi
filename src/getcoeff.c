@@ -1046,6 +1046,12 @@ init_coeffs( void ) {
     else
       eval_map[i] = subsequent_stage;
   }
+
+  for ( i = 0; i <= 60; i++ ) {
+    int phase = eval_map[i];
+    if ( !set[phase].loaded )
+      load_set( phase );
+  }
 }
 
 
@@ -1109,8 +1115,6 @@ pattern_evaluation( int side_to_move ) {
   /* Load and/or initialize the pattern coefficients */
 
   eval_phase = eval_map[disks_played];
-  if ( !set[eval_phase].loaded )
-    load_set( eval_phase );
 
   /* The constant feature and the parity feature */
 
@@ -1646,10 +1650,7 @@ remove_specific_coeffs( int phase ) {
 
 void
 remove_coeffs( int phase ) {
-  int i;
-
-  for ( i = 0; i < phase; i++ )
-    remove_specific_coeffs( i );
+  (void) phase;
 }
 
 
@@ -1664,4 +1665,9 @@ clear_coeffs( void ) {
 
   for ( i = 0; i <= 60; i++ )
     remove_specific_coeffs( i );
+  for ( i = 0; i <= 60; i++ ) {
+    int phase = eval_map[i];
+    if ( !set[phase].loaded )
+      load_set( phase );
+  }
 }
