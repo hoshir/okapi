@@ -1406,6 +1406,7 @@ end_order_moves_presearch( ThreadState *ts,
 	if ( level <= MAX_SEARCH_DEPTH ) {
 	  ts->ts_cached_flipped[level][move] = flipped;
 	  ts->ts_cached_flips[level][move] = child_my_bits;
+	  ts->ts_cached_stable[level][move] = 0;
 	}
 	candidate_count++;
       }
@@ -1415,6 +1416,8 @@ end_order_moves_presearch( ThreadState *ts,
   /* Phase 0: Immediate stability cutoff scan across all candidate moves (pure bitboard table, ~3ns per move) */
   if ( ((my_bits | opp_bits) & (CORNER_MASK | BORDER_MASK)) != 0 ) {
     int my_base_cnt = non_iterative_popcount( my_bits );
+    EdgeIndices base_edges = { 0 };
+    int base_edge_stable = -1;
     for ( i = 0; i < candidate_count; i++ ) {
       int my_cnt = my_base_cnt + 1 + candidates[i].flipped;
       if ( 2 * my_cnt - 64 < beta )
@@ -1424,7 +1427,15 @@ end_order_moves_presearch( ThreadState *ts,
         continue;
       BitBoard new_opp_bits = candidates[i].new_opp_bits;
       EdgeIndices edges;
-      int my_edge_stable = count_edge_stable_indexed( side_to_move, child_my_bits, new_opp_bits, &edges );
+      int my_edge_stable;
+      if ( (square_mask[candidates[i].sq] & BORDER_MASK) == 0 ) {
+        if ( base_edge_stable < 0 )
+          base_edge_stable = count_edge_stable_indexed( side_to_move, child_my_bits, new_opp_bits, &base_edges );
+        edges = base_edges;
+        my_edge_stable = base_edge_stable;
+      } else {
+        my_edge_stable = count_edge_stable_indexed( side_to_move, child_my_bits, new_opp_bits, &edges );
+      }
       int lower_bound = 2 * my_edge_stable - 64;
       if ( lower_bound >= beta ) {
         *etc_tried_ptr = candidates[i].sq;
@@ -1439,10 +1450,12 @@ end_order_moves_presearch( ThreadState *ts,
           if ( lower_bound >= beta ) {
             *etc_tried_ptr = candidates[i].sq;
             *etc_cutoff_score = lower_bound;
-                return TRUE;
+            return TRUE;
           }
         }
       }
+      if ( level <= MAX_SEARCH_DEPTH )
+        ts->ts_cached_stable[level][candidates[i].sq] = edges.bits;
     }
   }
 
@@ -1655,7 +1668,9 @@ end_order_moves_presearch( ThreadState *ts,
       if ( i == 0 || (top_fast - surv[i].fast_score <= lazy_margin) ) {
         int p_score;
         if ( empties <= fast_pattern_depth ) {
-          p_score = (end_pattern_evaluate_c33_r24( surv[i].child_my_bits, surv[i].new_opp_bits ) * 30) / 100;
+          p_score = end_pattern_evaluate_c33_r24( surv[i].child_my_bits, surv[i].new_opp_bits ) / 2;
+        } else if ( empties <= 17 ) {
+          p_score = (end_pattern_evaluate( surv[i].child_my_bits, surv[i].new_opp_bits ) * 4) / 5;
         } else {
           p_score = end_pattern_evaluate( surv[i].child_my_bits, surv[i].new_opp_bits );
         }
@@ -2067,6 +2082,10 @@ end_search_nws( ThreadState *ts,
   int presearch_move = 0;
   HashEntry entry;
 
+  int opp_stable_checked = (pass_legal == 2);
+  if ( pass_legal )
+    pass_legal = TRUE;
+
   *selective_cutoff = FALSE;
 
   if ( SPLIT_ABANDONED() )
@@ -2083,7 +2102,7 @@ end_search_nws( ThreadState *ts,
   /* 2. Symmetric stability bounds check */
 #if USE_STABILITY
   if ( level <= MAX_SEARCH_DEPTH ) {
-    if ( ts->stable_discs[oppcol][level] != 0 ) {
+    if ( !opp_stable_checked && ts->stable_discs[oppcol][level] != 0 ) {
       int s = non_iterative_popcount( ts->stable_discs[oppcol][level] );
       int upper_bound = 64 - 2 * s;
       if ( upper_bound <= alpha ) {
@@ -2099,7 +2118,7 @@ end_search_nws( ThreadState *ts,
     }
   }
 
-  if ( (opp_bits & BORDER_MASK) != 0 ) {
+  if ( !opp_stable_checked && (opp_bits & BORDER_MASK) != 0 ) {
     int opp_cnt = non_iterative_popcount( opp_bits );
     int min_upper = 64 - 2 * opp_cnt;
     if ( min_upper <= alpha ) {
@@ -2319,6 +2338,8 @@ end_search_nws( ThreadState *ts,
     if ( level + 1 <= MAX_SEARCH_DEPTH ) {
       ts->stable_discs[BLACKSQ][level + 1] = ts->stable_discs[BLACKSQ][level];
       ts->stable_discs[WHITESQ][level + 1] = ts->stable_discs[WHITESQ][level];
+      if ( pre_search_done && level <= MAX_SEARCH_DEPTH )
+        ts->stable_discs[side_to_move][level + 1] |= ts->ts_cached_stable[level][move];
     }
 
     int new_disc_diff = -disc_diff - 2 * flipped - 1;
@@ -2330,7 +2351,9 @@ end_search_nws( ThreadState *ts,
     else {
       curr_val = -end_search_nws( ts, new_opp_bits, new_my_bits,
 				  -beta, OPP( side_to_move ),
-				  empties - 1, new_disc_diff, TRUE, level + 1,
+				  empties - 1, new_disc_diff,
+				  (pre_search_done && level <= MAX_SEARCH_DEPTH) ? 2 : TRUE,
+				  level + 1,
 				  selectivity, &child_selective_cutoff );
     }
 
