@@ -660,7 +660,7 @@ tree_search( int level,
     }
   }
 
-  hash_hit = (use_hash && allow_midgame_hash_probe);
+  hash_hit = (use_hash && allow_midgame_hash_probe && (entry.draft != NO_HASH_MOVE));
   if ( hash_hit )
     hash_move = entry.move[0];
   else
@@ -760,8 +760,9 @@ tree_search( int level,
       else {  /* All-in-one MPC one-ply search and move ordering */
 	int dp = ts->ts_disks_played;
 	BitBoard empty_bits = ts->ts_board_bits[EMPTY];
+	int best_1ply_move = 0;
 	move_count[dp] = 0;
-	best = alpha_bound;
+	best = -INFINITE_EVAL;
 	empties_remaining = 60 - dp;
 	for ( move_index = 0; move_index < MOVE_ORDER_SIZE; move_index++ ) {
 	  move = sorted_move_order[dp][move_index];
@@ -772,9 +773,12 @@ tree_search( int level,
 	      ts->ts_nodes.lo++;
 	      if ( curr_val > best ) {
 		best = curr_val;
+		best_1ply_move = move;
 		if ( best >= beta_bound ) {
+		  pv[level][level] = move;
+		  pv_depth[level] = level + 1;
 		  if ( use_hash && allow_midgame_hash_update )
-		    add_hash_ts( ts, MIDGAME_MODE, beta, pv[level][level],
+		    add_hash_ts( ts, MIDGAME_MODE, beta, move,
 				 MIDGAME_SCORE | LOWER_BOUND, remains,
 				 selectivity );
 		  return beta;
@@ -792,9 +796,11 @@ tree_search( int level,
 	      break;
 	  }
 	}
-	if ( (best == alpha_bound) && (move_count[dp] > 0) ) {
+	if ( (best <= alpha_bound) && (move_count[dp] > 0) ) {
+	  pv[level][level] = best_1ply_move;
+	  pv_depth[level] = level + 1;
 	  if ( use_hash && allow_midgame_hash_update )
-	    add_hash_ts( ts, MIDGAME_MODE, alpha, pv[level][level],
+	    add_hash_ts( ts, MIDGAME_MODE, alpha, best_1ply_move,
 			 MIDGAME_SCORE | UPPER_BOUND, remains, selectivity );
 	  return alpha;
 	}

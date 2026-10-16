@@ -130,6 +130,81 @@ solve_four_empty( ThreadState *ts,
 
 
 
+#if USE_SHALLOW_TT
+static ALWAYS_INLINE int
+leaf_probe_shallow_tt( ThreadState *ts,
+		       int draft,
+		       int alpha,
+		       int beta,
+		       int *tt_move,
+		       int *tt_val ) {
+  HashEntry entry;
+  find_shallow_hash( &entry, ts );
+  if ( (entry.draft == draft) && (entry.flags & ENDGAME_SCORE) ) {
+    if ( (entry.flags & EXACT_VALUE) ||
+	 ((entry.flags & LOWER_BOUND) && entry.eval >= beta) ||
+	 ((entry.flags & UPPER_BOUND) && entry.eval <= alpha) ) {
+      ts->ts_end_best_move = entry.move[0];
+      *tt_val = entry.eval;
+      return TRUE;
+    }
+    if ( (tt_move != NULL) && (entry.flags & (LOWER_BOUND | EXACT_VALUE)) )
+      *tt_move = entry.move[0];
+  }
+  return FALSE;
+}
+
+static ALWAYS_INLINE void
+leaf_promote_tt_move( int *cand, int n, int tt_move ) {
+  if ( tt_move != 0 ) {
+    int i, k;
+    for ( i = 1; i < n; i++ ) {
+      if ( (cand[i] & 0xFF) == tt_move ) {
+	int tmp = cand[i];
+	for ( k = i; k > 0; k-- )
+	  cand[k] = cand[k - 1];
+	cand[0] = tmp;
+	break;
+      }
+    }
+  }
+}
+#endif
+
+#if USE_STABILITY
+static ALWAYS_INLINE int
+leaf_stability_cutoff( int oppcol,
+		       BitBoard my_bits,
+		       BitBoard opp_bits,
+		       int alpha,
+		       int *beta_ptr ) {
+  int beta = *beta_ptr;
+  if ( ((my_bits | opp_bits) & CORNER_MASK) != 0 && (opp_bits & BORDER_MASK) != 0 ) {
+    int opp_cnt = non_iterative_popcount( opp_bits );
+    if ( alpha >= 0 && (64 - 2 * opp_cnt <= alpha || 64 - 2 * opp_cnt < beta) ) {
+      EdgeIndices edges;
+      int s_edge = count_edge_stable_indexed( oppcol, opp_bits, my_bits, &edges );
+      int stability_bound = 64 - 2 * s_edge;
+      if ( stability_bound <= alpha )
+	return TRUE;
+      if ( edges.bits != 0 && (opp_bits & CENTRAL_MASK) != 0 ) {
+	int max_stable = s_edge + non_iterative_popcount( opp_bits & CENTRAL_MASK );
+	if ( 64 - 2 * max_stable <= alpha || 64 - 2 * max_stable < beta ) {
+	  stability_bound = 64 - 2 * count_stable_indexed( oppcol, opp_bits, my_bits, &edges );
+	}
+	if ( stability_bound < beta )
+	  *beta_ptr = stability_bound + 1;
+	if ( stability_bound <= alpha )
+	  return TRUE;
+      }
+    }
+  }
+  return FALSE;
+}
+#endif
+
+
+
 int
 solve_five_empty( ThreadState *ts,
 		  BitBoard my_bits,
@@ -147,7 +222,9 @@ solve_five_empty( ThreadState *ts,
   BitBoard new_opp_bits;
   BitBoard new_my_bits;
   int score = -INFINITE_EVAL;
+#if USE_SHALLOW_TT && (SHALLOW_TT_MIN_DEPTH <= 5)
   int in_alpha = alpha;
+#endif
   int oppcol = OPP( color );
   int flipped;
   int new_disc_diff;
@@ -156,42 +233,15 @@ solve_five_empty( ThreadState *ts,
 
   ts->ts_nodes.lo++;
 
-#if USE_SHALLOW_TT
-  {
-    HashEntry entry;
-    find_shallow_hash( &entry, ts );
-    if ( (entry.draft == 5) && (entry.flags & ENDGAME_SCORE) ) {
-      if ( (entry.flags & EXACT_VALUE) ||
-	   ((entry.flags & LOWER_BOUND) && entry.eval >= beta) ||
-	   ((entry.flags & UPPER_BOUND) && entry.eval <= alpha) ) {
-	ts->ts_end_best_move = entry.move[0];
-	return entry.eval;
-      }
-    }
-  }
+#if USE_SHALLOW_TT && (SHALLOW_TT_MIN_DEPTH <= 5)
+  int tt_val;
+  if ( leaf_probe_shallow_tt( ts, 5, alpha, beta, NULL, &tt_val ) )
+    return tt_val;
 #endif
 
 #if USE_STABILITY
-  if ( ((my_bits | opp_bits) & CORNER_MASK) != 0 && (opp_bits & BORDER_MASK) != 0 ) {
-    int opp_cnt = non_iterative_popcount( opp_bits );
-    if ( alpha >= 0 && (64 - 2 * opp_cnt <= alpha || 64 - 2 * opp_cnt < beta) ) {
-      EdgeIndices edges;
-      int s_edge = count_edge_stable_indexed( oppcol, opp_bits, my_bits, &edges );
-      int stability_bound = 64 - 2 * s_edge;
-      if ( stability_bound <= alpha )
-        return alpha;
-      if ( edges.bits != 0 && (opp_bits & CENTRAL_MASK) != 0 ) {
-        int max_stable = s_edge + non_iterative_popcount( opp_bits & CENTRAL_MASK );
-        if ( 64 - 2 * max_stable <= alpha || 64 - 2 * max_stable < beta ) {
-          stability_bound = 64 - 2 * count_stable_indexed( oppcol, opp_bits, my_bits, &edges );
-        }
-        if ( stability_bound < beta )
-          beta = stability_bound + 1;
-        if ( stability_bound <= alpha )
-          return alpha;
-      }
-    }
-  }
+  if ( leaf_stability_cutoff( oppcol, my_bits, opp_bits, alpha, &beta ) )
+    return alpha;
 #endif
 
   /* At 5 empties (odd), par is mathematically guaranteed non-zero. */
@@ -224,7 +274,7 @@ solve_five_empty( ThreadState *ts,
                               -beta, -alpha, new_disc_diff, TRUE );
       if ( ev >= beta ) {
         ts->ts_end_best_move = m;
-#if USE_SHALLOW_TT
+#if USE_SHALLOW_TT && (SHALLOW_TT_MIN_DEPTH <= 5)
         add_shallow_hash( ev, m, ENDGAME_SCORE | LOWER_BOUND, 5, ts );
 #endif
         return ev;
@@ -245,17 +295,21 @@ solve_five_empty( ThreadState *ts,
       return 0;
     }
     else {
+#if USE_SHALLOW_TT && (SHALLOW_TT_MIN_DEPTH <= 5)
       ts->ts_hash1 ^= hash_flip_color1;
       ts->ts_hash2 ^= hash_flip_color2;
+#endif
       ev = -solve_five_empty( ts, opp_bits, my_bits, sq1, sq2, sq3, sq4, sq5,
                               -beta, -alpha, oppcol, -disc_diff, FALSE );
+#if USE_SHALLOW_TT && (SHALLOW_TT_MIN_DEPTH <= 5)
       ts->ts_hash1 ^= hash_flip_color1;
       ts->ts_hash2 ^= hash_flip_color2;
+#endif
       return ev;
     }
   }
 
-#if USE_SHALLOW_TT
+#if USE_SHALLOW_TT && (SHALLOW_TT_MIN_DEPTH <= 5)
   if ( score <= in_alpha )
     add_shallow_hash( score, best_sq, ENDGAME_SCORE | UPPER_BOUND, 5, ts );
   else
@@ -285,7 +339,9 @@ solve_six_empty( ThreadState *ts,
   BitBoard new_opp_bits;
   BitBoard new_my_bits;
   int score = -INFINITE_EVAL;
+#if USE_SHALLOW_TT && (SHALLOW_TT_MIN_DEPTH <= 6)
   int in_alpha = alpha;
+#endif
   int oppcol = OPP( color );
   int flipped;
   int new_disc_diff;
@@ -294,42 +350,15 @@ solve_six_empty( ThreadState *ts,
 
   ts->ts_nodes.lo++;
 
-#if USE_SHALLOW_TT
-  {
-    HashEntry entry;
-    find_shallow_hash( &entry, ts );
-    if ( (entry.draft == 6) && (entry.flags & ENDGAME_SCORE) ) {
-      if ( (entry.flags & EXACT_VALUE) ||
-	   ((entry.flags & LOWER_BOUND) && entry.eval >= beta) ||
-	   ((entry.flags & UPPER_BOUND) && entry.eval <= alpha) ) {
-	ts->ts_end_best_move = entry.move[0];
-	return entry.eval;
-      }
-    }
-  }
+#if USE_SHALLOW_TT && (SHALLOW_TT_MIN_DEPTH <= 6)
+  int tt_val;
+  if ( leaf_probe_shallow_tt( ts, 6, alpha, beta, NULL, &tt_val ) )
+    return tt_val;
 #endif
 
 #if USE_STABILITY
-  if ( ((my_bits | opp_bits) & CORNER_MASK) != 0 && (opp_bits & BORDER_MASK) != 0 ) {
-    int opp_cnt = non_iterative_popcount( opp_bits );
-    if ( alpha >= 0 && (64 - 2 * opp_cnt <= alpha || 64 - 2 * opp_cnt < beta) ) {
-      EdgeIndices edges;
-      int s_edge = count_edge_stable_indexed( oppcol, opp_bits, my_bits, &edges );
-      int stability_bound = 64 - 2 * s_edge;
-      if ( stability_bound <= alpha )
-        return alpha;
-      if ( edges.bits != 0 && (opp_bits & CENTRAL_MASK) != 0 ) {
-        int max_stable = s_edge + non_iterative_popcount( opp_bits & CENTRAL_MASK );
-        if ( 64 - 2 * max_stable <= alpha || 64 - 2 * max_stable < beta ) {
-          stability_bound = 64 - 2 * count_stable_indexed( oppcol, opp_bits, my_bits, &edges );
-        }
-        if ( stability_bound < beta )
-          beta = stability_bound + 1;
-        if ( stability_bound <= alpha )
-          return alpha;
-      }
-    }
-  }
+  if ( leaf_stability_cutoff( oppcol, my_bits, opp_bits, alpha, &beta ) )
+    return alpha;
 #endif
 
   int cand[6];
@@ -362,7 +391,7 @@ solve_six_empty( ThreadState *ts,
     if ( flipped != 0 ) {
       FULL_ANDNOT( new_opp_bits, opp_bits, new_my_bits );
       new_disc_diff = -disc_diff - 2 * flipped - 1;
-#if USE_SHALLOW_TT
+#if USE_SHALLOW_TT && (SHALLOW_TT_MIN_DEPTH <= 5)
       unsigned int diff1, diff2;
       end_hash_diff( new_my_bits, my_bits, color, m, &diff1, &diff2 );
       ts->ts_hash1 ^= diff1;
@@ -375,13 +404,13 @@ solve_six_empty( ThreadState *ts,
 			     (idx <= 3) ? sq5 : sq4,
 			     (idx <= 4) ? sq6 : sq5,
 			     -beta, -alpha, oppcol, new_disc_diff, TRUE );
-#if USE_SHALLOW_TT
+#if USE_SHALLOW_TT && (SHALLOW_TT_MIN_DEPTH <= 5)
       ts->ts_hash1 ^= diff1;
       ts->ts_hash2 ^= diff2;
 #endif
       if ( ev >= beta ) {
 	ts->ts_end_best_move = m;
-#if USE_SHALLOW_TT
+#if USE_SHALLOW_TT && (SHALLOW_TT_MIN_DEPTH <= 6)
 	add_shallow_hash( ev, m, ENDGAME_SCORE | LOWER_BOUND, 6, ts );
 #endif
 	return ev;
@@ -404,17 +433,21 @@ solve_six_empty( ThreadState *ts,
       return 0;
     }
     else {
+#if USE_SHALLOW_TT && (SHALLOW_TT_MIN_DEPTH <= 6)
       ts->ts_hash1 ^= hash_flip_color1;
       ts->ts_hash2 ^= hash_flip_color2;
+#endif
       ev = -solve_six_empty( ts, opp_bits, my_bits, sq1, sq2, sq3, sq4, sq5, sq6,
 			     -beta, -alpha, oppcol, -disc_diff, FALSE );
+#if USE_SHALLOW_TT && (SHALLOW_TT_MIN_DEPTH <= 6)
       ts->ts_hash1 ^= hash_flip_color1;
       ts->ts_hash2 ^= hash_flip_color2;
+#endif
       return ev;
     }
   }
 
-#if USE_SHALLOW_TT
+#if USE_SHALLOW_TT && (SHALLOW_TT_MIN_DEPTH <= 6)
   if ( score <= in_alpha )
     add_shallow_hash( score, best_sq, ENDGAME_SCORE | UPPER_BOUND, 6, ts );
   else
@@ -446,7 +479,9 @@ solve_seven_empty( ThreadState *ts,
   BitBoard new_opp_bits;
   BitBoard new_my_bits;
   int score = -INFINITE_EVAL;
+#if USE_SHALLOW_TT && (SHALLOW_TT_MIN_DEPTH <= 7)
   int in_alpha = alpha;
+#endif
   int oppcol = OPP( color );
   int flipped;
   int new_disc_diff;
@@ -455,45 +490,15 @@ solve_seven_empty( ThreadState *ts,
 
   ts->ts_nodes.lo++;
 
-#if USE_SHALLOW_TT
-  int tt_move = 0;
-  {
-    HashEntry entry;
-    find_shallow_hash( &entry, ts );
-    if ( (entry.draft == 7) && (entry.flags & ENDGAME_SCORE) ) {
-      if ( (entry.flags & EXACT_VALUE) ||
-	   ((entry.flags & LOWER_BOUND) && entry.eval >= beta) ||
-	   ((entry.flags & UPPER_BOUND) && entry.eval <= alpha) ) {
-	ts->ts_end_best_move = entry.move[0];
-	return entry.eval;
-      }
-      if ( entry.flags & (LOWER_BOUND | EXACT_VALUE) )
-	tt_move = entry.move[0];
-    }
-  }
+#if USE_SHALLOW_TT && (SHALLOW_TT_MIN_DEPTH <= 7)
+  int tt_move = 0, tt_val;
+  if ( leaf_probe_shallow_tt( ts, 7, alpha, beta, &tt_move, &tt_val ) )
+    return tt_val;
 #endif
 
 #if USE_STABILITY
-  if ( ((my_bits | opp_bits) & CORNER_MASK) != 0 && (opp_bits & BORDER_MASK) != 0 ) {
-    int opp_cnt = non_iterative_popcount( opp_bits );
-    if ( alpha >= 0 && (64 - 2 * opp_cnt <= alpha || 64 - 2 * opp_cnt < beta) ) {
-      EdgeIndices edges;
-      int s_edge = count_edge_stable_indexed( oppcol, opp_bits, my_bits, &edges );
-      int stability_bound = 64 - 2 * s_edge;
-      if ( stability_bound <= alpha )
-        return alpha;
-      if ( edges.bits != 0 && (opp_bits & CENTRAL_MASK) != 0 ) {
-        int max_stable = s_edge + non_iterative_popcount( opp_bits & CENTRAL_MASK );
-        if ( 64 - 2 * max_stable <= alpha || 64 - 2 * max_stable < beta ) {
-          stability_bound = 64 - 2 * count_stable_indexed( oppcol, opp_bits, my_bits, &edges );
-        }
-        if ( stability_bound < beta )
-          beta = stability_bound + 1;
-        if ( stability_bound <= alpha )
-          return alpha;
-      }
-    }
-  }
+  if ( leaf_stability_cutoff( oppcol, my_bits, opp_bits, alpha, &beta ) )
+    return alpha;
 #endif
 
   /* At 7 empties (odd), par is mathematically guaranteed non-zero. */
@@ -512,18 +517,8 @@ solve_seven_empty( ThreadState *ts,
   if ( quadrant_mask[sq7] & par ) cand[n_odd++] = (6 << 8) | sq7; else m_even[n_even++] = (6 << 8) | sq7;
   for ( i = 0; i < n_even; i++ )
     cand[n_odd + i] = m_even[i];
-#if USE_SHALLOW_TT
-  if ( tt_move != 0 ) {
-    for ( i = 1; i < 7; i++ ) {
-      if ( (cand[i] & 0xFF) == tt_move ) {
-	int tmp = cand[i];
-	for ( k = i; k > 0; k-- )
-	  cand[k] = cand[k - 1];
-	cand[0] = tmp;
-	break;
-      }
-    }
-  }
+#if USE_SHALLOW_TT && (SHALLOW_TT_MIN_DEPTH <= 7)
+  leaf_promote_tt_move( cand, 7, tt_move );
 #endif
 
   for ( k = 0; k < 7; k++ ) {
@@ -533,7 +528,7 @@ solve_seven_empty( ThreadState *ts,
     if ( flipped != 0 ) {
       FULL_ANDNOT( new_opp_bits, opp_bits, new_my_bits );
       new_disc_diff = -disc_diff - 2 * flipped - 1;
-#if USE_SHALLOW_TT
+#if USE_SHALLOW_TT && (SHALLOW_TT_MIN_DEPTH <= 6)
       unsigned int diff1, diff2;
       end_hash_diff( new_my_bits, my_bits, color, m, &diff1, &diff2 );
       ts->ts_hash1 ^= diff1;
@@ -547,13 +542,13 @@ solve_seven_empty( ThreadState *ts,
 			     (idx <= 4) ? sq6 : sq5,
 			     (idx <= 5) ? sq7 : sq6,
 			     -beta, -alpha, oppcol, new_disc_diff, TRUE );
-#if USE_SHALLOW_TT
+#if USE_SHALLOW_TT && (SHALLOW_TT_MIN_DEPTH <= 6)
       ts->ts_hash1 ^= diff1;
       ts->ts_hash2 ^= diff2;
 #endif
       if ( ev >= beta ) {
 	ts->ts_end_best_move = m;
-#if USE_SHALLOW_TT
+#if USE_SHALLOW_TT && (SHALLOW_TT_MIN_DEPTH <= 7)
 	add_shallow_hash( ev, m, ENDGAME_SCORE | LOWER_BOUND, 7, ts );
 #endif
 	return ev;
@@ -576,18 +571,22 @@ solve_seven_empty( ThreadState *ts,
       return 0;
     }
     else {
+#if USE_SHALLOW_TT && (SHALLOW_TT_MIN_DEPTH <= 7)
       ts->ts_hash1 ^= hash_flip_color1;
       ts->ts_hash2 ^= hash_flip_color2;
+#endif
       ev = -solve_seven_empty( ts, opp_bits, my_bits,
 			       sq1, sq2, sq3, sq4, sq5, sq6, sq7,
 			       -beta, -alpha, oppcol, -disc_diff, FALSE );
+#if USE_SHALLOW_TT && (SHALLOW_TT_MIN_DEPTH <= 7)
       ts->ts_hash1 ^= hash_flip_color1;
       ts->ts_hash2 ^= hash_flip_color2;
+#endif
       return ev;
     }
   }
 
-#if USE_SHALLOW_TT
+#if USE_SHALLOW_TT && (SHALLOW_TT_MIN_DEPTH <= 7)
   if ( score <= in_alpha )
     add_shallow_hash( score, best_sq, ENDGAME_SCORE | UPPER_BOUND, 7, ts );
   else
@@ -620,7 +619,9 @@ solve_eight_empty( ThreadState *ts,
   BitBoard new_opp_bits;
   BitBoard new_my_bits;
   int score = -INFINITE_EVAL;
+#if USE_SHALLOW_TT && (SHALLOW_TT_MIN_DEPTH <= 8)
   int in_alpha = alpha;
+#endif
   int oppcol = OPP( color );
   int flipped;
   int new_disc_diff;
@@ -629,45 +630,15 @@ solve_eight_empty( ThreadState *ts,
 
   ts->ts_nodes.lo++;
 
-#if USE_SHALLOW_TT
-  int tt_move = 0;
-  {
-    HashEntry entry;
-    find_shallow_hash( &entry, ts );
-    if ( (entry.draft == 8) && (entry.flags & ENDGAME_SCORE) ) {
-      if ( (entry.flags & EXACT_VALUE) ||
-	   ((entry.flags & LOWER_BOUND) && entry.eval >= beta) ||
-	   ((entry.flags & UPPER_BOUND) && entry.eval <= alpha) ) {
-	ts->ts_end_best_move = entry.move[0];
-	return entry.eval;
-      }
-      if ( entry.flags & (LOWER_BOUND | EXACT_VALUE) )
-	tt_move = entry.move[0];
-    }
-  }
+#if USE_SHALLOW_TT && (SHALLOW_TT_MIN_DEPTH <= 8)
+  int tt_move = 0, tt_val;
+  if ( leaf_probe_shallow_tt( ts, 8, alpha, beta, &tt_move, &tt_val ) )
+    return tt_val;
 #endif
 
 #if USE_STABILITY
-  if ( ((my_bits | opp_bits) & CORNER_MASK) != 0 && (opp_bits & BORDER_MASK) != 0 ) {
-    int opp_cnt = non_iterative_popcount( opp_bits );
-    if ( alpha >= 0 && (64 - 2 * opp_cnt <= alpha || 64 - 2 * opp_cnt < beta) ) {
-      EdgeIndices edges;
-      int s_edge = count_edge_stable_indexed( oppcol, opp_bits, my_bits, &edges );
-      int stability_bound = 64 - 2 * s_edge;
-      if ( stability_bound <= alpha )
-        return alpha;
-      if ( edges.bits != 0 && (opp_bits & CENTRAL_MASK) != 0 ) {
-        int max_stable = s_edge + non_iterative_popcount( opp_bits & CENTRAL_MASK );
-        if ( 64 - 2 * max_stable <= alpha || 64 - 2 * max_stable < beta ) {
-          stability_bound = 64 - 2 * count_stable_indexed( oppcol, opp_bits, my_bits, &edges );
-        }
-        if ( stability_bound < beta )
-          beta = stability_bound + 1;
-        if ( stability_bound <= alpha )
-          return alpha;
-      }
-    }
-  }
+  if ( leaf_stability_cutoff( oppcol, my_bits, opp_bits, alpha, &beta ) )
+    return alpha;
 #endif
 
   int orig_sq[8];
@@ -698,18 +669,8 @@ solve_eight_empty( ThreadState *ts,
   for ( i = 0; i < n_corner; i++ ) cand[idx_out++] = corners[i];
   for ( i = 0; i < n_odd; i++ ) cand[idx_out++] = odds[i];
   for ( i = 0; i < n_even; i++ ) cand[idx_out++] = evens[i];
-#if USE_SHALLOW_TT
-  if ( tt_move != 0 ) {
-    for ( i = 1; i < 8; i++ ) {
-      if ( (cand[i] & 0xFF) == tt_move ) {
-	int tmp = cand[i];
-	for ( k = i; k > 0; k-- )
-	  cand[k] = cand[k - 1];
-	cand[0] = tmp;
-	break;
-      }
-    }
-  }
+#if USE_SHALLOW_TT && (SHALLOW_TT_MIN_DEPTH <= 8)
+  leaf_promote_tt_move( cand, 8, tt_move );
 #endif
 
   for ( k = 0; k < 8; k++ ) {
@@ -719,7 +680,7 @@ solve_eight_empty( ThreadState *ts,
     if ( flipped != 0 ) {
       FULL_ANDNOT( new_opp_bits, opp_bits, new_my_bits );
       new_disc_diff = -disc_diff - 2 * flipped - 1;
-#if USE_SHALLOW_TT
+#if USE_SHALLOW_TT && (SHALLOW_TT_MIN_DEPTH <= 7)
       unsigned int diff1, diff2;
       end_hash_diff( new_my_bits, my_bits, color, m, &diff1, &diff2 );
       ts->ts_hash1 ^= diff1;
@@ -734,13 +695,13 @@ solve_eight_empty( ThreadState *ts,
 			       (idx <= 5) ? sq7 : sq6,
 			       (idx <= 6) ? sq8 : sq7,
 			       -beta, -alpha, oppcol, new_disc_diff, TRUE );
-#if USE_SHALLOW_TT
+#if USE_SHALLOW_TT && (SHALLOW_TT_MIN_DEPTH <= 7)
       ts->ts_hash1 ^= diff1;
       ts->ts_hash2 ^= diff2;
 #endif
       if ( ev >= beta ) {
 	ts->ts_end_best_move = m;
-#if USE_SHALLOW_TT
+#if USE_SHALLOW_TT && (SHALLOW_TT_MIN_DEPTH <= 8)
 	add_shallow_hash( ev, m, ENDGAME_SCORE | LOWER_BOUND, 8, ts );
 #endif
 	return ev;
@@ -763,18 +724,22 @@ solve_eight_empty( ThreadState *ts,
       return 0;
     }
     else {
+#if USE_SHALLOW_TT && (SHALLOW_TT_MIN_DEPTH <= 8)
       ts->ts_hash1 ^= hash_flip_color1;
       ts->ts_hash2 ^= hash_flip_color2;
+#endif
       ev = -solve_eight_empty( ts, opp_bits, my_bits,
 			       sq1, sq2, sq3, sq4, sq5, sq6, sq7, sq8,
 			       -beta, -alpha, oppcol, -disc_diff, FALSE );
+#if USE_SHALLOW_TT && (SHALLOW_TT_MIN_DEPTH <= 8)
       ts->ts_hash1 ^= hash_flip_color1;
       ts->ts_hash2 ^= hash_flip_color2;
+#endif
       return ev;
     }
   }
 
-#if USE_SHALLOW_TT
+#if USE_SHALLOW_TT && (SHALLOW_TT_MIN_DEPTH <= 8)
   if ( score <= in_alpha )
     add_shallow_hash( score, best_sq, ENDGAME_SCORE | UPPER_BOUND, 8, ts );
   else
