@@ -45,6 +45,7 @@ SRCS = \
 	midgame.c \
 	moves.c \
 	myrandom.c \
+	nnue.c \
 	opname.c \
 	osfbook.c \
 	patterns.c \

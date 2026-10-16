@@ -7,6 +7,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 #include "constant.h"
 #include "globals.h"
@@ -19,8 +20,10 @@
 #include "moves.h"
 #include "patterns.h"
 #include "end_patterns.h"
+#include "nnue.h"
 #include "stable.h"
 #include "hash.h"
+#include "timer.h"
 #include "tlstate.h"
 
 #define NUM_ACTIVE_PATTERNS  46
@@ -380,6 +383,176 @@ test_end_pattern_invariants( void ) {
 }
 
 
+/*
+  TEST_NNUE_INVARIANTS
+  Verifies:
+  1. Bit-exact agreement with Python QAT reference cases in nnue_data.h.
+  2. Bit-for-bit equality between scalar full-board accumulator initialization,
+     NEON full-board initialization, and NEON incremental child update
+     (`nnue_init_parent_base_acc` + `nnue_update_child_acc`).
+  3. Bit-for-bit equality between scalar and ARM64 NEON dual-head evaluation,
+     plus exact 8-fold dihedral (D4) symmetry invariance.
+*/
+static BitBoard
+d4_transform_bb( BitBoard b, int sym ) {
+  BitBoard out = 0;
+  for ( int sq = 0; sq < 64; sq++ ) {
+    if ( (b >> sq) & 1ULL ) {
+      int r = sq >> 3;
+      int c = sq & 7;
+      if ( sym & 1 )
+	c = 7 - c;
+      if ( sym & 2 )
+	r = 7 - r;
+      if ( sym & 4 ) {
+	int t = r;
+	r = c;
+	c = t;
+      }
+      out |= (1ULL << (r * 8 + c));
+    }
+  }
+  return out;
+}
+
+static void
+test_nnue_invariants( void ) {
+  CHECK( nnue_verify_reference_cases(),
+	 "nnue_verify_reference_cases failed against Python QAT reference cases" );
+
+  for ( int trial = 0; trial < 2000; trial++ ) {
+    BitBoard p_my = 0, p_opp = 0;
+    for ( int b = 0; b < 64; b++ ) {
+      int r = rand() % 3;
+      if ( r == 0 )
+	p_my |= (1ULL << b);
+      else if ( r == 1 )
+	p_opp |= (1ULL << b);
+    }
+    BitBoard empty_bb = ~(p_my | p_opp);
+    if ( !empty_bb || !p_opp )
+      continue;
+
+    int sq = __builtin_ctzll( empty_bb );
+    /* Pick a random subset of p_opp as flipped discs */
+    BitBoard mask = ((uint64_t)rand() << 32) ^ (uint64_t)rand();
+    BitBoard flips = p_opp & mask;
+    if ( !flips )
+      flips = p_opp & -p_opp;
+
+    BitBoard child_my_bits = p_my | (1ULL << sq) | flips;
+    BitBoard new_opp_bits = p_opp ^ flips;
+    int empties = non_iterative_popcount( ~(child_my_bits | new_opp_bits) );
+
+    NnueAcc acc_scalar, acc_neon, base_acc, acc_inc;
+    nnue_init_acc_scalar( &acc_scalar, child_my_bits, new_opp_bits );
+    nnue_init_acc( &acc_neon, child_my_bits, new_opp_bits );
+    nnue_init_parent_base_acc( &base_acc, p_my, p_opp );
+    nnue_update_child_acc( &acc_inc, &base_acc, sq, flips );
+
+    for ( int k = 0; k < NNUE_MAX_ACC_DIM; k++ ) {
+      CHECK( acc_scalar.v[k] == acc_neon.v[k],
+	     "trial %d lane %d: scalar acc %d != NEON acc %d",
+	     trial, k, (int)acc_scalar.v[k], (int)acc_neon.v[k] );
+      CHECK( acc_scalar.v[k] == acc_inc.v[k],
+	     "trial %d lane %d: full acc %d != incremental acc %d",
+	     trial, k, (int)acc_scalar.v[k], (int)acc_inc.v[k] );
+    }
+
+    NnueTactical tact = {
+      trial % 12,
+      trial % 3,
+      ( sq == 0 || sq == 7 || sq == 56 || sq == 63 ) ? 1 : 0,
+      trial & 1,
+      ( trial >> 1 ) & 1,
+      non_iterative_popcount( flips )
+    };
+
+    int32_t ord_s = 0, val_s = 0;
+    int32_t ord_n = 0, val_n = 0;
+    nnue_evaluate_acc_scalar( &acc_scalar, child_my_bits, new_opp_bits, &tact, empties, &ord_s, &val_s );
+    nnue_evaluate_acc( &acc_inc, child_my_bits, new_opp_bits, &tact, empties, &ord_n, &val_n );
+
+    CHECK( ord_s == ord_n && val_s == val_n,
+	   "trial %d: scalar (%d,%d) != NEON (%d,%d)",
+	   trial, (int)ord_s, (int)val_s, (int)ord_n, (int)val_n );
+
+    if ( trial < 200 ) {
+      for ( int sym = 1; sym < 8; sym++ ) {
+	BitBoard sym_my = d4_transform_bb( child_my_bits, sym );
+	BitBoard sym_opp = d4_transform_bb( new_opp_bits, sym );
+	NnueAcc acc_sym;
+	int32_t ord_sym = 0, val_sym = 0;
+	nnue_init_acc( &acc_sym, sym_my, sym_opp );
+	nnue_evaluate_acc( &acc_sym, sym_my, sym_opp, &tact, empties, &ord_sym, &val_sym );
+	CHECK( ord_sym == ord_n && val_sym == val_n,
+	       "trial %d sym %d: D4 symmetry mismatch (%d,%d) != (%d,%d)",
+	       trial, sym, (int)ord_sym, (int)val_sym, (int)ord_n, (int)val_n );
+      }
+    }
+  }
+}
+
+static double
+monotonic_sec( void ) {
+  struct timespec ts;
+  clock_gettime( CLOCK_MONOTONIC, &ts );
+  return (double)ts.tv_sec + (double)ts.tv_nsec * 1e-9;
+}
+
+static void
+bench_nnue_throughput( void ) {
+  const int N = 2000000;
+  BitBoard p_my = 0x001c3e3c3c380000ULL;
+  BitBoard p_opp = 0x3c62414343471c00ULL;
+  NnueAcc base_acc, child_acc;
+  nnue_init_parent_base_acc( &base_acc, p_my, p_opp );
+
+  int sqs[8] = { 0, 7, 16, 23, 40, 47, 56, 63 };
+  BitBoard flips_arr[8] = {
+    0x0000020408000000ULL, 0x0000402010000000ULL,
+    0x0008080800000000ULL, 0x0010100000000000ULL,
+    0x0000000808080000ULL, 0x0000001010000000ULL,
+    0x0000000004020000ULL, 0x0000000020400000ULL
+  };
+  NnueTactical tact = { 5, 0, 0, 0, 1, 3 };
+
+  volatile int32_t sink = 0;
+  double t0 = monotonic_sec();
+  for ( int i = 0; i < N; i++ ) {
+    int k = i & 7;
+    nnue_update_child_acc( &child_acc, &base_acc, sqs[k], flips_arr[k] );
+    sink += child_acc.v[k];
+  }
+  double t_upd = monotonic_sec() - t0;
+
+  t0 = monotonic_sec();
+  for ( int i = 0; i < N; i++ ) {
+    int k = i & 7;
+    BitBoard c_my = p_my | (1ULL << sqs[k]) | flips_arr[k];
+    BitBoard c_opp = p_opp ^ flips_arr[k];
+    nnue_update_child_acc( &child_acc, &base_acc, sqs[k], flips_arr[k] );
+    sink += nnue_evaluate_order_acc( &child_acc, c_my, c_opp, &tact, 16 );
+  }
+  double t_nnue = monotonic_sec() - t0;
+
+  t0 = monotonic_sec();
+  for ( int i = 0; i < N; i++ ) {
+    int k = i & 7;
+    sink += end_pattern_evaluate( p_my | (1ULL << sqs[k]) | flips_arr[k], p_opp ^ flips_arr[k] );
+  }
+  double t_endp = monotonic_sec() - t0;
+
+  printf( "=== ARM64 NEON Microbenchmark (%d iterations, sink=%d) ===\n", N, (int)sink );
+  printf( "  1. nnue_update_child_acc (incremental 64x int16):  %5.2f ns/call (%6.1f M/sec)\n",
+	  (t_upd * 1e9) / N, (N / 1e6) / t_upd );
+  printf( "  2. nnue_update + nnue_evaluate_order_acc (NEON):   %5.2f ns/call (%6.1f M/sec)\n",
+	  (t_nnue * 1e9) / N, (N / 1e6) / t_nnue );
+  printf( "  3. end_pattern_evaluate (16-tuple SWAR lookup):    %5.2f ns/call (%6.1f M/sec)\n",
+	  (t_endp * 1e9) / N, (N / 1e6) / t_endp );
+}
+
+
 int
 main( void ) {
   srand( 42 );
@@ -395,11 +568,15 @@ main( void ) {
   test_stability_invariants();
   test_tt_isolation_invariants();
   test_end_pattern_invariants();
+  test_nnue_invariants();
+
+  if ( getenv( "NNUE_BENCH" ) )
+    bench_nnue_throughput();
 
   if ( failures != 0 ) {
     fprintf( stderr, "search_invariants_test: %d failure(s)\n", failures );
     return 1;
   }
-  printf( "search_invariants_test: PASSED (500 random games, 2000 stability/end_pattern boards, TT isolation checks)\n" );
+  printf( "search_invariants_test: PASSED (500 random games, 2000 stability/end_pattern/NNUE boards, TT isolation checks)\n" );
   return 0;
 }
