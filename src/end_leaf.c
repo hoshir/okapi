@@ -3,11 +3,12 @@
 
    Created:       2026
 
-   Contents:      Leaf solvers (4 to 8 empty squares) for the endgame search.
+   Contents:      Leaf solvers (1 to 8 empty squares) for the endgame search.
 */
 
 #include "porting.h"
 
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 
@@ -24,108 +25,28 @@
 #include "stable.h"
 #include "tlstate.h"
 
+/*
+  Compact 32-bit state word for leaf solvers (fits in argument register w7):
+    bits 0..3 : quadrant parity bitmask (0x0..0xF)
+    bits 4..5 : side to move color (BLACKSQ = 0, WHITESQ = 2; XOR 0x20 flips side)
+    bit  8    : pass_legal flag (1 = pass allowed, 0 = second consecutive pass)
+*/
+#define LEAF_STATE( par, color, pass_legal ) \
+  (((unsigned int)(par) & 0xFU) | ((unsigned int)(color) << 4) | ((unsigned int)((pass_legal) != 0) << 8))
+#define LEAF_PAR( state )        ((state) & 0xFU)
+#define LEAF_COLOR( state )      ((int)(((state) >> 4) & 3U))
+#define LEAF_PASS_LEGAL( state ) ((int)(((state) >> 8) & 1U))
+#define LEAF_NEXT_STATE( state, sq ) \
+  (((state) ^ 0x20U ^ quadrant_mask[sq]) | 0x100U)
+#define LEAF_PASS_STATE( state ) \
+  (((state) ^ 0x20U) & ~0x100U)
 
 
-int
-solve_four_empty( ThreadState *ts,
-		  BitBoard my_bits,
-		  BitBoard opp_bits,
-		  int sq1,
-		  int sq2,
-		  int sq3,
-		  int sq4,
-		  int alpha,
-		  int beta,
-		  int disc_diff,
-		  int pass_legal ) {
-  BitBoard new_opp_bits;
-  BitBoard new_my_bits;
-  int score = -INFINITE_EVAL;
-  int flipped;
-  int new_disc_diff;
-  int ev;
 
-  ts->ts_nodes.lo++;
-
-  unsigned int par = quadrant_mask[sq1] ^ quadrant_mask[sq2] ^ quadrant_mask[sq3] ^ quadrant_mask[sq4];
-  if ( par != 0 ) {
-    int m_odd[4], m_even[4];
-    int n_odd = 0, n_even = 0;
-    if ( quadrant_mask[sq1] & par ) m_odd[n_odd++] = sq1; else m_even[n_even++] = sq1;
-    if ( quadrant_mask[sq2] & par ) m_odd[n_odd++] = sq2; else m_even[n_even++] = sq2;
-    if ( quadrant_mask[sq3] & par ) m_odd[n_odd++] = sq3; else m_even[n_even++] = sq3;
-    if ( quadrant_mask[sq4] & par ) m_odd[n_odd++] = sq4; else m_even[n_even++] = sq4;
-    if ( n_odd == 2 ) {
-      sq1 = m_odd[0]; sq2 = m_odd[1]; sq3 = m_even[0]; sq4 = m_even[1];
-    }
-  }
-
-  flipped = TestFlips_wrapper_to( sq1, my_bits, opp_bits, &new_my_bits );
-  if ( flipped != 0 ) {
-    FULL_ANDNOT( new_opp_bits, opp_bits, new_my_bits );
-    new_disc_diff = -disc_diff - 2 * flipped - 1;
-    score = -solve_three_empty( ts, new_opp_bits, new_my_bits, sq2, sq3, sq4,
-				-beta, -alpha, new_disc_diff, TRUE );
-    if ( score >= beta )
-      return score;
-    else if ( score > alpha )
-      alpha = score;
-  }
-
-  flipped = TestFlips_wrapper_to( sq2, my_bits, opp_bits, &new_my_bits );
-  if ( flipped != 0 ) {
-    FULL_ANDNOT( new_opp_bits, opp_bits, new_my_bits );
-    new_disc_diff = -disc_diff - 2 * flipped - 1;
-    ev = -solve_three_empty( ts, new_opp_bits, new_my_bits, sq1, sq3, sq4,
-			     -beta, -alpha, new_disc_diff, TRUE );
-    if ( ev >= beta )
-      return ev;
-    else if ( ev > score ) {
-      score = ev;
-      if ( score > alpha )
-	alpha = score;
-    }
-  }
-
-  flipped = TestFlips_wrapper_to( sq3, my_bits, opp_bits, &new_my_bits );
-  if ( flipped != 0 ) {
-    FULL_ANDNOT( new_opp_bits, opp_bits, new_my_bits );
-    new_disc_diff = -disc_diff - 2 * flipped - 1;
-    ev = -solve_three_empty( ts, new_opp_bits, new_my_bits, sq1, sq2, sq4,
-			     -beta, -alpha, new_disc_diff, TRUE );
-    if ( ev >= beta )
-      return ev;
-    else if ( ev > score ) {
-      score = ev;
-      if ( score > alpha )
-	alpha = score;
-    }
-  }
-
-  flipped = TestFlips_wrapper_to( sq4, my_bits, opp_bits, &new_my_bits );
-  if ( flipped != 0 ) {
-    FULL_ANDNOT( new_opp_bits, opp_bits, new_my_bits );
-    new_disc_diff = -disc_diff - 2 * flipped - 1;
-    ev = -solve_three_empty( ts, new_opp_bits, new_my_bits, sq1, sq2, sq3,
-			     -beta, -alpha, new_disc_diff, TRUE );
-    if ( ev >= score )
-      return ev;
-  }
-
-  if ( score == -INFINITE_EVAL ) {
-    if ( !pass_legal ) {  /* Four empty squares */
-      if ( disc_diff > 0 )
-	return disc_diff + 4;
-      if ( disc_diff < 0 )
-	return disc_diff - 4;
-      return 0;
-    }
-    else
-      return -solve_four_empty( ts, opp_bits, my_bits, sq1, sq2, sq3, sq4,
-				-beta, -alpha, -disc_diff, FALSE );
-  }
-
-  return score;
+static ALWAYS_INLINE uint64_t
+leaf_remove_empty_byte( uint64_t empties, unsigned int sh ) {
+  uint64_t low_mask = (1ULL << sh) - 1ULL;
+  return (empties & low_mask) | ((empties >> 8) & ~low_mask);
 }
 
 
@@ -142,21 +63,32 @@ leaf_probe_shallow_tt( ThreadState *ts,
 }
 
 static ALWAYS_INLINE void
-leaf_promote_tt_move( int *cand, int n, int tt_move ) {
-  if ( tt_move != 0 ) {
-    int i, k;
-    for ( i = 1; i < n; i++ ) {
-      if ( (cand[i] & 0xFF) == tt_move ) {
-	int tmp = cand[i];
-	for ( k = i; k > 0; k-- )
-	  cand[k] = cand[k - 1];
-	cand[0] = tmp;
-	break;
-      }
+leaf_promote_tt_move_packed( uint64_t *cand_sq_ptr,
+			     uint64_t *cand_sh_ptr,
+			     int max_bits,
+			     int tt_move ) {
+  if ( tt_move == 0 )
+    return;
+  uint64_t cand_sq = *cand_sq_ptr;
+  if ( (int)(cand_sq & 0xFF) == tt_move )
+    return;
+  int sh;
+  for ( sh = 8; sh < max_bits; sh += 8 ) {
+    if ( (int)((cand_sq >> sh) & 0xFF) == tt_move ) {
+      uint64_t cand_sh = *cand_sh_ptr;
+      uint64_t low_mask = (1ULL << sh) - 1ULL;
+      uint64_t clear_mask = low_mask | (0xFFULL << sh);
+      uint64_t sq_byte = (cand_sq >> sh) & 0xFFULL;
+      uint64_t sh_byte = (cand_sh >> sh) & 0xFFULL;
+      *cand_sq_ptr = sq_byte | ((cand_sq & low_mask) << 8) | (cand_sq & ~clear_mask);
+      *cand_sh_ptr = sh_byte | ((cand_sh & low_mask) << 8) | (cand_sh & ~clear_mask);
+      return;
     }
   }
 }
 #endif
+
+
 
 #if USE_STABILITY
 static ALWAYS_INLINE int
@@ -192,26 +124,302 @@ leaf_stability_cutoff( int oppcol,
 
 
 
-int
+static ALWAYS_INLINE int
+eval_two_empty_move( ThreadState *ts,
+		     int sq_other,
+		     BitBoard opp_bits,
+		     BitBoard new_my_bits,
+		     int flipped,
+		     int beta,
+		     int disc_diff ) {
+  int ev = disc_diff + 2 * flipped;
+  int opp_flipped;
+
+  ts->ts_nodes.lo++;
+
+  opp_flipped = CountFlips_bitboard( sq_other, opp_bits & ~new_my_bits );
+  if ( opp_flipped != 0 )
+    ev -= 2 * opp_flipped;
+  else if ( ev >= 0 ) {
+    ev += 2;
+    if ( ev < beta )
+      ev += 2 * CountFlips_bitboard( sq_other, new_my_bits );
+  }
+  else if ( ev < beta ) {
+    opp_flipped = CountFlips_bitboard( sq_other, new_my_bits );
+    if ( opp_flipped != 0 )
+      ev += 2 * (opp_flipped + 1);
+  }
+  return ev;
+}
+
+static int
+solve_two_empty( ThreadState *ts,
+		 BitBoard my_bits,
+		 BitBoard opp_bits,
+		 int sq1,
+		 int sq2,
+		 int alpha,
+		 int beta,
+		 int disc_diff,
+		 int pass_legal ) {
+  int score = -INFINITE_EVAL;
+  int flipped;
+  int ev;
+  BitBoard new_my_bits;
+
+  ts->ts_nodes.lo++;
+
+  flipped = TestFlips_wrapper_to( sq1, my_bits, opp_bits, &new_my_bits );
+  if ( flipped != 0 ) {
+    score = eval_two_empty_move( ts, sq2, opp_bits, new_my_bits, flipped, beta, disc_diff );
+    if ( score > alpha ) {
+      if ( score >= beta )
+	return score;
+      alpha = score;
+    }
+  }
+
+  flipped = TestFlips_wrapper_to( sq2, my_bits, opp_bits, &new_my_bits );
+  if ( flipped != 0 ) {
+    ev = eval_two_empty_move( ts, sq1, opp_bits, new_my_bits, flipped, beta, disc_diff );
+    if ( ev >= score )
+      return ev;
+  }
+
+  if ( score == -INFINITE_EVAL ) {
+    if ( !pass_legal ) {
+      if ( disc_diff > 0 )
+	return disc_diff + 2;
+      if ( disc_diff < 0 )
+	return disc_diff - 2;
+      return 0;
+    }
+    return -solve_two_empty( ts, opp_bits, my_bits, sq1, sq2, -beta,
+			     -alpha, -disc_diff, FALSE );
+  }
+
+  return score;
+}
+
+
+
+static int
+solve_three_empty( ThreadState *ts,
+		   BitBoard my_bits,
+		   BitBoard opp_bits,
+		   uint64_t empties,
+		   int alpha,
+		   int beta,
+		   int disc_diff,
+		   unsigned int state ) {
+  BitBoard new_opp_bits;
+  BitBoard new_my_bits;
+  int score = -INFINITE_EVAL;
+  int flipped;
+  int new_disc_diff;
+  int ev;
+
+  ts->ts_nodes.lo++;
+
+  int sq1 = (int)(empties & 0xFF);
+  int sq2 = (int)((empties >> 8) & 0xFF);
+  int sq3 = (int)((empties >> 16) & 0xFF);
+  unsigned int par = LEAF_PAR( state );
+
+  if ( !(quadrant_mask[sq1] & par) ) {
+    if ( quadrant_mask[sq2] & par ) {
+      int tmp = sq1; sq1 = sq2; sq2 = tmp;
+    } else {
+      int tmp = sq3; sq3 = sq2; sq2 = sq1; sq1 = tmp;
+    }
+  }
+
+  flipped = TestFlips_wrapper_to( sq1, my_bits, opp_bits, &new_my_bits );
+  if ( flipped != 0 ) {
+    FULL_ANDNOT( new_opp_bits, opp_bits, new_my_bits );
+    new_disc_diff = -disc_diff - 2 * flipped - 1;
+    score = -solve_two_empty( ts, new_opp_bits, new_my_bits, sq2, sq3,
+			      -beta, -alpha, new_disc_diff, TRUE );
+    if ( score >= beta )
+      return score;
+    else if ( score > alpha )
+      alpha = score;
+  }
+
+  flipped = TestFlips_wrapper_to( sq2, my_bits, opp_bits, &new_my_bits );
+  if ( flipped != 0 ) {
+    FULL_ANDNOT( new_opp_bits, opp_bits, new_my_bits );
+    new_disc_diff = -disc_diff - 2 * flipped - 1;
+    ev = -solve_two_empty( ts, new_opp_bits, new_my_bits, sq1, sq3,
+			   -beta, -alpha, new_disc_diff, TRUE );
+    if ( ev >= beta )
+      return ev;
+    else if ( ev > score ) {
+      score = ev;
+      if ( score > alpha )
+	alpha = score;
+    }
+  }
+
+  flipped = TestFlips_wrapper_to( sq3, my_bits, opp_bits, &new_my_bits );
+  if ( flipped != 0 ) {
+    FULL_ANDNOT( new_opp_bits, opp_bits, new_my_bits );
+    new_disc_diff = -disc_diff - 2 * flipped - 1;
+    ev = -solve_two_empty( ts, new_opp_bits, new_my_bits, sq1, sq2,
+			   -beta, -alpha, new_disc_diff, TRUE );
+    if ( ev >= score )
+      return ev;
+  }
+
+  if ( score == -INFINITE_EVAL ) {
+    if ( !LEAF_PASS_LEGAL( state ) ) {
+      if ( disc_diff > 0 )
+	return disc_diff + 3;
+      if ( disc_diff < 0 )
+	return disc_diff - 3;
+      return 0;
+    }
+    else {
+      uint64_t ordered = (uint64_t)sq1 | ((uint64_t)sq2 << 8) | ((uint64_t)sq3 << 16);
+      return -solve_three_empty( ts, opp_bits, my_bits, ordered,
+				 -beta, -alpha, -disc_diff, LEAF_PASS_STATE( state ) );
+    }
+  }
+
+  return score;
+}
+
+
+
+static int
+solve_four_empty( ThreadState *ts,
+		  BitBoard my_bits,
+		  BitBoard opp_bits,
+		  uint64_t empties,
+		  int alpha,
+		  int beta,
+		  int disc_diff,
+		  unsigned int state ) {
+  BitBoard new_opp_bits;
+  BitBoard new_my_bits;
+  int score = -INFINITE_EVAL;
+  int flipped;
+  int new_disc_diff;
+  int ev;
+
+  ts->ts_nodes.lo++;
+
+  int sq1 = (int)(empties & 0xFF);
+  int sq2 = (int)((empties >> 8) & 0xFF);
+  int sq3 = (int)((empties >> 16) & 0xFF);
+  int sq4 = (int)((empties >> 24) & 0xFF);
+  unsigned int par = LEAF_PAR( state );
+
+  if ( par != 0 && par != 0xFU ) {
+    uint64_t odd_sq = 0, even_sq = 0;
+    int n_odd = 0, n_even = 0;
+    if ( quadrant_mask[sq1] & par ) { odd_sq |= (uint64_t)sq1 << n_odd; n_odd += 8; } else { even_sq |= (uint64_t)sq1 << n_even; n_even += 8; }
+    if ( quadrant_mask[sq2] & par ) { odd_sq |= (uint64_t)sq2 << n_odd; n_odd += 8; } else { even_sq |= (uint64_t)sq2 << n_even; n_even += 8; }
+    if ( quadrant_mask[sq3] & par ) { odd_sq |= (uint64_t)sq3 << n_odd; n_odd += 8; } else { even_sq |= (uint64_t)sq3 << n_even; n_even += 8; }
+    if ( quadrant_mask[sq4] & par ) { odd_sq |= (uint64_t)sq4 << n_odd; n_odd += 8; } else { even_sq |= (uint64_t)sq4 << n_even; n_even += 8; }
+    if ( n_odd == 16 ) {
+      empties = odd_sq | (even_sq << 16);
+      sq1 = (int)(empties & 0xFF);
+      sq2 = (int)((empties >> 8) & 0xFF);
+      sq3 = (int)((empties >> 16) & 0xFF);
+      sq4 = (int)((empties >> 24) & 0xFF);
+    }
+  }
+
+  flipped = TestFlips_wrapper_to( sq1, my_bits, opp_bits, &new_my_bits );
+  if ( flipped != 0 ) {
+    FULL_ANDNOT( new_opp_bits, opp_bits, new_my_bits );
+    new_disc_diff = -disc_diff - 2 * flipped - 1;
+    score = -solve_three_empty( ts, new_opp_bits, new_my_bits, empties >> 8,
+				-beta, -alpha, new_disc_diff, LEAF_NEXT_STATE( state, sq1 ) );
+    if ( score >= beta )
+      return score;
+    else if ( score > alpha )
+      alpha = score;
+  }
+
+  flipped = TestFlips_wrapper_to( sq2, my_bits, opp_bits, &new_my_bits );
+  if ( flipped != 0 ) {
+    FULL_ANDNOT( new_opp_bits, opp_bits, new_my_bits );
+    new_disc_diff = -disc_diff - 2 * flipped - 1;
+    ev = -solve_three_empty( ts, new_opp_bits, new_my_bits,
+			     (empties & 0xFFULL) | ((empties >> 8) & ~0xFFULL),
+			     -beta, -alpha, new_disc_diff, LEAF_NEXT_STATE( state, sq2 ) );
+    if ( ev >= beta )
+      return ev;
+    else if ( ev > score ) {
+      score = ev;
+      if ( score > alpha )
+	alpha = score;
+    }
+  }
+
+  flipped = TestFlips_wrapper_to( sq3, my_bits, opp_bits, &new_my_bits );
+  if ( flipped != 0 ) {
+    FULL_ANDNOT( new_opp_bits, opp_bits, new_my_bits );
+    new_disc_diff = -disc_diff - 2 * flipped - 1;
+    ev = -solve_three_empty( ts, new_opp_bits, new_my_bits,
+			     (empties & 0xFFFFULL) | ((empties >> 8) & ~0xFFFFULL),
+			     -beta, -alpha, new_disc_diff, LEAF_NEXT_STATE( state, sq3 ) );
+    if ( ev >= beta )
+      return ev;
+    else if ( ev > score ) {
+      score = ev;
+      if ( score > alpha )
+	alpha = score;
+    }
+  }
+
+  flipped = TestFlips_wrapper_to( sq4, my_bits, opp_bits, &new_my_bits );
+  if ( flipped != 0 ) {
+    FULL_ANDNOT( new_opp_bits, opp_bits, new_my_bits );
+    new_disc_diff = -disc_diff - 2 * flipped - 1;
+    ev = -solve_three_empty( ts, new_opp_bits, new_my_bits, empties,
+			     -beta, -alpha, new_disc_diff, LEAF_NEXT_STATE( state, sq4 ) );
+    if ( ev >= score )
+      return ev;
+  }
+
+  if ( score == -INFINITE_EVAL ) {
+    if ( !LEAF_PASS_LEGAL( state ) ) {
+      if ( disc_diff > 0 )
+	return disc_diff + 4;
+      if ( disc_diff < 0 )
+	return disc_diff - 4;
+      return 0;
+    }
+    else
+      return -solve_four_empty( ts, opp_bits, my_bits, empties,
+				-beta, -alpha, -disc_diff, LEAF_PASS_STATE( state ) );
+  }
+
+  return score;
+}
+
+
+
+static int
 solve_five_empty( ThreadState *ts,
 		  BitBoard my_bits,
 		  BitBoard opp_bits,
-		  int sq1,
-		  int sq2,
-		  int sq3,
-		  int sq4,
-		  int sq5,
+		  uint64_t empties,
 		  int alpha,
 		  int beta,
-		  int color,
 		  int disc_diff,
-		  int pass_legal ) {
+		  unsigned int state ) {
   BitBoard new_opp_bits;
   BitBoard new_my_bits;
   int score = -INFINITE_EVAL;
 #if USE_SHALLOW_TT && (SHALLOW_TT_MIN_DEPTH <= 5)
   int in_alpha = alpha;
 #endif
+  int color = LEAF_COLOR( state );
   int oppcol = OPP( color );
   int flipped;
   int new_disc_diff;
@@ -232,51 +440,54 @@ solve_five_empty( ThreadState *ts,
 #endif
 
   /* At 5 empties (odd), par is mathematically guaranteed non-zero. */
-  unsigned int par = quadrant_mask[sq1] ^ quadrant_mask[sq2] ^
-                     quadrant_mask[sq3] ^ quadrant_mask[sq4] ^
-                     quadrant_mask[sq5];
-  int cand[5], m_even[5];
+  unsigned int par = LEAF_PAR( state );
+  uint64_t odd_sq = 0, even_sq = 0;
+  uint64_t odd_sh = 0, even_sh = 0;
   int n_odd = 0, n_even = 0;
-  if ( quadrant_mask[sq1] & par ) cand[n_odd++] = (0 << 8) | sq1; else m_even[n_even++] = (0 << 8) | sq1;
-  if ( quadrant_mask[sq2] & par ) cand[n_odd++] = (1 << 8) | sq2; else m_even[n_even++] = (1 << 8) | sq2;
-  if ( quadrant_mask[sq3] & par ) cand[n_odd++] = (2 << 8) | sq3; else m_even[n_even++] = (2 << 8) | sq3;
-  if ( quadrant_mask[sq4] & par ) cand[n_odd++] = (3 << 8) | sq4; else m_even[n_even++] = (3 << 8) | sq4;
-  if ( quadrant_mask[sq5] & par ) cand[n_odd++] = (4 << 8) | sq5; else m_even[n_even++] = (4 << 8) | sq5;
-  int i, k;
-  for ( i = 0; i < n_even; i++ )
-    cand[n_odd + i] = m_even[i];
+  int sh, k;
 
-  for ( k = 0; k < 5; k++ ) {
-    int m = cand[k] & 0xFF;
-    int idx = cand[k] >> 8;
+  for ( sh = 0; sh < 40; sh += 8 ) {
+    uint64_t sq = (empties >> sh) & 0xFFULL;
+    if ( quadrant_mask[sq] & par ) {
+      odd_sq |= sq << n_odd;
+      odd_sh |= (uint64_t)sh << n_odd;
+      n_odd += 8;
+    } else {
+      even_sq |= sq << n_even;
+      even_sh |= (uint64_t)sh << n_even;
+      n_even += 8;
+    }
+  }
+  uint64_t cand_sq = odd_sq | (even_sq << n_odd);
+  uint64_t cand_sh = odd_sh | (even_sh << n_odd);
+
+  for ( k = 0; k < 5; k++, cand_sq >>= 8, cand_sh >>= 8 ) {
+    int m = (int)(cand_sq & 0xFF);
     flipped = TestFlips_wrapper_to( m, my_bits, opp_bits, &new_my_bits );
     if ( flipped != 0 ) {
       FULL_ANDNOT( new_opp_bits, opp_bits, new_my_bits );
       new_disc_diff = -disc_diff - 2 * flipped - 1;
-      ev = -solve_four_empty( ts, new_opp_bits, new_my_bits,
-                              (idx <= 0) ? sq2 : sq1,
-                              (idx <= 1) ? sq3 : sq2,
-                              (idx <= 2) ? sq4 : sq3,
-                              (idx <= 3) ? sq5 : sq4,
-                              -beta, -alpha, new_disc_diff, TRUE );
+      uint64_t next_empties = leaf_remove_empty_byte( empties, (unsigned int)(cand_sh & 0xFF) );
+      ev = -solve_four_empty( ts, new_opp_bits, new_my_bits, next_empties,
+			      -beta, -alpha, new_disc_diff, LEAF_NEXT_STATE( state, m ) );
       if ( ev >= beta ) {
-        ts->ts_end_best_move = m;
+	ts->ts_end_best_move = m;
 #if USE_SHALLOW_TT && (SHALLOW_TT_MIN_DEPTH <= 5)
-        add_shallow_hash( ev, m, ENDGAME_SCORE | LOWER_BOUND, 5, ts );
+	add_shallow_hash( ev, m, ENDGAME_SCORE | LOWER_BOUND, 5, ts );
 #endif
-        return ev;
+	return ev;
       }
       else if ( ev > score ) {
-        score = ev;
-        if ( score > alpha )
-          alpha = score;
-        best_sq = m;
+	score = ev;
+	if ( score > alpha )
+	  alpha = score;
+	best_sq = m;
       }
     }
   }
 
   if ( score == -INFINITE_EVAL ) {
-    if ( !pass_legal ) {
+    if ( !LEAF_PASS_LEGAL( state ) ) {
       if ( disc_diff > 0 ) return disc_diff + 5;
       if ( disc_diff < 0 ) return disc_diff - 5;
       return 0;
@@ -286,8 +497,8 @@ solve_five_empty( ThreadState *ts,
       ts->ts_hash1 ^= hash_flip_color1;
       ts->ts_hash2 ^= hash_flip_color2;
 #endif
-      ev = -solve_five_empty( ts, opp_bits, my_bits, sq1, sq2, sq3, sq4, sq5,
-                              -beta, -alpha, oppcol, -disc_diff, FALSE );
+      ev = -solve_five_empty( ts, opp_bits, my_bits, empties,
+			      -beta, -alpha, -disc_diff, LEAF_PASS_STATE( state ) );
 #if USE_SHALLOW_TT && (SHALLOW_TT_MIN_DEPTH <= 5)
       ts->ts_hash1 ^= hash_flip_color1;
       ts->ts_hash2 ^= hash_flip_color2;
@@ -308,27 +519,22 @@ solve_five_empty( ThreadState *ts,
 
 
 
-int
+static int
 solve_six_empty( ThreadState *ts,
 		 BitBoard my_bits,
 		 BitBoard opp_bits,
-		 int sq1,
-		 int sq2,
-		 int sq3,
-		 int sq4,
-		 int sq5,
-		 int sq6,
+		 uint64_t empties,
 		 int alpha,
 		 int beta,
-		 int color,
 		 int disc_diff,
-		 int pass_legal ) {
+		 unsigned int state ) {
   BitBoard new_opp_bits;
   BitBoard new_my_bits;
   int score = -INFINITE_EVAL;
 #if USE_SHALLOW_TT && (SHALLOW_TT_MIN_DEPTH <= 6)
   int in_alpha = alpha;
 #endif
+  int color = LEAF_COLOR( state );
   int oppcol = OPP( color );
   int flipped;
   int new_disc_diff;
@@ -348,32 +554,36 @@ solve_six_empty( ThreadState *ts,
     return alpha;
 #endif
 
-  int cand[6];
-  int k;
+  unsigned int par = LEAF_PAR( state );
+  uint64_t cand_sq, cand_sh;
+  int sh, k;
 
-  unsigned int par = quadrant_mask[sq1] ^ quadrant_mask[sq2] ^
-                     quadrant_mask[sq3] ^ quadrant_mask[sq4] ^
-                     quadrant_mask[sq5] ^ quadrant_mask[sq6];
   if ( par != 0 ) {
-    int m_even[6];
-    int n_odd = 0, n_even = 0, i;
-    if ( quadrant_mask[sq1] & par ) cand[n_odd++] = (0 << 8) | sq1; else m_even[n_even++] = (0 << 8) | sq1;
-    if ( quadrant_mask[sq2] & par ) cand[n_odd++] = (1 << 8) | sq2; else m_even[n_even++] = (1 << 8) | sq2;
-    if ( quadrant_mask[sq3] & par ) cand[n_odd++] = (2 << 8) | sq3; else m_even[n_even++] = (2 << 8) | sq3;
-    if ( quadrant_mask[sq4] & par ) cand[n_odd++] = (3 << 8) | sq4; else m_even[n_even++] = (3 << 8) | sq4;
-    if ( quadrant_mask[sq5] & par ) cand[n_odd++] = (4 << 8) | sq5; else m_even[n_even++] = (4 << 8) | sq5;
-    if ( quadrant_mask[sq6] & par ) cand[n_odd++] = (5 << 8) | sq6; else m_even[n_even++] = (5 << 8) | sq6;
-    for ( i = 0; i < n_even; i++ )
-      cand[n_odd + i] = m_even[i];
+    uint64_t odd_sq = 0, even_sq = 0;
+    uint64_t odd_sh = 0, even_sh = 0;
+    int n_odd = 0, n_even = 0;
+    for ( sh = 0; sh < 48; sh += 8 ) {
+      uint64_t sq = (empties >> sh) & 0xFFULL;
+      if ( quadrant_mask[sq] & par ) {
+	odd_sq |= sq << n_odd;
+	odd_sh |= (uint64_t)sh << n_odd;
+	n_odd += 8;
+      } else {
+	even_sq |= sq << n_even;
+	even_sh |= (uint64_t)sh << n_even;
+	n_even += 8;
+      }
+    }
+    cand_sq = odd_sq | (even_sq << n_odd);
+    cand_sh = odd_sh | (even_sh << n_odd);
   }
   else {
-    cand[0] = (0 << 8) | sq1; cand[1] = (1 << 8) | sq2; cand[2] = (2 << 8) | sq3;
-    cand[3] = (3 << 8) | sq4; cand[4] = (4 << 8) | sq5; cand[5] = (5 << 8) | sq6;
+    cand_sq = empties;
+    cand_sh = 0x282018100800ULL;
   }
 
-  for ( k = 0; k < 6; k++ ) {
-    int m = cand[k] & 0xFF;
-    int idx = cand[k] >> 8;
+  for ( k = 0; k < 6; k++, cand_sq >>= 8, cand_sh >>= 8 ) {
+    int m = (int)(cand_sq & 0xFF);
     flipped = TestFlips_wrapper_to( m, my_bits, opp_bits, &new_my_bits );
     if ( flipped != 0 ) {
       FULL_ANDNOT( new_opp_bits, opp_bits, new_my_bits );
@@ -384,13 +594,9 @@ solve_six_empty( ThreadState *ts,
       ts->ts_hash1 ^= diff1;
       ts->ts_hash2 ^= diff2;
 #endif
-      ev = -solve_five_empty( ts, new_opp_bits, new_my_bits,
-			     (idx <= 0) ? sq2 : sq1,
-			     (idx <= 1) ? sq3 : sq2,
-			     (idx <= 2) ? sq4 : sq3,
-			     (idx <= 3) ? sq5 : sq4,
-			     (idx <= 4) ? sq6 : sq5,
-			     -beta, -alpha, oppcol, new_disc_diff, TRUE );
+      uint64_t next_empties = leaf_remove_empty_byte( empties, (unsigned int)(cand_sh & 0xFF) );
+      ev = -solve_five_empty( ts, new_opp_bits, new_my_bits, next_empties,
+			      -beta, -alpha, new_disc_diff, LEAF_NEXT_STATE( state, m ) );
 #if USE_SHALLOW_TT && (SHALLOW_TT_MIN_DEPTH <= 5)
       ts->ts_hash1 ^= diff1;
       ts->ts_hash2 ^= diff2;
@@ -412,7 +618,7 @@ solve_six_empty( ThreadState *ts,
   }
 
   if ( score == -INFINITE_EVAL ) {
-    if ( !pass_legal ) {  /* Six empty squares */
+    if ( !LEAF_PASS_LEGAL( state ) ) {
       if ( disc_diff > 0 )
 	return disc_diff + 6;
       if ( disc_diff < 0 )
@@ -424,8 +630,8 @@ solve_six_empty( ThreadState *ts,
       ts->ts_hash1 ^= hash_flip_color1;
       ts->ts_hash2 ^= hash_flip_color2;
 #endif
-      ev = -solve_six_empty( ts, opp_bits, my_bits, sq1, sq2, sq3, sq4, sq5, sq6,
-			     -beta, -alpha, oppcol, -disc_diff, FALSE );
+      ev = -solve_six_empty( ts, opp_bits, my_bits, empties,
+			     -beta, -alpha, -disc_diff, LEAF_PASS_STATE( state ) );
 #if USE_SHALLOW_TT && (SHALLOW_TT_MIN_DEPTH <= 6)
       ts->ts_hash1 ^= hash_flip_color1;
       ts->ts_hash2 ^= hash_flip_color2;
@@ -447,28 +653,22 @@ solve_six_empty( ThreadState *ts,
 
 
 
-int
+static int
 solve_seven_empty( ThreadState *ts,
 		   BitBoard my_bits,
 		   BitBoard opp_bits,
-		   int sq1,
-		   int sq2,
-		   int sq3,
-		   int sq4,
-		   int sq5,
-		   int sq6,
-		   int sq7,
+		   uint64_t empties,
 		   int alpha,
 		   int beta,
-		   int color,
 		   int disc_diff,
-		   int pass_legal ) {
+		   unsigned int state ) {
   BitBoard new_opp_bits;
   BitBoard new_my_bits;
   int score = -INFINITE_EVAL;
 #if USE_SHALLOW_TT && (SHALLOW_TT_MIN_DEPTH <= 7)
   int in_alpha = alpha;
 #endif
+  int color = LEAF_COLOR( state );
   int oppcol = OPP( color );
   int flipped;
   int new_disc_diff;
@@ -489,28 +689,33 @@ solve_seven_empty( ThreadState *ts,
 #endif
 
   /* At 7 empties (odd), par is mathematically guaranteed non-zero. */
-  unsigned int par = quadrant_mask[sq1] ^ quadrant_mask[sq2] ^
-                     quadrant_mask[sq3] ^ quadrant_mask[sq4] ^
-                     quadrant_mask[sq5] ^ quadrant_mask[sq6] ^
-                     quadrant_mask[sq7];
-  int cand[7], m_even[7];
-  int n_odd = 0, n_even = 0, i, k;
-  if ( quadrant_mask[sq1] & par ) cand[n_odd++] = (0 << 8) | sq1; else m_even[n_even++] = (0 << 8) | sq1;
-  if ( quadrant_mask[sq2] & par ) cand[n_odd++] = (1 << 8) | sq2; else m_even[n_even++] = (1 << 8) | sq2;
-  if ( quadrant_mask[sq3] & par ) cand[n_odd++] = (2 << 8) | sq3; else m_even[n_even++] = (2 << 8) | sq3;
-  if ( quadrant_mask[sq4] & par ) cand[n_odd++] = (3 << 8) | sq4; else m_even[n_even++] = (3 << 8) | sq4;
-  if ( quadrant_mask[sq5] & par ) cand[n_odd++] = (4 << 8) | sq5; else m_even[n_even++] = (4 << 8) | sq5;
-  if ( quadrant_mask[sq6] & par ) cand[n_odd++] = (5 << 8) | sq6; else m_even[n_even++] = (5 << 8) | sq6;
-  if ( quadrant_mask[sq7] & par ) cand[n_odd++] = (6 << 8) | sq7; else m_even[n_even++] = (6 << 8) | sq7;
-  for ( i = 0; i < n_even; i++ )
-    cand[n_odd + i] = m_even[i];
+  unsigned int par = LEAF_PAR( state );
+  uint64_t odd_sq = 0, even_sq = 0;
+  uint64_t odd_sh = 0, even_sh = 0;
+  int n_odd = 0, n_even = 0;
+  int sh, k;
+
+  for ( sh = 0; sh < 56; sh += 8 ) {
+    uint64_t sq = (empties >> sh) & 0xFFULL;
+    if ( quadrant_mask[sq] & par ) {
+      odd_sq |= sq << n_odd;
+      odd_sh |= (uint64_t)sh << n_odd;
+      n_odd += 8;
+    } else {
+      even_sq |= sq << n_even;
+      even_sh |= (uint64_t)sh << n_even;
+      n_even += 8;
+    }
+  }
+  uint64_t cand_sq = odd_sq | (even_sq << n_odd);
+  uint64_t cand_sh = odd_sh | (even_sh << n_odd);
+
 #if USE_SHALLOW_TT && (SHALLOW_TT_MIN_DEPTH <= 7)
-  leaf_promote_tt_move( cand, 7, tt_move );
+  leaf_promote_tt_move_packed( &cand_sq, &cand_sh, 56, tt_move );
 #endif
 
-  for ( k = 0; k < 7; k++ ) {
-    int m = cand[k] & 0xFF;
-    int idx = cand[k] >> 8;
+  for ( k = 0; k < 7; k++, cand_sq >>= 8, cand_sh >>= 8 ) {
+    int m = (int)(cand_sq & 0xFF);
     flipped = TestFlips_wrapper_to( m, my_bits, opp_bits, &new_my_bits );
     if ( flipped != 0 ) {
       FULL_ANDNOT( new_opp_bits, opp_bits, new_my_bits );
@@ -521,14 +726,9 @@ solve_seven_empty( ThreadState *ts,
       ts->ts_hash1 ^= diff1;
       ts->ts_hash2 ^= diff2;
 #endif
-      ev = -solve_six_empty( ts, new_opp_bits, new_my_bits,
-			     (idx <= 0) ? sq2 : sq1,
-			     (idx <= 1) ? sq3 : sq2,
-			     (idx <= 2) ? sq4 : sq3,
-			     (idx <= 3) ? sq5 : sq4,
-			     (idx <= 4) ? sq6 : sq5,
-			     (idx <= 5) ? sq7 : sq6,
-			     -beta, -alpha, oppcol, new_disc_diff, TRUE );
+      uint64_t next_empties = leaf_remove_empty_byte( empties, (unsigned int)(cand_sh & 0xFF) );
+      ev = -solve_six_empty( ts, new_opp_bits, new_my_bits, next_empties,
+			     -beta, -alpha, new_disc_diff, LEAF_NEXT_STATE( state, m ) );
 #if USE_SHALLOW_TT && (SHALLOW_TT_MIN_DEPTH <= 6)
       ts->ts_hash1 ^= diff1;
       ts->ts_hash2 ^= diff2;
@@ -550,7 +750,7 @@ solve_seven_empty( ThreadState *ts,
   }
 
   if ( score == -INFINITE_EVAL ) {
-    if ( !pass_legal ) {  /* Seven empty squares */
+    if ( !LEAF_PASS_LEGAL( state ) ) {
       if ( disc_diff > 0 )
 	return disc_diff + 7;
       if ( disc_diff < 0 )
@@ -562,9 +762,8 @@ solve_seven_empty( ThreadState *ts,
       ts->ts_hash1 ^= hash_flip_color1;
       ts->ts_hash2 ^= hash_flip_color2;
 #endif
-      ev = -solve_seven_empty( ts, opp_bits, my_bits,
-			       sq1, sq2, sq3, sq4, sq5, sq6, sq7,
-			       -beta, -alpha, oppcol, -disc_diff, FALSE );
+      ev = -solve_seven_empty( ts, opp_bits, my_bits, empties,
+			       -beta, -alpha, -disc_diff, LEAF_PASS_STATE( state ) );
 #if USE_SHALLOW_TT && (SHALLOW_TT_MIN_DEPTH <= 7)
       ts->ts_hash1 ^= hash_flip_color1;
       ts->ts_hash2 ^= hash_flip_color2;
@@ -586,29 +785,22 @@ solve_seven_empty( ThreadState *ts,
 
 
 
-int
+static int
 solve_eight_empty( ThreadState *ts,
 		   BitBoard my_bits,
 		   BitBoard opp_bits,
-		   int sq1,
-		   int sq2,
-		   int sq3,
-		   int sq4,
-		   int sq5,
-		   int sq6,
-		   int sq7,
-		   int sq8,
+		   uint64_t empties,
 		   int alpha,
 		   int beta,
-		   int color,
 		   int disc_diff,
-		   int pass_legal ) {
+		   unsigned int state ) {
   BitBoard new_opp_bits;
   BitBoard new_my_bits;
   int score = -INFINITE_EVAL;
 #if USE_SHALLOW_TT && (SHALLOW_TT_MIN_DEPTH <= 8)
   int in_alpha = alpha;
 #endif
+  int color = LEAF_COLOR( state );
   int oppcol = OPP( color );
   int flipped;
   int new_disc_diff;
@@ -628,41 +820,42 @@ solve_eight_empty( ThreadState *ts,
     return alpha;
 #endif
 
-  int orig_sq[8];
-  int cand[8];
-  int i, k;
+  /*
+    All empty corners are already at the lowest byte positions of `empties`
+    (from prepare_to_solve). Placing (quadrant_mask[sq] & par) || corner
+    into odd_sq orders: corners -> odd non-corners -> even non-corners.
+  */
+  unsigned int par = LEAF_PAR( state );
+  uint64_t odd_sq = 0, even_sq = 0;
+  uint64_t odd_sh = 0, even_sh = 0;
+  int n_odd = 0, n_even = 0;
+  int sh, k;
 
-  orig_sq[0] = sq1; orig_sq[1] = sq2; orig_sq[2] = sq3; orig_sq[3] = sq4;
-  orig_sq[4] = sq5; orig_sq[5] = sq6; orig_sq[6] = sq7; orig_sq[7] = sq8;
-
-  unsigned int par = quadrant_mask[sq1] ^ quadrant_mask[sq2] ^
-                     quadrant_mask[sq3] ^ quadrant_mask[sq4] ^
-                     quadrant_mask[sq5] ^ quadrant_mask[sq6] ^
-                     quadrant_mask[sq7] ^ quadrant_mask[sq8];
-
-  int corners[8], odds[8], evens[8];
-  int n_corner = 0, n_odd = 0, n_even = 0;
-  for ( i = 0; i < 8; i++ ) {
-    int sq = orig_sq[i];
-    int packed = (i << 8) | sq;
-    if ( square_mask[sq] & CORNER_MASK )
-      corners[n_corner++] = packed;
-    else if ( quadrant_mask[sq] & par )
-      odds[n_odd++] = packed;
-    else
-      evens[n_even++] = packed;
+  for ( sh = 0; sh < 64; sh += 8 ) {
+    uint64_t sq = (empties >> sh) & 0xFFULL;
+    if ( (quadrant_mask[sq] & par) || (square_mask[sq] & CORNER_MASK) ) {
+      odd_sq |= sq << n_odd;
+      odd_sh |= (uint64_t)sh << n_odd;
+      n_odd += 8;
+    } else {
+      even_sq |= sq << n_even;
+      even_sh |= (uint64_t)sh << n_even;
+      n_even += 8;
+    }
   }
-  int idx_out = 0;
-  for ( i = 0; i < n_corner; i++ ) cand[idx_out++] = corners[i];
-  for ( i = 0; i < n_odd; i++ ) cand[idx_out++] = odds[i];
-  for ( i = 0; i < n_even; i++ ) cand[idx_out++] = evens[i];
+  uint64_t cand_sq = odd_sq;
+  uint64_t cand_sh = odd_sh;
+  if ( n_odd < 64 ) {
+    cand_sq |= even_sq << n_odd;
+    cand_sh |= even_sh << n_odd;
+  }
+
 #if USE_SHALLOW_TT && (SHALLOW_TT_MIN_DEPTH <= 8)
-  leaf_promote_tt_move( cand, 8, tt_move );
+  leaf_promote_tt_move_packed( &cand_sq, &cand_sh, 64, tt_move );
 #endif
 
-  for ( k = 0; k < 8; k++ ) {
-    int m = cand[k] & 0xFF;
-    int idx = cand[k] >> 8;
+  for ( k = 0; k < 8; k++, cand_sq >>= 8, cand_sh >>= 8 ) {
+    int m = (int)(cand_sq & 0xFF);
     flipped = TestFlips_wrapper_to( m, my_bits, opp_bits, &new_my_bits );
     if ( flipped != 0 ) {
       FULL_ANDNOT( new_opp_bits, opp_bits, new_my_bits );
@@ -673,15 +866,9 @@ solve_eight_empty( ThreadState *ts,
       ts->ts_hash1 ^= diff1;
       ts->ts_hash2 ^= diff2;
 #endif
-      ev = -solve_seven_empty( ts, new_opp_bits, new_my_bits,
-			       (idx <= 0) ? sq2 : sq1,
-			       (idx <= 1) ? sq3 : sq2,
-			       (idx <= 2) ? sq4 : sq3,
-			       (idx <= 3) ? sq5 : sq4,
-			       (idx <= 4) ? sq6 : sq5,
-			       (idx <= 5) ? sq7 : sq6,
-			       (idx <= 6) ? sq8 : sq7,
-			       -beta, -alpha, oppcol, new_disc_diff, TRUE );
+      uint64_t next_empties = leaf_remove_empty_byte( empties, (unsigned int)(cand_sh & 0xFF) );
+      ev = -solve_seven_empty( ts, new_opp_bits, new_my_bits, next_empties,
+			       -beta, -alpha, new_disc_diff, LEAF_NEXT_STATE( state, m ) );
 #if USE_SHALLOW_TT && (SHALLOW_TT_MIN_DEPTH <= 7)
       ts->ts_hash1 ^= diff1;
       ts->ts_hash2 ^= diff2;
@@ -703,7 +890,7 @@ solve_eight_empty( ThreadState *ts,
   }
 
   if ( score == -INFINITE_EVAL ) {
-    if ( !pass_legal ) {  /* Eight empty squares */
+    if ( !LEAF_PASS_LEGAL( state ) ) {
       if ( disc_diff > 0 )
 	return disc_diff + 8;
       if ( disc_diff < 0 )
@@ -715,9 +902,8 @@ solve_eight_empty( ThreadState *ts,
       ts->ts_hash1 ^= hash_flip_color1;
       ts->ts_hash2 ^= hash_flip_color2;
 #endif
-      ev = -solve_eight_empty( ts, opp_bits, my_bits,
-			       sq1, sq2, sq3, sq4, sq5, sq6, sq7, sq8,
-			       -beta, -alpha, oppcol, -disc_diff, FALSE );
+      ev = -solve_eight_empty( ts, opp_bits, my_bits, empties,
+			       -beta, -alpha, -disc_diff, LEAF_PASS_STATE( state ) );
 #if USE_SHALLOW_TT && (SHALLOW_TT_MIN_DEPTH <= 8)
       ts->ts_hash1 ^= hash_flip_color1;
       ts->ts_hash2 ^= hash_flip_color2;
@@ -735,4 +921,125 @@ solve_eight_empty( ThreadState *ts,
 
   ts->ts_end_best_move = best_sq;
   return score;
+}
+
+
+
+/*
+  SOLVE_PARITY
+  Dispatcher to register-packed leaf solvers for depths 1 through 8.
+*/
+
+int
+solve_parity( ThreadState *ts,
+	      BitBoard my_bits,
+	      BitBoard opp_bits,
+	      int alpha,
+	      int beta,
+	      int color,
+	      int empties,
+	      int disc_diff,
+	      int pass_legal ) {
+  unsigned int state = LEAF_STATE( ts->ts_region_parity, color, pass_legal );
+
+  if ( empties == 8 ) {
+    int sq1 = ts->ts_end_move_list[END_MOVE_LIST_HEAD].succ;
+    int sq2 = ts->ts_end_move_list[sq1].succ;
+    int sq3 = ts->ts_end_move_list[sq2].succ;
+    int sq4 = ts->ts_end_move_list[sq3].succ;
+    int sq5 = ts->ts_end_move_list[sq4].succ;
+    int sq6 = ts->ts_end_move_list[sq5].succ;
+    int sq7 = ts->ts_end_move_list[sq6].succ;
+    int sq8 = ts->ts_end_move_list[sq7].succ;
+    uint64_t packed = (uint64_t)sq1 | ((uint64_t)sq2 << 8) | ((uint64_t)sq3 << 16) |
+                      ((uint64_t)sq4 << 24) | ((uint64_t)sq5 << 32) | ((uint64_t)sq6 << 40) |
+                      ((uint64_t)sq7 << 48) | ((uint64_t)sq8 << 56);
+    return solve_eight_empty( ts, my_bits, opp_bits, packed, alpha, beta, disc_diff, state );
+  }
+
+  if ( empties == 7 ) {
+    int sq1 = ts->ts_end_move_list[END_MOVE_LIST_HEAD].succ;
+    int sq2 = ts->ts_end_move_list[sq1].succ;
+    int sq3 = ts->ts_end_move_list[sq2].succ;
+    int sq4 = ts->ts_end_move_list[sq3].succ;
+    int sq5 = ts->ts_end_move_list[sq4].succ;
+    int sq6 = ts->ts_end_move_list[sq5].succ;
+    int sq7 = ts->ts_end_move_list[sq6].succ;
+    uint64_t packed = (uint64_t)sq1 | ((uint64_t)sq2 << 8) | ((uint64_t)sq3 << 16) |
+                      ((uint64_t)sq4 << 24) | ((uint64_t)sq5 << 32) | ((uint64_t)sq6 << 40) |
+                      ((uint64_t)sq7 << 48);
+    return solve_seven_empty( ts, my_bits, opp_bits, packed, alpha, beta, disc_diff, state );
+  }
+
+  if ( empties == 6 ) {
+    int sq1 = ts->ts_end_move_list[END_MOVE_LIST_HEAD].succ;
+    int sq2 = ts->ts_end_move_list[sq1].succ;
+    int sq3 = ts->ts_end_move_list[sq2].succ;
+    int sq4 = ts->ts_end_move_list[sq3].succ;
+    int sq5 = ts->ts_end_move_list[sq4].succ;
+    int sq6 = ts->ts_end_move_list[sq5].succ;
+    uint64_t packed = (uint64_t)sq1 | ((uint64_t)sq2 << 8) | ((uint64_t)sq3 << 16) |
+                      ((uint64_t)sq4 << 24) | ((uint64_t)sq5 << 32) | ((uint64_t)sq6 << 40);
+    return solve_six_empty( ts, my_bits, opp_bits, packed, alpha, beta, disc_diff, state );
+  }
+
+  if ( empties == 5 ) {
+    int sq1 = ts->ts_end_move_list[END_MOVE_LIST_HEAD].succ;
+    int sq2 = ts->ts_end_move_list[sq1].succ;
+    int sq3 = ts->ts_end_move_list[sq2].succ;
+    int sq4 = ts->ts_end_move_list[sq3].succ;
+    int sq5 = ts->ts_end_move_list[sq4].succ;
+    uint64_t packed = (uint64_t)sq1 | ((uint64_t)sq2 << 8) | ((uint64_t)sq3 << 16) |
+                      ((uint64_t)sq4 << 24) | ((uint64_t)sq5 << 32);
+    return solve_five_empty( ts, my_bits, opp_bits, packed, alpha, beta, disc_diff, state );
+  }
+
+  if ( empties == 4 ) {
+    int sq1 = ts->ts_end_move_list[END_MOVE_LIST_HEAD].succ;
+    int sq2 = ts->ts_end_move_list[sq1].succ;
+    int sq3 = ts->ts_end_move_list[sq2].succ;
+    int sq4 = ts->ts_end_move_list[sq3].succ;
+    uint64_t packed = (uint64_t)sq1 | ((uint64_t)sq2 << 8) | ((uint64_t)sq3 << 16) |
+                      ((uint64_t)sq4 << 24);
+    return solve_four_empty( ts, my_bits, opp_bits, packed, alpha, beta, disc_diff, state );
+  }
+
+  if ( empties == 3 ) {
+    int sq1 = ts->ts_end_move_list[END_MOVE_LIST_HEAD].succ;
+    int sq2 = ts->ts_end_move_list[sq1].succ;
+    int sq3 = ts->ts_end_move_list[sq2].succ;
+    uint64_t packed = (uint64_t)sq1 | ((uint64_t)sq2 << 8) | ((uint64_t)sq3 << 16);
+    return solve_three_empty( ts, my_bits, opp_bits, packed, alpha, beta, disc_diff, state );
+  }
+
+  if ( empties == 2 ) {
+    int sq1 = ts->ts_end_move_list[END_MOVE_LIST_HEAD].succ;
+    int sq2 = ts->ts_end_move_list[sq1].succ;
+    return solve_two_empty( ts, my_bits, opp_bits, sq1, sq2,
+			    alpha, beta, disc_diff, pass_legal );
+  }
+
+  if ( empties == 1 ) {
+    int sq1 = ts->ts_end_move_list[END_MOVE_LIST_HEAD].succ;
+    int flipped = CountFlips_bitboard( sq1, my_bits );
+    if ( flipped != 0 ) {
+      ts->ts_end_best_move = sq1;
+      return disc_diff + 2 * flipped + 1;
+    }
+    if ( !pass_legal ) {
+      if ( disc_diff > 0 ) return disc_diff + 1;
+      if ( disc_diff < 0 ) return disc_diff - 1;
+      return 0;
+    }
+    flipped = CountFlips_bitboard( sq1, opp_bits );
+    if ( flipped != 0 ) {
+      ts->ts_end_best_move = sq1;
+      return disc_diff - 2 * flipped - 1;
+    }
+    if ( disc_diff > 0 ) return disc_diff + 1;
+    if ( disc_diff < 0 ) return disc_diff - 1;
+    return 0;
+  }
+
+  return disc_diff;
 }

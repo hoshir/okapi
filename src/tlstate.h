@@ -47,11 +47,32 @@ typedef struct {
 
 
 typedef struct {
-  /* The position, one square per entry. */
-  Board ts_board;
+  /* Counted once per node, placed at offset 0 so every solver accesses
+     hot per-node state within a single L1 cache line using immediate offsets. */
+  CounterType ts_nodes;
+
+  /* The 64-bit hash key of the current position. */
+  unsigned int ts_hash1, ts_hash2;
+
+  /* The endgame's hot scalar state. */
+  unsigned int ts_region_parity;
+  int ts_end_best_move, ts_end_best_root_move;
+  int ts_disks_played;
+  int ts_split_nesting;
+  BitBoard ts_bb_flips;
+  double ts_last_panic_check;
 
   /* The same position as bitboards, indexed by colour. */
   BitBoard ts_board_bits[3];
+
+  /* The evaluation pattern indices, in black perspective. */
+  unsigned short ts_eval_pattern_index[48];
+
+  /* Doubly-linked list of empty squares in endgame search. */
+  MoveLink ts_end_move_list[100];
+
+  /* The position, one square per entry. */
+  Board ts_board;
 
   /* The discs turned by the move made at each stage. */
   BitBoard ts_flip_mask[65];
@@ -62,37 +83,9 @@ typedef struct {
   unsigned int ts_hash_stored1[MAX_SEARCH_DEPTH];
   unsigned int ts_hash_stored2[MAX_SEARCH_DEPTH];
 
-  /* The evaluation pattern indices, in black perspective. */
-  unsigned short ts_eval_pattern_index[48];
-
-  /* The 64-bit hash key of the current position. */
-  unsigned int ts_hash1, ts_hash2;
-
-  /* The number of discs played from the initial position.  Must match
-     the current state of the BOARD variable. */
-  int ts_disks_played;
-
-  /* The endgame's own state.  Its solvers touch five or six of these
-     per node, which is why they are here rather than standing alone.
-
-     BB_FLIPS is where the flip test leaves the mover's discs with the
-     turned ones added; END_MOVE_LIST is the list of empty squares;
-     REGION_PARITY has a bit per quadrant with an odd number of them.
-     END_BEST_MOVE is the endgame's own, spelled apart from the
-     midgame local of the same name. */
-  BitBoard ts_bb_flips;
-  MoveLink ts_end_move_list[100];
-  unsigned int ts_region_parity;
-  int ts_end_best_move, ts_end_best_root_move;
-
   /* Cached flip bitboards and endgame interior state per search level. */
   BitBoard ts_cached_flips[MAX_SEARCH_DEPTH + 1][100];
   int ts_cached_flipped[MAX_SEARCH_DEPTH + 1][100];
-  int ts_split_nesting;
-  double ts_last_panic_check;
-
-  /* Counted once per node, so it is on the hottest path there is. */
-  CounterType ts_nodes;
 } ThreadState;
 
 extern _Thread_local ThreadState tls;
