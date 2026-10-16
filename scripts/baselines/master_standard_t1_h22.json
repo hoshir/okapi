@@ -2,7 +2,7 @@
   "mode": "standard",
   "threads": 1,
   "hash_bits": 22,
-  "created_at": "2026-10-16T06:04:19Z",
+  "created_at": "2026-10-16T12:05:50Z",
   "results": {
     "FFO #40": {
       "correct": true,
@@ -14,7 +14,7 @@
       ],
       "nodes": 10792646,
       "time_sec": 0.3,
-      "nps": 36056132,
+      "nps": 36991520,
       "error": null
     },
     "FFO #41": {
@@ -26,8 +26,8 @@
         "h4"
       ],
       "nodes": 15614436,
-      "time_sec": 0.5,
-      "nps": 29834526,
+      "time_sec": 0.7,
+      "nps": 22334926,
       "error": null
     },
     "FFO #42": {
@@ -39,8 +39,8 @@
         "g2"
       ],
       "nodes": 14827716,
-      "time_sec": 0.5,
-      "nps": 31027012,
+      "time_sec": 0.7,
+      "nps": 21555484,
       "error": null
     },
     "FFO #45": {
@@ -52,8 +52,8 @@
         "b2"
       ],
       "nodes": 172303563,
-      "time_sec": 5.8,
-      "nps": 29827365,
+      "time_sec": 6.5,
+      "nps": 26546500,
       "error": null
     },
     "FFO #48": {
@@ -65,8 +65,8 @@
         "f6"
       ],
       "nodes": 72103982,
-      "time_sec": 3.5,
-      "nps": 20662896,
+      "time_sec": 3.7,
+      "nps": 19427401,
       "error": null
     },
     "FFO #49": {
@@ -78,8 +78,8 @@
         "e1"
       ],
       "nodes": 149619877,
-      "time_sec": 5.1,
-      "nps": 29236085,
+      "time_sec": 5.5,
+      "nps": 26978963,
       "error": null
     },
     "FFO #50": {
@@ -91,8 +91,8 @@
         "d8"
       ],
       "nodes": 436780584,
-      "time_sec": 20.3,
-      "nps": 21483592,
+      "time_sec": 22.3,
+      "nps": 19612818,
       "error": null
     },
     "FFO #52": {
@@ -104,8 +104,8 @@
         "a3"
       ],
       "nodes": 189508977,
-      "time_sec": 7.0,
-      "nps": 27151742,
+      "time_sec": 8.7,
+      "nps": 21720876,
       "error": null
     }
   }

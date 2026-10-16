@@ -58,6 +58,7 @@ struct SplitPoint {
   SplitWorkerFn search_fn;
   struct SplitPoint *parent;
   int master_thread_id;
+  int nesting;
 };
 
 /* SplitPoint buffer access */
