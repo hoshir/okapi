@@ -71,13 +71,8 @@ extern volatile int smp_stop;
 void smp_request_stop( void );
 void smp_clear_stop( void );
 
-/* The number of positions evaluated during the current search. */
-extern _Thread_local CounterType evaluations;
-
 /* The number of positions evaluated during the entire game. */
 extern CounterType total_evaluations;
-
-/* Holds the number of nodes searched during the current search. */
 
 /* Holds the total number of nodes searched during the entire game. */
 extern CounterType total_nodes;
@@ -85,12 +80,6 @@ extern CounterType total_nodes;
 /* The last available evaluations for all possible moves at all
    possible game stages. */
 extern _Thread_local Board evals[61];
-
-/* Move lists */
-extern _Thread_local int sorted_move_order[64][64];  /* 61*60 used */
-
-/* History heuristic table: [side_to_move (0=Black, 1=White)][square (11..88)] */
-extern _Thread_local int history_score[2][100];
 
 /* The principal variation including passes */
 extern int full_pv_depth;
@@ -106,6 +95,9 @@ inherit_move_lists( int stage );
 
 void
 reorder_move_list( int stage );
+
+void
+reorder_move_list_ts( ThreadState *ts, int stage );
 
 /* A copy of the per-thread search state, enough for another thread to
    pick up the search from the same position.  Only the state that is
@@ -158,6 +150,29 @@ disc_count( int side_to_move );
 
 void
 sort_moves( int list_size );
+
+static ALWAYS_INLINE int
+select_move_ts( ThreadState *ts, int first, int list_size ) {
+  int i, best, best_eval, temp_move;
+  int dp = ts->ts_disks_played;
+  int *ev = ts->ts_evals[dp];
+  int *ml = ts->ts_move_list[dp];
+
+  best = first;
+  best_eval = ev[ml[first]];
+  for ( i = first + 1; i < list_size; i++ )
+    if ( ev[ml[i]] > best_eval ) {
+      best = i;
+      best_eval = ev[ml[i]];
+    }
+  if ( best != first ) {
+    temp_move = ml[first];
+    ml[first] = ml[best];
+    ml[best] = temp_move;
+  }
+
+  return ml[first];
+}
 
 static ALWAYS_INLINE int
 select_move( int first, int list_size ) {

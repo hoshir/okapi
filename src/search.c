@@ -53,12 +53,9 @@ int full_pv[120];
    stage of a game -- so 62 entries are needed, not 61. */
 
 _Thread_local int list_inherited[62];
-_Thread_local int sorted_move_order[64][64];  /* 62*60 used */
-_Thread_local int history_score[2][100];
 _Thread_local Board evals[61];
 CounterType total_nodes;
 CounterType total_evaluations;
-_Thread_local CounterType evaluations;
 
 /* When no other information is available, JCW's endgame
    priority order is used also in the midgame. */
@@ -143,7 +140,7 @@ inherit_move_lists( int stage ) {
 */
 
 void
-reorder_move_list( int stage ) {
+reorder_move_list_ts( ThreadState *ts, int stage ) {
   const int dont_touch = 24;
   int i;
   int move;
@@ -151,11 +148,12 @@ reorder_move_list( int stage ) {
   int nonempty_pos;
   int empty_buffer[MOVE_ORDER_SIZE];
   int nonempty_buffer[MOVE_ORDER_SIZE];
-  BitBoard empty_bits = board_bits[EMPTY];
+  BitBoard empty_bits = ts->ts_board_bits[EMPTY];
+  int *smo = ts->ts_sorted_move_order[stage];
 
   empty_pos = 0;
   for ( i = 0; i < MOVE_ORDER_SIZE; i++ ) {
-    move = sorted_move_order[stage][i];
+    move = smo[i];
     if ( (empty_bits & square_mask[move]) || (i < dont_touch) ) {
       empty_buffer[empty_pos] = move;
       empty_pos++;
@@ -163,16 +161,21 @@ reorder_move_list( int stage ) {
   }
   nonempty_pos = MOVE_ORDER_SIZE - 1;
   for ( i = MOVE_ORDER_SIZE - 1; i >= 0; i-- ) {
-    move = sorted_move_order[stage][i];
+    move = smo[i];
     if ( !(empty_bits & square_mask[move]) && (i >= dont_touch) ) {
       nonempty_buffer[nonempty_pos] = move;
       nonempty_pos--;
     }
   }
   for ( i = 0; i < empty_pos; i++ )
-    sorted_move_order[stage][i] = empty_buffer[i];
+    smo[i] = empty_buffer[i];
   for ( i = empty_pos; i < MOVE_ORDER_SIZE; i++ )
-    sorted_move_order[stage][i] = nonempty_buffer[i];
+    smo[i] = nonempty_buffer[i];
+}
+
+void
+reorder_move_list( int stage ) {
+  reorder_move_list_ts( &tls, stage );
 }
 
 
@@ -607,6 +610,8 @@ init_search_thread( void ) {
   init_move_lists();
   init_flip_stack();
   init_history_score();
+  tls.ts_allow_midgame_hash_probe = TRUE;
+  tls.ts_allow_midgame_hash_update = TRUE;
 }
 
 

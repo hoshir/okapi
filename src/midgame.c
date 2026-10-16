@@ -14,6 +14,7 @@
 #include <assert.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 #include "autoplay.h"
 #include "bitbtest.h"
@@ -74,13 +75,16 @@
 
 
 
-static _Thread_local int allow_midgame_hash_probe = TRUE;
-static _Thread_local int allow_midgame_hash_update = TRUE;
-static _Thread_local int midgame_full_width_depth = FULL_WIDTH_DEPTH;
-static _Thread_local int best_mid_move, best_mid_root_move;
+#define allow_midgame_hash_probe   (tls.ts_allow_midgame_hash_probe)
+#define allow_midgame_hash_update  (tls.ts_allow_midgame_hash_update)
+#define midgame_full_width_depth   (tls.ts_midgame_full_width_depth)
+#define best_mid_move              (tls.ts_best_mid_move)
+#define best_mid_root_move         (tls.ts_best_mid_root_move)
+#define counter_phase              (tls.ts_counter_phase)
+#define feas_index_list            (tls.ts_feas_index_list)
+
 static _Thread_local int midgame_abort;
 static _Thread_local int do_check_midgame_abort = TRUE;
-static _Thread_local int counter_phase;
 static _Thread_local int apply_perturbation = TRUE;
 static int perturbation_amplitude = 0;
 /* Indexed by BASE_STAGE + DEPTH, i.e. the stage the search ends at.
@@ -89,7 +93,6 @@ static int perturbation_amplitude = 0;
 
 static _Thread_local int stage_reached[62], stage_score[62];
 static int score_perturbation[100];
-static _Thread_local int feas_index_list[64][64];
 
 
 
@@ -217,17 +220,19 @@ toggle_perturbation_usage( int toggle ) {
   not already first in the list.
 */
 
-INLINE static
-void
-advance_move( int index ) {
-  int temp_move;
-
+static ALWAYS_INLINE void
+advance_move_ts( ThreadState *ts, int index ) {
   if ( index > 0 ) {
-    temp_move = sorted_move_order[disks_played][index];
-    sorted_move_order[disks_played][index] =
-      sorted_move_order[disks_played][index - 1];
-    sorted_move_order[disks_played][index - 1] = temp_move;
+    int *smo = ts->ts_sorted_move_order[ts->ts_disks_played];
+    int temp_move = smo[index];
+    smo[index] = smo[index - 1];
+    smo[index - 1] = temp_move;
   }
+}
+
+INLINE static void
+advance_move( int index ) {
+  advance_move_ts( &tls, index );
 }
 
 
@@ -238,18 +243,18 @@ advance_move( int index ) {
   board is filled or not.
 */
 
-INLINE static int
-static_or_terminal_evaluation( int side_to_move ) {
-  if ( disks_played == 60 )
-    return terminal_evaluation( side_to_move );
+static ALWAYS_INLINE int
+static_or_terminal_evaluation_ts( ThreadState *ts, int side_to_move ) {
+  if ( ts->ts_disks_played == 60 )
+    return terminal_evaluation_ts( ts, side_to_move );
   else
-    return static_evaluation( side_to_move );
+    return static_evaluation_ts( ts, side_to_move );
 }
 
 
 
 static ALWAYS_INLINE void
-undo_flips_bb_ts( ThreadState *ts, BitBoard mask, int side_to_move, int move ) {
+undo_flips_bb_ts( ThreadState *ts, int dp, BitBoard mask, int side_to_move, int move ) {
   int oppcol = OPP( side_to_move );
   BitBoard sq_mask = square_mask[move];
 
@@ -257,7 +262,8 @@ undo_flips_bb_ts( ThreadState *ts, BitBoard mask, int side_to_move, int move ) {
   ts->ts_board_bits[oppcol] |= mask;
   ts->ts_board_bits[EMPTY] |= sq_mask;
 
-  update_pattern_indices( side_to_move, move, mask, -1 );
+  memcpy( ts->ts_eval_pattern_index, ts->ts_eval_pattern_stored[dp],
+	  sizeof( ts->ts_eval_pattern_index ) );
 }
 
 static ALWAYS_INLINE int
@@ -289,42 +295,9 @@ make_move_bb_ts( ThreadState *ts, int side_to_move, int move, int update_hash ) 
     ts->ts_hash2 ^= (unsigned int) (h_acc >> 32);
   }
 
-  update_pattern_indices( side_to_move, move, mask, 1 );
-
-  if ( side_to_move == BLACKSQ ) {
-    ts->ts_piece_count[BLACKSQ][dp + 1] = ts->ts_piece_count[BLACKSQ][dp] + flipped + 1;
-    ts->ts_piece_count[WHITESQ][dp + 1] = ts->ts_piece_count[WHITESQ][dp] - flipped;
-  }
-  else {
-    ts->ts_piece_count[WHITESQ][dp + 1] = ts->ts_piece_count[WHITESQ][dp] + flipped + 1;
-    ts->ts_piece_count[BLACKSQ][dp + 1] = ts->ts_piece_count[BLACKSQ][dp] - flipped;
-  }
-
-  ts->ts_disks_played = dp + 1;
-
-  return flipped;
-}
-
-static ALWAYS_INLINE int
-make_move_no_hash_bb_ts( ThreadState *ts, int side_to_move, int move ) {
-  int dp = ts->ts_disks_played;
-  BitBoard my_bits = ts->ts_board_bits[side_to_move];
-  BitBoard opp_bits = ts->ts_board_bits[OPP( side_to_move )];
-  BitBoard mask, new_my_bits;
-
-  int flipped = TestFlips_bitboard_to( move, my_bits, opp_bits, &new_my_bits );
-  if ( flipped == 0 )
-    return 0;
-
-  BitBoard sq_mask = square_mask[move];
-  mask = new_my_bits & ~my_bits & ~sq_mask;
-
-  ts->ts_board_bits[side_to_move] = new_my_bits;
-  ts->ts_board_bits[OPP( side_to_move )] = opp_bits & ~mask;
-  ts->ts_board_bits[EMPTY] &= ~sq_mask;
-  ts->ts_flip_mask[dp] = mask;
-
-  update_pattern_indices( side_to_move, move, mask, 1 );
+  memcpy( ts->ts_eval_pattern_stored[dp], ts->ts_eval_pattern_index,
+	  sizeof( ts->ts_eval_pattern_index ) );
+  update_pattern_indices_ts( ts, side_to_move, move, mask, 1 );
 
   if ( side_to_move == BLACKSQ ) {
     ts->ts_piece_count[BLACKSQ][dp + 1] = ts->ts_piece_count[BLACKSQ][dp] + flipped + 1;
@@ -347,14 +320,7 @@ unmake_move_bb_ts( ThreadState *ts, int side_to_move, int move ) {
   ts->ts_hash1 = ts->ts_hash_stored1[dp];
   ts->ts_hash2 = ts->ts_hash_stored2[dp];
 
-  undo_flips_bb_ts( ts, ts->ts_flip_mask[dp], side_to_move, move );
-}
-
-static ALWAYS_INLINE void
-unmake_move_no_hash_bb_ts( ThreadState *ts, int side_to_move, int move ) {
-  int dp = --ts->ts_disks_played;
-
-  undo_flips_bb_ts( ts, ts->ts_flip_mask[dp], side_to_move, move );
+  undo_flips_bb_ts( ts, dp, ts->ts_flip_mask[dp], side_to_move, move );
 }
 
 static ALWAYS_INLINE int
@@ -389,14 +355,14 @@ fast_tree_search( ThreadState *ts, int level, int max_depth, int side_to_move, i
   ts->ts_nodes.lo++;
 
   if ( level >= max_depth )
-    return static_or_terminal_evaluation( side_to_move );
+    return static_or_terminal_evaluation_ts( ts, side_to_move );
 
   /* Check the hash table */
 
   remains = max_depth - level;
 
   use_hash = (remains >= HASH_THRESHOLD) && USE_HASH_TABLE && allow_hash;
-  if ( use_hash && allow_midgame_hash_probe ) {
+  if ( use_hash && ts->ts_allow_midgame_hash_probe ) {
     find_hash_key( &entry, ts->ts_hash1, ts->ts_hash2 );
     if ( (entry.draft >= remains) &&
 	 (entry.selectivity == 0) &&
@@ -405,7 +371,7 @@ fast_tree_search( ThreadState *ts, int level, int max_depth, int side_to_move, i
 	 ((entry.flags & EXACT_VALUE) ||
 	  ((entry.flags & LOWER_BOUND) && entry.eval >= beta) ||
 	  ((entry.flags & UPPER_BOUND) && entry.eval <= alpha)) ) {
-      best_mid_move = entry.move[0];
+      ts->ts_best_mid_move = entry.move[0];
       return entry.eval;
     }
   }
@@ -413,7 +379,7 @@ fast_tree_search( ThreadState *ts, int level, int max_depth, int side_to_move, i
   /* Reorder the move lists now and then to keep the empty squares up front */
 
   if ( (ts->ts_nodes.lo & 4095) == 0 )
-    reorder_move_list( ts->ts_disks_played );
+    reorder_move_list_ts( ts, ts->ts_disks_played );
 
   /* Search */
 
@@ -425,14 +391,34 @@ fast_tree_search( ThreadState *ts, int level, int max_depth, int side_to_move, i
 
   if ( remains == 1 ) {  /* Plain alpha-beta last ply */
     int dp = ts->ts_disks_played;
+    BitBoard my_bits = ts->ts_board_bits[side_to_move];
+    BitBoard opp_bits = ts->ts_board_bits[OPP( side_to_move )];
     BitBoard empty_bits = ts->ts_board_bits[EMPTY];
+    const int *smo = ts->ts_sorted_move_order[dp];
+    int b_cnt = ts->ts_piece_count[BLACKSQ][dp];
+    int w_cnt = ts->ts_piece_count[WHITESQ][dp];
+    unsigned short saved_pi[48] __attribute__((aligned(16)));
+    memcpy( saved_pi, ts->ts_eval_pattern_index, sizeof( saved_pi ) );
     empties_remaining = 60 - dp;
     for ( move_index = 0; move_index < MOVE_ORDER_SIZE; move_index++ ) {
-      move = sorted_move_order[dp][move_index];
+      move = smo[move_index];
       if ( empty_bits & square_mask[move] ) {
-	if ( make_move_no_hash_bb_ts( ts, side_to_move, move ) != 0 ) {
-	  curr_val = -static_or_terminal_evaluation( OPP( side_to_move ) );
-	  unmake_move_no_hash_bb_ts( ts, side_to_move, move );
+	BitBoard new_my_bits;
+	int flipped = TestFlips_bitboard_to( move, my_bits, opp_bits, &new_my_bits );
+	if ( flipped != 0 ) {
+	  BitBoard mask = (new_my_bits ^ my_bits) & ~square_mask[move];
+	  if ( !first )
+	    memcpy( ts->ts_eval_pattern_index, saved_pi, sizeof( saved_pi ) );
+	  update_pattern_indices_ts( ts, side_to_move, move, mask, 1 );
+	  if ( side_to_move == BLACKSQ ) {
+	    ts->ts_piece_count[BLACKSQ][dp + 1] = b_cnt + flipped + 1;
+	    ts->ts_piece_count[WHITESQ][dp + 1] = w_cnt - flipped;
+	  } else {
+	    ts->ts_piece_count[WHITESQ][dp + 1] = w_cnt + flipped + 1;
+	    ts->ts_piece_count[BLACKSQ][dp + 1] = b_cnt - flipped;
+	  }
+	  ts->ts_disks_played = dp + 1;
+	  curr_val = -static_or_terminal_evaluation_ts( ts, OPP( side_to_move ) );
 	  ts->ts_nodes.lo++;
 	  if ( curr_val > best ) {
 	    best = curr_val;
@@ -440,12 +426,14 @@ fast_tree_search( ThreadState *ts, int level, int max_depth, int side_to_move, i
 	    best_move = move;
 	    if ( curr_val >= beta ) {
 	      int side_idx;
-	      advance_move( move_index );
+	      ts->ts_disks_played = dp;
+	      memcpy( ts->ts_eval_pattern_index, saved_pi, sizeof( saved_pi ) );
+	      advance_move_ts( ts, move_index );
 	      side_idx = (side_to_move == BLACKSQ) ? 0 : 1;
-	      if ( history_score[side_idx][move] < 1000000 )
-		history_score[side_idx][move] += remains * remains;
-	      best_mid_move = best_move;
-	      if ( use_hash && allow_midgame_hash_update )
+	      if ( ts->ts_history_score[side_idx][move] < 1000000 )
+		ts->ts_history_score[side_idx][move] += remains * remains;
+	      ts->ts_best_mid_move = best_move;
+	      if ( use_hash && ts->ts_allow_midgame_hash_update )
 		add_hash_ts( ts, MIDGAME_MODE, best, best_move,
 			     MIDGAME_SCORE | LOWER_BOUND, remains, 0 );
 	      return best;
@@ -458,15 +446,20 @@ fast_tree_search( ThreadState *ts, int level, int max_depth, int side_to_move, i
 	  break;
       }
     }
+    if ( !first ) {
+      ts->ts_disks_played = dp;
+      memcpy( ts->ts_eval_pattern_index, saved_pi, sizeof( saved_pi ) );
+    }
   }
   else {  /* Principal variation search for deeper searches */
     int dp = ts->ts_disks_played;
     BitBoard empty_bits = ts->ts_board_bits[EMPTY];
+    const int *smo = ts->ts_sorted_move_order[dp];
     new_use_hash = (remains >= HASH_THRESHOLD + 1) && use_hash;
     curr_alpha = alpha;
     empties_remaining = 60 - dp;
     for ( move_index = 0; move_index < MOVE_ORDER_SIZE; move_index++ ) {
-      move = sorted_move_order[dp][move_index];
+      move = smo[move_index];
       if ( empty_bits & square_mask[move] ) {
 	if ( make_move_bb_ts( ts, side_to_move, move, new_use_hash ) != 0 ) {
 	  if ( first ) {
@@ -495,12 +488,12 @@ fast_tree_search( ThreadState *ts, int level, int max_depth, int side_to_move, i
 	  unmake_move_bb_ts( ts, side_to_move, move );
 	  if ( best >= beta ) {
 	    int side_idx;
-	    advance_move( move_index );
+	    advance_move_ts( ts, move_index );
 	    side_idx = (side_to_move == BLACKSQ) ? 0 : 1;
-	    if ( history_score[side_idx][move] < 1000000 )
-	      history_score[side_idx][move] += remains * remains;
-	    best_mid_move = best_move;
-	    if ( use_hash && allow_midgame_hash_update )
+	    if ( ts->ts_history_score[side_idx][move] < 1000000 )
+	      ts->ts_history_score[side_idx][move] += remains * remains;
+	    ts->ts_best_mid_move = best_move;
+	    if ( use_hash && ts->ts_allow_midgame_hash_update )
 	      add_hash_ts( ts, MIDGAME_MODE, best, best_move,
 			   MIDGAME_SCORE | LOWER_BOUND, remains, 0 );
 	    return best;
@@ -514,9 +507,9 @@ fast_tree_search( ThreadState *ts, int level, int max_depth, int side_to_move, i
     }
   }
   if ( !first ) {
-    advance_move( best_move_index );
-    best_mid_move = best_move;
-    if ( use_hash && allow_midgame_hash_update ) {
+    advance_move_ts( ts, best_move_index );
+    ts->ts_best_mid_move = best_move;
+    if ( use_hash && ts->ts_allow_midgame_hash_update ) {
       if ( best > alpha )
 	add_hash_ts( ts, MIDGAME_MODE, best, best_move,
 		     MIDGAME_SCORE | EXACT_VALUE, remains, 0 );
@@ -536,7 +529,7 @@ fast_tree_search( ThreadState *ts, int level, int max_depth, int side_to_move, i
     return curr_val;
   }
   else {  /* Both players had to pass ==> evaluate board as final */
-    curr_val = terminal_evaluation( side_to_move );
+    curr_val = terminal_evaluation_ts( ts, side_to_move );
     return curr_val;
   }
 }
@@ -585,15 +578,15 @@ update_best_list( int *best_list, int move, int best_list_index,
 */
 
 int
-tree_search( int level,
-	     int max_depth,
-	     int side_to_move,
-	     int alpha,
-	     int beta,
-	     int allow_hash,
-	     int allow_mpc,
-	     int void_legal ) {
-  ThreadState *ts = &tls;
+tree_search_ts( ThreadState *ts,
+		int level,
+		int max_depth,
+		int side_to_move,
+		int alpha,
+		int beta,
+		int allow_hash,
+		int allow_mpc,
+		int void_legal ) {
   int i, j;
   int curr_val, best, pre_best;
   int searched;
@@ -617,7 +610,7 @@ tree_search( int level,
 
   if ( level >= max_depth ) {
     ts->ts_nodes.lo++;
-    return static_or_terminal_evaluation( side_to_move );
+    return static_or_terminal_evaluation_ts( ts, side_to_move );
   }
 
   remains = max_depth - level;
@@ -625,8 +618,8 @@ tree_search( int level,
   if ( remains < PRE_SEARCH_THRESHOLD ) {
     curr_val = fast_tree_search( ts, level, max_depth, side_to_move, alpha,
 				 beta, allow_hash, void_legal );
-    pv_depth[level] = level + 1;
-    pv[level][level] = best_mid_move;
+    ts->ts_pv_depth[level] = level + 1;
+    ts->ts_pv[level][level] = ts->ts_best_mid_move;
     return curr_val;
   }
 
@@ -645,7 +638,7 @@ tree_search( int level,
     h2 = ts->ts_hash2;
   }
 #endif
-  if ( use_hash && allow_midgame_hash_probe ) {
+  if ( use_hash && ts->ts_allow_midgame_hash_probe ) {
     find_hash_key( &entry, ts->ts_hash1, ts->ts_hash2 );
     if ( (entry.draft >= remains) &&
 	 (entry.selectivity <= selectivity) &&
@@ -654,13 +647,13 @@ tree_search( int level,
 	 ((entry.flags & EXACT_VALUE) ||
 	  ((entry.flags & LOWER_BOUND) && entry.eval >= beta) ||
 	  ((entry.flags & UPPER_BOUND) && entry.eval <= alpha)) ) {
-      pv[level][level] = entry.move[0];
-      pv_depth[level] = level + 1;
+      ts->ts_pv[level][level] = entry.move[0];
+      ts->ts_pv_depth[level] = level + 1;
       return entry.eval;
     }
   }
 
-  hash_hit = (use_hash && allow_midgame_hash_probe && (entry.draft != NO_HASH_MOVE));
+  hash_hit = (use_hash && ts->ts_allow_midgame_hash_probe && (entry.draft != NO_HASH_MOVE));
   if ( hash_hit )
     hash_move = entry.move[0];
   else
@@ -687,7 +680,7 @@ tree_search( int level,
 	 being less than some predefined constant */
 
       shallow_remains = mpc_cut[remains].cut_depth[cut];
-      if ( level + shallow_remains < midgame_full_width_depth )
+      if ( level + shallow_remains < ts->ts_midgame_full_width_depth )
 	continue;
 
       if  ( shallow_remains > 1 ) {  /* "Deep" shallow search */
@@ -696,7 +689,7 @@ tree_search( int level,
 	  /* Use static eval to decide if a one- or two-sided
 	     MPC test is to be performed. */
 
-	  int static_eval = static_evaluation( side_to_move );
+	  int static_eval = static_evaluation_ts( ts, side_to_move );
 	  if ( static_eval <= alpha_bound )
 	    beta_test = FALSE;
 	  else if ( static_eval >= beta_bound )
@@ -708,18 +701,18 @@ tree_search( int level,
 	if ( alpha_test && beta_test ) {
 	  /* Test for likely fail-low or likely fail-high. */
 	  int shallow_val =
-	    tree_search( level, level + shallow_remains, side_to_move,
-			 alpha_bound, beta_bound, allow_hash, FALSE,
-			 void_legal );
+	    tree_search_ts( ts, level, level + shallow_remains, side_to_move,
+			    alpha_bound, beta_bound, allow_hash, FALSE,
+			    void_legal );
 	  if ( shallow_val >= beta_bound  ) {
-	    if ( use_hash && allow_midgame_hash_update )
-	      add_hash_ts( ts, MIDGAME_MODE, beta, pv[level][level],
+	    if ( use_hash && ts->ts_allow_midgame_hash_update )
+	      add_hash_ts( ts, MIDGAME_MODE, beta, ts->ts_pv[level][level],
 			   MIDGAME_SCORE | LOWER_BOUND, remains, selectivity );
 	    return beta;
 	  }
 	  else if ( shallow_val <= alpha_bound ) {
-	    if ( use_hash && allow_midgame_hash_update )
-	      add_hash_ts( ts, MIDGAME_MODE, alpha, pv[level][level],
+	    if ( use_hash && ts->ts_allow_midgame_hash_update )
+	      add_hash_ts( ts, MIDGAME_MODE, alpha, ts->ts_pv[level][level],
 			   MIDGAME_SCORE | UPPER_BOUND, remains, selectivity );
 	    return alpha;
 	  }
@@ -736,22 +729,22 @@ tree_search( int level,
 	}
 	else if ( beta_test ) {
 	  /* Fail-high with high probability? */
-	  if ( tree_search( level, level + shallow_remains, side_to_move,
-			    beta_bound - 1, beta_bound, allow_hash, FALSE,
-			    void_legal ) >= beta_bound ) {
-	    if ( use_hash && allow_midgame_hash_update )
-	      add_hash_ts( ts, MIDGAME_MODE, beta, pv[level][level],
+	  if ( tree_search_ts( ts, level, level + shallow_remains, side_to_move,
+			       beta_bound - 1, beta_bound, allow_hash, FALSE,
+			       void_legal ) >= beta_bound ) {
+	    if ( use_hash && ts->ts_allow_midgame_hash_update )
+	      add_hash_ts( ts, MIDGAME_MODE, beta, ts->ts_pv[level][level],
 			   MIDGAME_SCORE | LOWER_BOUND, remains, selectivity );
 	    return beta;
 	  }
 	}
 	else if ( alpha_test ) {
 	  /* Fail-low with high probability? */
-	  if ( tree_search( level, level + shallow_remains, side_to_move,
-			    alpha_bound, alpha_bound + 1, allow_hash, FALSE,
-			    void_legal ) <= alpha_bound ) {
-	    if ( use_hash && allow_midgame_hash_update )
-	      add_hash_ts( ts, MIDGAME_MODE, alpha, pv[level][level],
+	  if ( tree_search_ts( ts, level, level + shallow_remains, side_to_move,
+			       alpha_bound, alpha_bound + 1, allow_hash, FALSE,
+			       void_legal ) <= alpha_bound ) {
+	    if ( use_hash && ts->ts_allow_midgame_hash_update )
+	      add_hash_ts( ts, MIDGAME_MODE, alpha, ts->ts_pv[level][level],
 			   MIDGAME_SCORE | UPPER_BOUND, remains, selectivity );
 	    return alpha;
 	  }
@@ -759,47 +752,75 @@ tree_search( int level,
       }
       else {  /* All-in-one MPC one-ply search and move ordering */
 	int dp = ts->ts_disks_played;
+	BitBoard my_bits = ts->ts_board_bits[side_to_move];
+	BitBoard opp_bits = ts->ts_board_bits[OPP( side_to_move )];
 	BitBoard empty_bits = ts->ts_board_bits[EMPTY];
+	const int *smo = ts->ts_sorted_move_order[dp];
+	int *ev_dp = ts->ts_evals[dp];
+	int *feas_dp = ts->ts_feas_index_list[dp];
+	int b_cnt = ts->ts_piece_count[BLACKSQ][dp];
+	int w_cnt = ts->ts_piece_count[WHITESQ][dp];
+	unsigned short saved_pi[48] __attribute__((aligned(16)));
+	memcpy( saved_pi, ts->ts_eval_pattern_index, sizeof( saved_pi ) );
+	int mcnt = 0;
 	int best_1ply_move = 0;
-	move_count[dp] = 0;
 	best = -INFINITE_EVAL;
 	empties_remaining = 60 - dp;
 	for ( move_index = 0; move_index < MOVE_ORDER_SIZE; move_index++ ) {
-	  move = sorted_move_order[dp][move_index];
+	  move = smo[move_index];
 	  if ( empty_bits & square_mask[move] ) {
-	    if ( make_move_no_hash_bb_ts( ts, side_to_move, move ) != 0 ) {
-	      curr_val = -static_or_terminal_evaluation( OPP( side_to_move ) );
-	      unmake_move_no_hash_bb_ts( ts, side_to_move, move );
+	    BitBoard new_my_bits;
+	    int flipped = TestFlips_bitboard_to( move, my_bits, opp_bits, &new_my_bits );
+	    if ( flipped != 0 ) {
+	      BitBoard mask = (new_my_bits ^ my_bits) & ~square_mask[move];
+	      if ( mcnt > 0 )
+		memcpy( ts->ts_eval_pattern_index, saved_pi, sizeof( saved_pi ) );
+	      update_pattern_indices_ts( ts, side_to_move, move, mask, 1 );
+	      if ( side_to_move == BLACKSQ ) {
+		ts->ts_piece_count[BLACKSQ][dp + 1] = b_cnt + flipped + 1;
+		ts->ts_piece_count[WHITESQ][dp + 1] = w_cnt - flipped;
+	      } else {
+		ts->ts_piece_count[WHITESQ][dp + 1] = w_cnt + flipped + 1;
+		ts->ts_piece_count[BLACKSQ][dp + 1] = b_cnt - flipped;
+	      }
+	      ts->ts_disks_played = dp + 1;
+	      curr_val = -static_or_terminal_evaluation_ts( ts, OPP( side_to_move ) );
 	      ts->ts_nodes.lo++;
 	      if ( curr_val > best ) {
 		best = curr_val;
 		best_1ply_move = move;
 		if ( best >= beta_bound ) {
-		  pv[level][level] = move;
-		  pv_depth[level] = level + 1;
-		  if ( use_hash && allow_midgame_hash_update )
+		  ts->ts_disks_played = dp;
+		  memcpy( ts->ts_eval_pattern_index, saved_pi, sizeof( saved_pi ) );
+		  ts->ts_move_count[dp] = mcnt;
+		  ts->ts_pv[level][level] = move;
+		  ts->ts_pv_depth[level] = level + 1;
+		  if ( use_hash && ts->ts_allow_midgame_hash_update )
 		    add_hash_ts( ts, MIDGAME_MODE, beta, move,
 				 MIDGAME_SCORE | LOWER_BOUND, remains,
 				 selectivity );
 		  return beta;
 		}
 	      }
-	      evals[dp][move] = curr_val;
+	      ev_dp[move] = curr_val;
 	      if ( move == hash_move )  /* Always try hash table move first */
-		evals[dp][move] += HASH_MOVE_BONUS;
-	      feas_index_list[dp][move_count[dp]] =
-		move_index;
-	      move_count[dp]++;
+		ev_dp[move] += HASH_MOVE_BONUS;
+	      feas_dp[mcnt++] = move_index;
 	    }
 	    empties_remaining--;
 	    if ( empties_remaining == 0 )
 	      break;
 	  }
 	}
-	if ( (best <= alpha_bound) && (move_count[dp] > 0) ) {
-	  pv[level][level] = best_1ply_move;
-	  pv_depth[level] = level + 1;
-	  if ( use_hash && allow_midgame_hash_update )
+	if ( mcnt > 0 ) {
+	  ts->ts_disks_played = dp;
+	  memcpy( ts->ts_eval_pattern_index, saved_pi, sizeof( saved_pi ) );
+	}
+	ts->ts_move_count[dp] = mcnt;
+	if ( (best <= alpha_bound) && (mcnt > 0) ) {
+	  ts->ts_pv[level][level] = best_1ply_move;
+	  ts->ts_pv_depth[level] = level + 1;
+	  if ( use_hash && ts->ts_allow_midgame_hash_update )
 	    add_hash_ts( ts, MIDGAME_MODE, alpha, best_1ply_move,
 			 MIDGAME_SCORE | UPPER_BOUND, remains, selectivity );
 	  return alpha;
@@ -820,7 +841,7 @@ tree_search( int level,
   for ( i = 0; i < 4; i++ )
     best_list[i] = 0;
   if ( !pre_search_done ) {
-    move_count[ts->ts_disks_played] = 0;
+    ts->ts_move_count[ts->ts_disks_played] = 0;
     if ( hash_hit )
       for ( i = 0; i < 4; i++ )
 	if ( valid_move_bb_ts( ts, entry.move[i], side_to_move ) )
@@ -833,16 +854,20 @@ tree_search( int level,
 
     if ( !pre_search_done && (best_list_index < best_list_length) ) {
       int dp = ts->ts_disks_played;
-      move_count[dp]++;
+      const int *smo = ts->ts_sorted_move_order[dp];
+      ts->ts_move_count[dp]++;
       move_index = 0;
-      while ( sorted_move_order[dp][move_index] !=
-	      best_list[best_list_index] )
+      while ( smo[move_index] != best_list[best_list_index] )
 	move_index++;
     }
     else {  /* Otherwise use information from shallow searches */
       int dp = ts->ts_disks_played;
+      const int *smo = ts->ts_sorted_move_order[dp];
+      int *ev_dp = ts->ts_evals[dp];
+      int *feas_dp = ts->ts_feas_index_list[dp];
       if ( !pre_search_done ) {
 	BitBoard empty_bits = ts->ts_board_bits[EMPTY];
+	int mcnt = ts->ts_move_count[dp];
 	if ( remains < DEPTH_TWO_DEPTH )
 	  pre_depth = 1;
 	else
@@ -852,7 +877,7 @@ tree_search( int level,
 	for ( move_index = 0; move_index < MOVE_ORDER_SIZE; move_index++ ) {
 	  int already_checked;
 
-	  move = sorted_move_order[dp][move_index];
+	  move = smo[move_index];
 	  already_checked = FALSE;
 	  for ( j = 0; j < best_list_length; j++ )
 	    if ( move == best_list[j] )
@@ -861,60 +886,55 @@ tree_search( int level,
 	  if ( empty_bits & square_mask[move] ) {
 	    if ( !already_checked &&
 		 (make_move_bb_ts( ts, side_to_move, move, TRUE ) != 0 ) ) {
-	      curr_val = -tree_search( level + 1, level + pre_depth,
-				       OPP( side_to_move ), -INFINITE_EVAL,
-				       -pre_best, FALSE, FALSE, TRUE );
+	      curr_val = -tree_search_ts( ts, level + 1, level + pre_depth,
+					  OPP( side_to_move ), -INFINITE_EVAL,
+					  -pre_best, FALSE, FALSE, TRUE );
 	      pre_best = MAX( pre_best, curr_val );
 	      unmake_move_bb_ts( ts, side_to_move, move );
-	      evals[dp][move] = curr_val;
-	      feas_index_list[dp][move_count[dp]] =
-		move_index;
-	      move_count[dp]++;
+	      ev_dp[move] = curr_val;
+	      feas_dp[mcnt++] = move_index;
 	    }
 	    empties_remaining--;
 	    if ( empties_remaining == 0 )
 	      break;
 	  }
 	}
+	ts->ts_move_count[dp] = mcnt;
 	pre_search_done = TRUE;
       }
 
-      if ( i == move_count[dp] )  /* No moves left to try? */
+      if ( i == ts->ts_move_count[dp] )  /* No moves left to try? */
 	break;
 
       best_index = i;
-      best_score =
-	evals[dp][sorted_move_order[dp][feas_index_list[dp][i]]];
+      best_score = ev_dp[smo[feas_dp[i]]];
       {
 	int side_idx = (side_to_move == BLACKSQ) ? 0 : 1;
-	int best_cand = sorted_move_order[dp][feas_index_list[dp][i]];
-	int best_hist = history_score[side_idx][best_cand];
+	const int *hist_side = ts->ts_history_score[side_idx];
+	int best_cand = smo[feas_dp[i]];
+	int best_hist = hist_side[best_cand];
+	int mcnt = ts->ts_move_count[dp];
 
-	for ( j = i + 1; j < move_count[dp]; j++ ) {
-	  int cand_move;
-	  int cand_score;
-
-	  cand_move =
-	    sorted_move_order[dp][feas_index_list[dp][j]];
-	  cand_score = evals[dp][cand_move];
+	for ( j = i + 1; j < mcnt; j++ ) {
+	  int cand_move = smo[feas_dp[j]];
+	  int cand_score = ev_dp[cand_move];
 	  if ( cand_score > best_score ||
-	       (cand_score == best_score && history_score[side_idx][cand_move] > best_hist) ) {
+	       (cand_score == best_score && hist_side[cand_move] > best_hist) ) {
 	    best_score = cand_score;
-	    best_hist = history_score[side_idx][cand_move];
+	    best_hist = hist_side[cand_move];
 	    best_index = j;
 	  }
 	}
       }
 
-      move_index = feas_index_list[dp][best_index];
-      feas_index_list[dp][best_index] =
-	feas_index_list[dp][i];
+      move_index = feas_dp[best_index];
+      feas_dp[best_index] = feas_dp[i];
     }
 
-    move = sorted_move_order[ts->ts_disks_played][move_index];
+    move = ts->ts_sorted_move_order[ts->ts_disks_played][move_index];
 
-    counter_phase = (counter_phase + 1) & 63;
-    if ( counter_phase == 0 ) {
+    ts->ts_counter_phase = (ts->ts_counter_phase + 1) & 63;
+    if ( ts->ts_counter_phase == 0 ) {
       double node_val;
       adjust_counter( &ts->ts_nodes );
       node_val = counter_value( &ts->ts_nodes );
@@ -944,21 +964,21 @@ tree_search( int level,
 
     if ( searched == 0 ) {
       best = curr_val =
-	-tree_search( level + 1, max_depth, OPP( side_to_move ), -beta,
-		      -curr_alpha, allow_hash, allow_mpc, TRUE );
+	-tree_search_ts( ts, level + 1, max_depth, OPP( side_to_move ), -beta,
+			 -curr_alpha, allow_hash, allow_mpc, TRUE );
       best_move_index = move_index;
       update_pv = TRUE;
     }
     else {
       curr_alpha = MAX( best, curr_alpha );
       curr_val =
-	-tree_search( level + 1, max_depth, OPP( side_to_move ),
-		      -(curr_alpha + 1), -curr_alpha, allow_hash,
-		      allow_mpc, TRUE );
+	-tree_search_ts( ts, level + 1, max_depth, OPP( side_to_move ),
+			 -(curr_alpha + 1), -curr_alpha, allow_hash,
+			 allow_mpc, TRUE );
       if ( (curr_val > curr_alpha) && (curr_val < beta) ) {
 	curr_val =
-	  -tree_search( level + 1, max_depth, OPP( side_to_move ), -beta,
-			INFINITE_EVAL, allow_hash, allow_mpc, TRUE );
+	  -tree_search_ts( ts, level + 1, max_depth, OPP( side_to_move ), -beta,
+			   INFINITE_EVAL, allow_hash, allow_mpc, TRUE );
 	if ( curr_val > best ) {
 	  best = curr_val;
 	  best_move_index = move_index;
@@ -977,23 +997,23 @@ tree_search( int level,
     if ( is_panic_abort() || force_return || smp_stop )
       return SEARCH_ABORT;
 
-    evals[ts->ts_disks_played][move] = curr_val;
+    ts->ts_evals[ts->ts_disks_played][move] = curr_val;
 
     if ( update_pv ) {
       update_best_list( best_list, move, best_list_index, best_list_length );
-      pv[level][level] = move;
-      pv_depth[level] = pv_depth[level + 1];
-      for ( j = level + 1; j < pv_depth[level + 1]; j++)
-	pv[level][j] = pv[level + 1][j];
+      ts->ts_pv[level][level] = move;
+      ts->ts_pv_depth[level] = ts->ts_pv_depth[level + 1];
+      for ( j = level + 1; j < ts->ts_pv_depth[level + 1]; j++)
+	ts->ts_pv[level][j] = ts->ts_pv[level + 1][j];
     }
 
     if ( best >= beta ) {
       int side_idx;
-      advance_move( move_index );
+      advance_move_ts( ts, move_index );
       side_idx = (side_to_move == BLACKSQ) ? 0 : 1;
-      if ( history_score[side_idx][move] < 1000000 )
-	history_score[side_idx][move] += remains * remains;
-      if ( use_hash && allow_midgame_hash_update )
+      if ( ts->ts_history_score[side_idx][move] < 1000000 )
+	ts->ts_history_score[side_idx][move] += remains * remains;
+      if ( use_hash && ts->ts_allow_midgame_hash_update )
 	add_hash_extended_ts( ts, MIDGAME_MODE, best, best_list,
 			      MIDGAME_SCORE | LOWER_BOUND, remains, selectivity );
       return best;
@@ -1009,9 +1029,9 @@ tree_search( int level,
       printf( "%s: %x%x    %s: %x%x", HASH_BEFORE, h1, h2,
 	      HASH_AFTER, ts->ts_hash1, ts->ts_hash2 );
 #endif
-  if ( move_count[ts->ts_disks_played] > 0 ) {
-      advance_move( best_move_index );
-    if ( use_hash && allow_midgame_hash_update ) {
+  if ( ts->ts_move_count[ts->ts_disks_played] > 0 ) {
+    advance_move_ts( ts, best_move_index );
+    if ( use_hash && ts->ts_allow_midgame_hash_update ) {
       if ( best > alpha )
 	add_hash_extended_ts( ts, MIDGAME_MODE, best, best_list,
 			      MIDGAME_SCORE | EXACT_VALUE, remains, selectivity );
@@ -1024,16 +1044,35 @@ tree_search( int level,
   else if ( void_legal ) { /* No feasible moves */
     ts->ts_hash1 ^= hash_flip_color1;
     ts->ts_hash2 ^= hash_flip_color2;
-    curr_val = -tree_search( level, max_depth, OPP( side_to_move ), -beta,
-			     -alpha, allow_hash, allow_mpc, FALSE );
+    curr_val = -tree_search_ts( ts, level, max_depth, OPP( side_to_move ), -beta,
+				-alpha, allow_hash, allow_mpc, FALSE );
     ts->ts_hash1 ^= hash_flip_color1;
     ts->ts_hash2 ^= hash_flip_color2;
     return curr_val;
   }
   else {
-    pv_depth[level] = level;
-    return terminal_evaluation( side_to_move );
+    ts->ts_pv_depth[level] = level;
+    return terminal_evaluation_ts( ts, side_to_move );
   }
+}
+
+int
+tree_search( int level,
+	     int max_depth,
+	     int side_to_move,
+	     int alpha,
+	     int beta,
+	     int allow_hash,
+	     int allow_mpc,
+	     int void_legal ) {
+  ThreadState *ts = &tls;
+  int res = tree_search_ts( ts, level, max_depth, side_to_move, alpha, beta,
+			    allow_hash, allow_mpc, void_legal );
+  int d = ts->ts_pv_depth[level];
+  pv_depth[level] = d;
+  for ( int j = level; j < d; j++ )
+    pv[level][j] = ts->ts_pv[level][j];
+  return res;
 }
 
 

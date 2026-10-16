@@ -68,14 +68,15 @@ init_eval( void ) {
 */
 
 INLINE int
-terminal_evaluation( int side_to_move ) {
+terminal_evaluation_ts( ThreadState *ts, int side_to_move ) {
   int disc_diff;
   int my_discs, opp_discs;
+  int dp = ts->ts_disks_played;
 
-  INCREMENT_COUNTER( evaluations );
+  ts->ts_evaluations.lo++;
 
-  my_discs = piece_count[side_to_move][disks_played];
-  opp_discs = piece_count[OPP( side_to_move )][disks_played];
+  my_discs = ts->ts_piece_count[side_to_move][dp];
+  opp_discs = ts->ts_piece_count[OPP( side_to_move )][dp];
 
   if ( my_discs > opp_discs )
     disc_diff = 64 - 2 * opp_discs;
@@ -90,4 +91,9 @@ terminal_evaluation( int side_to_move ) {
     return 0;
   else
     return -MIDGAME_WIN + disc_diff;
+}
+
+INLINE int
+terminal_evaluation( int side_to_move ) {
+  return terminal_evaluation_ts( &tls, side_to_move );
 }
