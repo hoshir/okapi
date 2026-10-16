@@ -54,12 +54,14 @@ leaf_remove_empty_byte( uint64_t empties, unsigned int sh ) {
 #if USE_SHALLOW_TT
 static ALWAYS_INLINE int
 leaf_probe_shallow_tt( ThreadState *ts,
+		       BitBoard my_bits,
+		       BitBoard opp_bits,
 		       int draft,
 		       int alpha,
 		       int beta,
 		       int *tt_move,
 		       int *tt_val ) {
-  return probe_shallow_hash_draft( ts, draft, alpha, beta, tt_move, tt_val );
+  return probe_shallow_hash_draft( ts, my_bits, opp_bits, draft, alpha, beta, tt_move, tt_val );
 }
 
 static ALWAYS_INLINE void
@@ -430,7 +432,7 @@ solve_five_empty( ThreadState *ts,
 
 #if USE_SHALLOW_TT && (SHALLOW_TT_MIN_DEPTH <= 5)
   int tt_val;
-  if ( leaf_probe_shallow_tt( ts, 5, alpha, beta, NULL, &tt_val ) )
+  if ( leaf_probe_shallow_tt( ts, my_bits, opp_bits, 5, alpha, beta, NULL, &tt_val ) )
     return tt_val;
 #endif
 
@@ -473,7 +475,7 @@ solve_five_empty( ThreadState *ts,
       if ( ev >= beta ) {
 	ts->ts_end_best_move = m;
 #if USE_SHALLOW_TT && (SHALLOW_TT_MIN_DEPTH <= 5)
-	add_shallow_hash( ev, m, ENDGAME_SCORE | LOWER_BOUND, 5, ts );
+	add_shallow_hash( my_bits, opp_bits, ev, m, ENDGAME_SCORE | LOWER_BOUND, 5 );
 #endif
 	return ev;
       }
@@ -493,25 +495,16 @@ solve_five_empty( ThreadState *ts,
       return 0;
     }
     else {
-#if USE_SHALLOW_TT && (SHALLOW_TT_MIN_DEPTH <= 5)
-      ts->ts_hash1 ^= hash_flip_color1;
-      ts->ts_hash2 ^= hash_flip_color2;
-#endif
-      ev = -solve_five_empty( ts, opp_bits, my_bits, empties,
-			      -beta, -alpha, -disc_diff, LEAF_PASS_STATE( state ) );
-#if USE_SHALLOW_TT && (SHALLOW_TT_MIN_DEPTH <= 5)
-      ts->ts_hash1 ^= hash_flip_color1;
-      ts->ts_hash2 ^= hash_flip_color2;
-#endif
-      return ev;
+      return -solve_five_empty( ts, opp_bits, my_bits, empties,
+				-beta, -alpha, -disc_diff, LEAF_PASS_STATE( state ) );
     }
   }
 
 #if USE_SHALLOW_TT && (SHALLOW_TT_MIN_DEPTH <= 5)
   if ( score <= in_alpha )
-    add_shallow_hash( score, best_sq, ENDGAME_SCORE | UPPER_BOUND, 5, ts );
+    add_shallow_hash( my_bits, opp_bits, score, best_sq, ENDGAME_SCORE | UPPER_BOUND, 5 );
   else
-    add_shallow_hash( score, best_sq, ENDGAME_SCORE | EXACT_VALUE, 5, ts );
+    add_shallow_hash( my_bits, opp_bits, score, best_sq, ENDGAME_SCORE | EXACT_VALUE, 5 );
 #endif
   ts->ts_end_best_move = best_sq;
   return score;
@@ -545,7 +538,7 @@ solve_six_empty( ThreadState *ts,
 
 #if USE_SHALLOW_TT && (SHALLOW_TT_MIN_DEPTH <= 6)
   int tt_val;
-  if ( leaf_probe_shallow_tt( ts, 6, alpha, beta, NULL, &tt_val ) )
+  if ( leaf_probe_shallow_tt( ts, my_bits, opp_bits, 6, alpha, beta, NULL, &tt_val ) )
     return tt_val;
 #endif
 
@@ -588,23 +581,13 @@ solve_six_empty( ThreadState *ts,
     if ( flipped != 0 ) {
       FULL_ANDNOT( new_opp_bits, opp_bits, new_my_bits );
       new_disc_diff = -disc_diff - 2 * flipped - 1;
-#if USE_SHALLOW_TT && (SHALLOW_TT_MIN_DEPTH <= 5)
-      unsigned int diff1, diff2;
-      end_hash_diff( new_my_bits, my_bits, color, m, &diff1, &diff2 );
-      ts->ts_hash1 ^= diff1;
-      ts->ts_hash2 ^= diff2;
-#endif
       uint64_t next_empties = leaf_remove_empty_byte( empties, (unsigned int)(cand_sh & 0xFF) );
       ev = -solve_five_empty( ts, new_opp_bits, new_my_bits, next_empties,
 			      -beta, -alpha, new_disc_diff, LEAF_NEXT_STATE( state, m ) );
-#if USE_SHALLOW_TT && (SHALLOW_TT_MIN_DEPTH <= 5)
-      ts->ts_hash1 ^= diff1;
-      ts->ts_hash2 ^= diff2;
-#endif
       if ( ev >= beta ) {
 	ts->ts_end_best_move = m;
 #if USE_SHALLOW_TT && (SHALLOW_TT_MIN_DEPTH <= 6)
-	add_shallow_hash( ev, m, ENDGAME_SCORE | LOWER_BOUND, 6, ts );
+	add_shallow_hash( my_bits, opp_bits, ev, m, ENDGAME_SCORE | LOWER_BOUND, 6 );
 #endif
 	return ev;
       }
@@ -626,25 +609,16 @@ solve_six_empty( ThreadState *ts,
       return 0;
     }
     else {
-#if USE_SHALLOW_TT && (SHALLOW_TT_MIN_DEPTH <= 6)
-      ts->ts_hash1 ^= hash_flip_color1;
-      ts->ts_hash2 ^= hash_flip_color2;
-#endif
-      ev = -solve_six_empty( ts, opp_bits, my_bits, empties,
-			     -beta, -alpha, -disc_diff, LEAF_PASS_STATE( state ) );
-#if USE_SHALLOW_TT && (SHALLOW_TT_MIN_DEPTH <= 6)
-      ts->ts_hash1 ^= hash_flip_color1;
-      ts->ts_hash2 ^= hash_flip_color2;
-#endif
-      return ev;
+      return -solve_six_empty( ts, opp_bits, my_bits, empties,
+			       -beta, -alpha, -disc_diff, LEAF_PASS_STATE( state ) );
     }
   }
 
 #if USE_SHALLOW_TT && (SHALLOW_TT_MIN_DEPTH <= 6)
   if ( score <= in_alpha )
-    add_shallow_hash( score, best_sq, ENDGAME_SCORE | UPPER_BOUND, 6, ts );
+    add_shallow_hash( my_bits, opp_bits, score, best_sq, ENDGAME_SCORE | UPPER_BOUND, 6 );
   else
-    add_shallow_hash( score, best_sq, ENDGAME_SCORE | EXACT_VALUE, 6, ts );
+    add_shallow_hash( my_bits, opp_bits, score, best_sq, ENDGAME_SCORE | EXACT_VALUE, 6 );
 #endif
 
   ts->ts_end_best_move = best_sq;
@@ -679,7 +653,7 @@ solve_seven_empty( ThreadState *ts,
 
 #if USE_SHALLOW_TT && (SHALLOW_TT_MIN_DEPTH <= 7)
   int tt_move = 0, tt_val;
-  if ( leaf_probe_shallow_tt( ts, 7, alpha, beta, &tt_move, &tt_val ) )
+  if ( leaf_probe_shallow_tt( ts, my_bits, opp_bits, 7, alpha, beta, &tt_move, &tt_val ) )
     return tt_val;
 #endif
 
@@ -720,23 +694,13 @@ solve_seven_empty( ThreadState *ts,
     if ( flipped != 0 ) {
       FULL_ANDNOT( new_opp_bits, opp_bits, new_my_bits );
       new_disc_diff = -disc_diff - 2 * flipped - 1;
-#if USE_SHALLOW_TT && (SHALLOW_TT_MIN_DEPTH <= 6)
-      unsigned int diff1, diff2;
-      end_hash_diff( new_my_bits, my_bits, color, m, &diff1, &diff2 );
-      ts->ts_hash1 ^= diff1;
-      ts->ts_hash2 ^= diff2;
-#endif
       uint64_t next_empties = leaf_remove_empty_byte( empties, (unsigned int)(cand_sh & 0xFF) );
       ev = -solve_six_empty( ts, new_opp_bits, new_my_bits, next_empties,
 			     -beta, -alpha, new_disc_diff, LEAF_NEXT_STATE( state, m ) );
-#if USE_SHALLOW_TT && (SHALLOW_TT_MIN_DEPTH <= 6)
-      ts->ts_hash1 ^= diff1;
-      ts->ts_hash2 ^= diff2;
-#endif
       if ( ev >= beta ) {
 	ts->ts_end_best_move = m;
 #if USE_SHALLOW_TT && (SHALLOW_TT_MIN_DEPTH <= 7)
-	add_shallow_hash( ev, m, ENDGAME_SCORE | LOWER_BOUND, 7, ts );
+	add_shallow_hash( my_bits, opp_bits, ev, m, ENDGAME_SCORE | LOWER_BOUND, 7 );
 #endif
 	return ev;
       }
@@ -758,25 +722,16 @@ solve_seven_empty( ThreadState *ts,
       return 0;
     }
     else {
-#if USE_SHALLOW_TT && (SHALLOW_TT_MIN_DEPTH <= 7)
-      ts->ts_hash1 ^= hash_flip_color1;
-      ts->ts_hash2 ^= hash_flip_color2;
-#endif
-      ev = -solve_seven_empty( ts, opp_bits, my_bits, empties,
-			       -beta, -alpha, -disc_diff, LEAF_PASS_STATE( state ) );
-#if USE_SHALLOW_TT && (SHALLOW_TT_MIN_DEPTH <= 7)
-      ts->ts_hash1 ^= hash_flip_color1;
-      ts->ts_hash2 ^= hash_flip_color2;
-#endif
-      return ev;
+      return -solve_seven_empty( ts, opp_bits, my_bits, empties,
+				 -beta, -alpha, -disc_diff, LEAF_PASS_STATE( state ) );
     }
   }
 
 #if USE_SHALLOW_TT && (SHALLOW_TT_MIN_DEPTH <= 7)
   if ( score <= in_alpha )
-    add_shallow_hash( score, best_sq, ENDGAME_SCORE | UPPER_BOUND, 7, ts );
+    add_shallow_hash( my_bits, opp_bits, score, best_sq, ENDGAME_SCORE | UPPER_BOUND, 7 );
   else
-    add_shallow_hash( score, best_sq, ENDGAME_SCORE | EXACT_VALUE, 7, ts );
+    add_shallow_hash( my_bits, opp_bits, score, best_sq, ENDGAME_SCORE | EXACT_VALUE, 7 );
 #endif
 
   ts->ts_end_best_move = best_sq;
@@ -811,7 +766,7 @@ solve_eight_empty( ThreadState *ts,
 
 #if USE_SHALLOW_TT && (SHALLOW_TT_MIN_DEPTH <= 8)
   int tt_move = 0, tt_val;
-  if ( leaf_probe_shallow_tt( ts, 8, alpha, beta, &tt_move, &tt_val ) )
+  if ( leaf_probe_shallow_tt( ts, my_bits, opp_bits, 8, alpha, beta, &tt_move, &tt_val ) )
     return tt_val;
 #endif
 
@@ -860,23 +815,13 @@ solve_eight_empty( ThreadState *ts,
     if ( flipped != 0 ) {
       FULL_ANDNOT( new_opp_bits, opp_bits, new_my_bits );
       new_disc_diff = -disc_diff - 2 * flipped - 1;
-#if USE_SHALLOW_TT && (SHALLOW_TT_MIN_DEPTH <= 7)
-      unsigned int diff1, diff2;
-      end_hash_diff( new_my_bits, my_bits, color, m, &diff1, &diff2 );
-      ts->ts_hash1 ^= diff1;
-      ts->ts_hash2 ^= diff2;
-#endif
       uint64_t next_empties = leaf_remove_empty_byte( empties, (unsigned int)(cand_sh & 0xFF) );
       ev = -solve_seven_empty( ts, new_opp_bits, new_my_bits, next_empties,
 			       -beta, -alpha, new_disc_diff, LEAF_NEXT_STATE( state, m ) );
-#if USE_SHALLOW_TT && (SHALLOW_TT_MIN_DEPTH <= 7)
-      ts->ts_hash1 ^= diff1;
-      ts->ts_hash2 ^= diff2;
-#endif
       if ( ev >= beta ) {
 	ts->ts_end_best_move = m;
 #if USE_SHALLOW_TT && (SHALLOW_TT_MIN_DEPTH <= 8)
-	add_shallow_hash( ev, m, ENDGAME_SCORE | LOWER_BOUND, 8, ts );
+	add_shallow_hash( my_bits, opp_bits, ev, m, ENDGAME_SCORE | LOWER_BOUND, 8 );
 #endif
 	return ev;
       }
@@ -898,25 +843,16 @@ solve_eight_empty( ThreadState *ts,
       return 0;
     }
     else {
-#if USE_SHALLOW_TT && (SHALLOW_TT_MIN_DEPTH <= 8)
-      ts->ts_hash1 ^= hash_flip_color1;
-      ts->ts_hash2 ^= hash_flip_color2;
-#endif
-      ev = -solve_eight_empty( ts, opp_bits, my_bits, empties,
-			       -beta, -alpha, -disc_diff, LEAF_PASS_STATE( state ) );
-#if USE_SHALLOW_TT && (SHALLOW_TT_MIN_DEPTH <= 8)
-      ts->ts_hash1 ^= hash_flip_color1;
-      ts->ts_hash2 ^= hash_flip_color2;
-#endif
-      return ev;
+      return -solve_eight_empty( ts, opp_bits, my_bits, empties,
+				 -beta, -alpha, -disc_diff, LEAF_PASS_STATE( state ) );
     }
   }
 
 #if USE_SHALLOW_TT && (SHALLOW_TT_MIN_DEPTH <= 8)
   if ( score <= in_alpha )
-    add_shallow_hash( score, best_sq, ENDGAME_SCORE | UPPER_BOUND, 8, ts );
+    add_shallow_hash( my_bits, opp_bits, score, best_sq, ENDGAME_SCORE | UPPER_BOUND, 8 );
   else
-    add_shallow_hash( score, best_sq, ENDGAME_SCORE | EXACT_VALUE, 8, ts );
+    add_shallow_hash( my_bits, opp_bits, score, best_sq, ENDGAME_SCORE | EXACT_VALUE, 8 );
 #endif
 
   ts->ts_end_best_move = best_sq;
