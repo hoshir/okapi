@@ -1293,17 +1293,25 @@ end_order_moves_presearch( ThreadState *ts,
        nodes (empties >= ORDER_TS_MIN_DEPTH), providing tactical lookahead to avoid
        combinatorial tree explosion during both selective passes and exact solve. */
     if ( empties >= ORDER_TS_MIN_DEPTH ) {
-      /* Sort surv by evals descending so top candidates can be deepened */
-      for ( i = 1; i < surv_count; i++ ) {
-        CandidateMove tmp = surv[i];
-        int m_tmp = tmp.sq;
-        int ev_tmp = ev_stage[m_tmp];
-        int k = i - 1;
-        while ( k >= 0 && ev_stage[surv[k].sq] < ev_tmp ) {
-          surv[k + 1] = surv[k];
-          k--;
+      /* Partial selection of top 3 candidates by ev_stage[m] (ORDR-023):
+         search_order_ts inspects at most 3 candidates, so sorting surv[3..] is wasted work. */
+      int max_sel = (surv_count < 3) ? surv_count : 3;
+      for ( i = 0; i < max_sel; i++ ) {
+        int b_idx = i;
+        int b_ev = ev_stage[surv[i].sq];
+        for ( j = i + 1; j < surv_count; j++ ) {
+          int ev_j = ev_stage[surv[j].sq];
+          if ( ev_j > b_ev ) {
+            b_ev = ev_j;
+            b_idx = j;
+          }
         }
-        surv[k + 1] = tmp;
+        if ( b_idx != i ) {
+          CandidateMove tmp = surv[b_idx];
+          for ( j = b_idx; j > i; j-- )
+            surv[j] = surv[j - 1];
+          surv[i] = tmp;
+        }
       }
 
       int d = (empties < 18) ? 2 : (empties < 24) ? 3 : (empties < 28) ? 4 : 6;
@@ -1331,6 +1339,7 @@ end_order_moves_presearch( ThreadState *ts,
         end_hash_diff( surv[i].child_my_bits, my_bits, side_to_move, m, &diff1, &diff2 );
         ts->ts_hash1 ^= diff1;
         ts->ts_hash2 ^= diff2;
+        prefetch_hash_midgame_key( ts->ts_hash2 );
         {
           int flipped_cnt = (int) surv[i].flipped;
           BitBoard b_child = (side_to_move == BLACKSQ) ? surv[i].child_my_bits : surv[i].new_opp_bits;
@@ -1519,7 +1528,10 @@ end_search_nws( ThreadState *ts,
 
   if ( USE_MPC && (level > 2) && (selectivity > 0) && (use_end_cut[stage] > 0) ) {
     int cut;
-    sync_board_from_bitboards_ts( ts, my_bits, opp_bits, side_to_move, empties );
+    int board_synced = FALSE;
+    int fast_tt_ok = use_hash && ts->ts_allow_midgame_hash_probe &&
+                     (entry.draft != NO_HASH_MOVE) && (entry.flags & MIDGAME_SCORE) &&
+                     (entry.selectivity <= 0) && bb_valid_move( entry.move[0], my_bits, opp_bits );
     for ( cut = 0; cut < use_end_cut[stage]; cut++ ) {
       int shallow_remains = end_mpc_depth[stage][cut];
       int mpc_bias = ceil( end_mean[stage][shallow_remains] * 128.0 );
@@ -1527,6 +1539,29 @@ end_search_nws( ThreadState *ts,
 			     end_percentile[selectivity] * 128.0 );
       int beta_bound = 128 * beta + mpc_bias + mpc_window;
       int alpha_bound = 128 * alpha + mpc_bias - mpc_window;
+      if ( fast_tt_ok && (shallow_remains >= 3) && (entry.draft >= shallow_remains) &&
+	   (threads_count() == 1 || ((entry.draft & 1) == (shallow_remains & 1))) ) {
+	if ( (entry.flags & (EXACT_VALUE | LOWER_BOUND)) && entry.eval >= beta_bound ) {
+	  ts->ts_nodes.lo++;
+	  add_hash_ts( ts, ENDGAME_MODE, beta, 0,
+		       ENDGAME_SCORE | LOWER_BOUND, empties, selectivity );
+	  *selective_cutoff = TRUE;
+	  ts->ts_disks_played = saved_disks_played;
+	  return beta;
+	}
+	if ( (entry.flags & (EXACT_VALUE | UPPER_BOUND)) && entry.eval <= alpha_bound ) {
+	  ts->ts_nodes.lo++;
+	  add_hash_ts( ts, ENDGAME_MODE, alpha, 0,
+		       ENDGAME_SCORE | UPPER_BOUND, empties, selectivity );
+	  *selective_cutoff = TRUE;
+	  ts->ts_disks_played = saved_disks_played;
+	  return alpha;
+	}
+      }
+      if ( !board_synced ) {
+	sync_board_from_bitboards_ts( ts, my_bits, opp_bits, side_to_move, empties );
+	board_synced = TRUE;
+      }
       int shallow_val =
 	tree_search_ts( ts, level, level + shallow_remains, side_to_move,
 			alpha_bound, beta_bound, use_hash, FALSE, pass_legal );
@@ -1953,7 +1988,10 @@ end_search_pvs( ThreadState *ts,
   /* Use endgame multi-prob-cut to selectively prune the tree */
   if ( USE_MPC && (level > 2) && (selectivity > 0) && (use_end_cut[stage] > 0) ) {
     int cut;
-    sync_board_from_bitboards_ts( ts, my_bits, opp_bits, side_to_move, empties );
+    int board_synced = FALSE;
+    int fast_tt_ok = use_hash && ts->ts_allow_midgame_hash_probe &&
+                     (entry.draft != NO_HASH_MOVE) && (entry.flags & MIDGAME_SCORE) &&
+                     (entry.selectivity <= 0) && bb_valid_move( entry.move[0], my_bits, opp_bits );
     for ( cut = 0; cut < use_end_cut[stage]; cut++ ) {
 	int shallow_remains = end_mpc_depth[stage][cut];
 	int mpc_bias = ceil( end_mean[stage][shallow_remains] * 128.0 );
@@ -1961,6 +1999,29 @@ end_search_pvs( ThreadState *ts,
 			       end_percentile[selectivity] * 128.0 );
 	int beta_bound = 128 * beta + mpc_bias + mpc_window;
 	int alpha_bound = 128 * alpha + mpc_bias - mpc_window;
+	if ( fast_tt_ok && (shallow_remains >= 3) && (entry.draft >= shallow_remains) &&
+	     (threads_count() == 1 || ((entry.draft & 1) == (shallow_remains & 1))) ) {
+	  if ( (entry.flags & (EXACT_VALUE | LOWER_BOUND)) && entry.eval >= beta_bound ) {
+	    ts->ts_nodes.lo++;
+	    add_hash_ts( ts, ENDGAME_MODE, beta, 0,
+			 ENDGAME_SCORE | LOWER_BOUND, empties, selectivity );
+	    *selective_cutoff = TRUE;
+	    ts->ts_disks_played = saved_disks_played;
+	    return beta;
+	  }
+	  if ( (entry.flags & (EXACT_VALUE | UPPER_BOUND)) && entry.eval <= alpha_bound ) {
+	    ts->ts_nodes.lo++;
+	    add_hash_ts( ts, ENDGAME_MODE, alpha, 0,
+			 ENDGAME_SCORE | UPPER_BOUND, empties, selectivity );
+	    *selective_cutoff = TRUE;
+	    ts->ts_disks_played = saved_disks_played;
+	    return alpha;
+	  }
+	}
+	if ( !board_synced ) {
+	  sync_board_from_bitboards_ts( ts, my_bits, opp_bits, side_to_move, empties );
+	  board_synced = TRUE;
+	}
 	int shallow_val =
 	  tree_search_ts( ts, level, level + shallow_remains, side_to_move,
 			  alpha_bound, beta_bound, use_hash, FALSE, pass_legal );

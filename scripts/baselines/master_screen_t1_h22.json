@@ -2,7 +2,7 @@
   "mode": "screen",
   "threads": 1,
   "hash_bits": 22,
-  "created_at": "2026-10-16T19:10:45Z",
+  "created_at": "2026-10-16T20:43:02Z",
   "results": {
     "FFO #45": {
       "correct": true,
@@ -13,8 +13,8 @@
         "b2"
       ],
       "nodes": 172322398,
-      "time_sec": 5.4,
-      "nps": 31984990,
+      "time_sec": 5.3,
+      "nps": 32278992,
       "error": null
     },
     "FFO #50": {
@@ -26,8 +26,8 @@
         "d8"
       ],
       "nodes": 437155538,
-      "time_sec": 19.5,
-      "nps": 22407798,
+      "time_sec": 20.2,
+      "nps": 21599962,
       "error": null
     }
   }

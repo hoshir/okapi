@@ -293,6 +293,7 @@ make_move_bb_ts( ThreadState *ts, int side_to_move, int move, int update_hash ) 
       h_acc ^= hash_flip_bit[FIRST_BIT( m )];
     ts->ts_hash1 ^= (unsigned int) h_acc;
     ts->ts_hash2 ^= (unsigned int) (h_acc >> 32);
+    prefetch_hash_midgame_key( ts->ts_hash2 );
   }
 
   memcpy( ts->ts_eval_pattern_stored[dp], ts->ts_eval_pattern_index,
