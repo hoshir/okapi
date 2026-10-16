@@ -82,7 +82,7 @@ extern unsigned int hash_trans2;
 extern CompactHashEntry *hash_table;
 
 extern int shallow_hash_mask;
-extern CompactHashEntry *shallow_hash_table;
+extern unsigned long long *shallow_hash_table;
 
 
 static INLINE void
@@ -98,14 +98,6 @@ prefetch_hash_midgame_key( unsigned int h2 ) {
   if ( hash_table != NULL ) {
     unsigned int code1 = h2 ^ hash_trans2;
     __builtin_prefetch( &hash_table[code1 & (hash_mask & ~3)], 0, 3 );
-  }
-}
-
-static INLINE void
-prefetch_shallow_hash_key( unsigned int h2 ) {
-  if ( shallow_hash_table != NULL ) {
-    unsigned int code1 = h2 ^ hash_trans2;
-    __builtin_prefetch( &shallow_hash_table[code1 & shallow_hash_mask], 0, 3 );
   }
 }
 
@@ -203,7 +195,7 @@ find_hash( HashEntry *entry, int reverse_mode );
 void
 find_hash_key( HashEntry *entry, unsigned int h1, unsigned int h2 );
 
-#define DEFAULT_SHALLOW_HASH_BITS    19
+#define DEFAULT_SHALLOW_HASH_BITS    20
 #define KEY1_MASK                    0xFF000000u
 
 void
@@ -215,53 +207,52 @@ free_shallow_hash( void );
 void
 clear_shallow_hash( void );
 
-static ALWAYS_INLINE void
-find_shallow_hash( HashEntry *entry, const ThreadState *ts ) {
-  int index;
-  unsigned int code1, code2;
-  unsigned int k2_raw, k1_p, mv;
-  int ev;
+/*
+  64-bit Packed Shallow Hash Entry Layout (8 bytes/entry, partitioned by draft & 3):
+  Bits [63:32]: code2 (32 bits)
+  Bits [31:24]: code1 & 0xFF000000u (8 bits)
+  Bits [23:16]: score as signed char (8 bits, range -64..+64)
+  Bits [15: 8]: best move (8 bits, range 0..88)
+  Bits [ 7: 4]: flags & 0x0F (4 bits: EXACT_VALUE=1, LOWER_BOUND=2, UPPER_BOUND=4)
+  Bits [ 3: 0]: draft & 0x0F (4 bits: 5..8, 0=empty)
+*/
+#define SHALLOW_TAG_DRAFT_MASK 0xFFFFFFFFFF00000FULL
 
-  if ( shallow_hash_table == NULL ) {
-    entry->draft = NO_HASH_MOVE;
-    entry->flags = UPPER_BOUND;
-    entry->eval = 12345678;
-    entry->move[0] = 0;
-    return;
+static ALWAYS_INLINE int
+probe_shallow_hash_draft( const ThreadState *ts,
+                          int draft,
+                          int alpha,
+                          int beta,
+                          int *tt_move,
+                          int *tt_val ) {
+  if ( shallow_hash_table == NULL )
+    return FALSE;
+
+  unsigned int code1 = ts->ts_hash2 ^ hash_trans2;
+  unsigned int code2 = ts->ts_hash1 ^ hash_trans1;
+  unsigned int index = (code1 & (unsigned int)shallow_hash_mask) | (unsigned int)(draft & 3);
+  unsigned long long expected = ((unsigned long long) code2 << 32) |
+                                (unsigned long long)(code1 & KEY1_MASK) |
+                                (unsigned long long)(draft & 0x0F);
+  unsigned long long raw = __atomic_load_n( &shallow_hash_table[index], __ATOMIC_RELAXED );
+
+  if ( (raw & SHALLOW_TAG_DRAFT_MASK) != expected )
+    return FALSE;
+
+  int ev = (int)(signed char)(raw >> 16);
+  int mv = (int)((raw >> 8) & 0xFF);
+  int flags = (int)((raw >> 4) & 0x0F);
+
+  if ( (flags & EXACT_VALUE) ||
+       ((flags & LOWER_BOUND) && ev >= beta) ||
+       ((flags & UPPER_BOUND) && ev <= alpha) ) {
+    ((ThreadState *)ts)->ts_end_best_move = mv;
+    *tt_val = ev;
+    return TRUE;
   }
-
-  code1 = ts->ts_hash2 ^ hash_trans2;
-  code2 = ts->ts_hash1 ^ hash_trans1;
-
-  index = code1 & shallow_hash_mask;
-
-  k2_raw = __atomic_load_n( &shallow_hash_table[index].key2, __ATOMIC_ACQUIRE );
-  ev = __atomic_load_n( &shallow_hash_table[index].eval, __ATOMIC_RELAXED );
-  mv = __atomic_load_n( &shallow_hash_table[index].moves, __ATOMIC_RELAXED );
-  k1_p = __atomic_load_n( &shallow_hash_table[index].key1_selectivity_flags_draft, __ATOMIC_RELAXED );
-
-  if ( ((k2_raw ^ (unsigned int) ev ^ mv ^ k1_p) == code2) &&
-       (((k1_p ^ code1) & KEY1_MASK) == 0) ) {
-    entry->key2 = code2;
-    entry->eval = ev;
-    entry->move[0] = mv & 255;
-    entry->move[1] = (mv >> 8) & 255;
-    entry->move[2] = (mv >> 16) & 255;
-    entry->move[3] = (mv >> 24) & 255;
-    entry->key1 = k1_p & KEY1_MASK;
-    entry->selectivity = (k1_p & 0x00ffffff) >> 16;
-    entry->flags = (k1_p & 0x0000ffff) >> 8;
-    entry->draft = (k1_p & DRAFT_VALUE_MASK);
-    return;
-  }
-
-  entry->draft = NO_HASH_MOVE;
-  entry->flags = UPPER_BOUND;
-  entry->eval = 12345678;
-  entry->move[0] = 0;
-  entry->move[1] = 0;
-  entry->move[2] = 0;
-  entry->move[3] = 0;
+  if ( (tt_move != NULL) && (flags & (LOWER_BOUND | EXACT_VALUE)) )
+    *tt_move = mv;
+  return FALSE;
 }
 
 static ALWAYS_INLINE void
@@ -270,26 +261,20 @@ add_shallow_hash( int score,
 		  int flags,
 		  int draft,
 		  const ThreadState *ts ) {
-  unsigned int index;
-  unsigned int code1, code2;
-
   if ( shallow_hash_table == NULL )
     return;
 
-  code1 = ts->ts_hash2 ^ hash_trans2;
-  code2 = ts->ts_hash1 ^ hash_trans1;
-  index = code1 & shallow_hash_mask;
+  unsigned int code1 = ts->ts_hash2 ^ hash_trans2;
+  unsigned int code2 = ts->ts_hash1 ^ hash_trans1;
+  unsigned int index = (code1 & (unsigned int)shallow_hash_mask) | (unsigned int)(draft & 3);
+  unsigned long long packed = ((unsigned long long) code2 << 32) |
+                              (unsigned long long)(code1 & KEY1_MASK) |
+                              ((unsigned long long)(unsigned char)(signed char)score << 16) |
+                              ((unsigned long long)(best & 0xFF) << 8) |
+                              ((unsigned long long)(flags & 0x0F) << 4) |
+                              (unsigned long long)(draft & 0x0F);
 
-  unsigned int clamped_draft = (unsigned int)(draft < 0 ? 0 : (draft > DRAFT_VALUE_MASK ? DRAFT_VALUE_MASK : draft));
-  unsigned int draft_gen = clamped_draft | (((unsigned int) __atomic_load_n( &hash_generation, __ATOMIC_RELAXED ) & 0x03) << DRAFT_GEN_SHIFT);
-  unsigned int k1_packed = (code1 & KEY1_MASK) + ((unsigned int)(short)flags << 8) + draft_gen;
-  unsigned int moves = (unsigned int)best;
-  unsigned int xor_key2 = code2 ^ (unsigned int) score ^ moves ^ k1_packed;
-
-  __atomic_store_n( &shallow_hash_table[index].eval, score, __ATOMIC_RELAXED );
-  __atomic_store_n( &shallow_hash_table[index].moves, moves, __ATOMIC_RELAXED );
-  __atomic_store_n( &shallow_hash_table[index].key1_selectivity_flags_draft, k1_packed, __ATOMIC_RELAXED );
-  __atomic_store_n( &shallow_hash_table[index].key2, xor_key2, __ATOMIC_RELEASE );
+  __atomic_store_n( &shallow_hash_table[index], packed, __ATOMIC_RELAXED );
 }
 
 
