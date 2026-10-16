@@ -729,7 +729,9 @@ end_search_sibling( SplitPoint *sp, int idx ) {
 
   int child_disc_diff = -sp->disc_diff - 2 * flipped - 1;
 
-  ts->ts_split_nesting++;
+  int saved_nesting = ts->ts_split_nesting;
+  int saved_disks_played = ts->ts_disks_played;
+  ts->ts_split_nesting = sp->nesting + 1;
   ts->ts_disks_played = 60 - sp->empties;
   score = -end_search_nws( ts, new_opp_bits, new_my_bits,
                            -(cur_alpha + 1),
@@ -740,7 +742,8 @@ end_search_sibling( SplitPoint *sp, int idx ) {
                            sp->level + 1,
                            sp->selectivity,
                            &child_selective_cutoff );
-  ts->ts_split_nesting--;
+  ts->ts_split_nesting = saved_nesting;
+  ts->ts_disks_played = saved_disks_played;
 
   end_unmake_move( ts, move, diff1, diff2 );
 
@@ -853,6 +856,7 @@ dispatch_siblings( ThreadState *ts,
   sp->empties = empties;
   sp->disc_diff = disc_diff;
   sp->level = level;
+  sp->nesting = ts->ts_split_nesting;
   sp->selectivity = selectivity;
   atomic_init( &sp->alpha, alpha );
   sp->beta = beta;
@@ -864,9 +868,22 @@ dispatch_siblings( ThreadState *ts,
   sp->search_fn = end_search_sibling;
   sp->parent = current_split_point;
 
+  unsigned int saved_h1 = ts->ts_hash1;
+  unsigned int saved_h2 = ts->ts_hash2;
+  unsigned int saved_par = ts->ts_region_parity;
+  BitBoard saved_mask = ts->ts_empty_order_mask;
+  int saved_nesting = ts->ts_split_nesting;
+
   (void) __sync_fetch_and_add( &active_splits, 1 );
   ybwc_split( sp );
   (void) __sync_fetch_and_sub( &active_splits, 1 );
+
+  ts->ts_hash1 = saved_h1;
+  ts->ts_hash2 = saved_h2;
+  ts->ts_region_parity = saved_par;
+  ts->ts_empty_order_mask = saved_mask;
+  ts->ts_disks_played = stage;
+  ts->ts_split_nesting = saved_nesting;
 
   int final_alpha = atomic_load_explicit( &sp->alpha, memory_order_acquire );
   int found_cutoff = FALSE;
