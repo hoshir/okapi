@@ -196,6 +196,15 @@ if [ "$MODE" = "quick" ]; then
   else
     echo "ok    FFO#40 (1t node gate): $ffo40_nodes nodes <= $ffo40_max_nodes"
   fi
+
+  mid_smp_out=$(cd build/bin && printf "%s\n" "$ffo40_pos" | \
+    ./scrzebra -n 4 -h 18 -l 8 0 0 -e 1 -line 1 -script /dev/stdin /dev/stdout 2>&1)
+  if printf "%s\n" "$mid_smp_out" | grep -Eq '210\.94|\*[[:space:]]*8'; then
+    echo "FAIL  midgame SMP (4t depth 8): corrupted SEARCH_ABORT score or spurious abort flag"
+    failed=1
+  else
+    echo "ok    midgame SMP (4t depth 8): clean completion and valid evaluation"
+  fi
 fi
 
 if [ -n "$failed" ]; then

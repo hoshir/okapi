@@ -1,62 +1,8 @@
 {
-  "verdict": "NEEDS_FULL",
-  "reason": "Screening showed promising node reduction (-0.78%). Proceed to --mode full.",
-  "tests_passed": true,
-  "all_correct": true,
   "mode": "screen",
   "threads": 8,
   "hash_bits": 22,
-  "simplification_mode": false,
-  "baseline_stale": false,
-  "provenance": {
-    "commit": "ec4f6ce1afd488ba7300e6ae2e3e6aeabca743b0",
-    "src_dirty": true,
-    "binary_mtime": 1792117654.1911783,
-    "written_at": 1792117957.4614432,
-    "argv": [
-      "scripts/eval_candidate.py",
-      "--mode",
-      "screen",
-      "--threads",
-      "8",
-      "--hash-bits",
-      "22",
-      "--skip-tests",
-      "--save-json",
-      "scripts/baselines/master_screen_t8_h22.json"
-    ]
-  },
-  "heavy_threshold": 3.0,
-  "totals": {
-    "total_nodes": 647275776,
-    "total_time": 5.6
-  },
-  "summary": {
-    "total_candidate_nodes": 647275776,
-    "total_baseline_nodes": 652371934,
-    "total_node_delta_pct": -0.78,
-    "total_candidate_time": 5.6,
-    "total_baseline_time": 5.5,
-    "total_time_delta_pct": 1.82
-  },
-  "comparison": {
-    "FFO #45": {
-      "candidate_nodes": 193020003,
-      "baseline_nodes": 198854146,
-      "node_delta_pct": -2.93,
-      "candidate_time": 1.4,
-      "baseline_time": 1.4,
-      "time_delta_pct": 0.0
-    },
-    "FFO #50": {
-      "candidate_nodes": 454255773,
-      "baseline_nodes": 453517788,
-      "node_delta_pct": 0.16,
-      "candidate_time": 4.2,
-      "baseline_time": 4.1,
-      "time_delta_pct": 2.44
-    }
-  },
+  "created_at": "2026-10-16T06:03:30Z",
   "results": {
     "FFO #45": {
       "correct": true,
@@ -66,9 +12,9 @@
       "expected_moves": [
         "b2"
       ],
-      "nodes": 193020003,
+      "nodes": 194718352,
       "time_sec": 1.4,
-      "nps": 138519305,
+      "nps": 138076872,
       "error": null
     },
     "FFO #50": {
@@ -79,9 +25,9 @@
       "expected_moves": [
         "d8"
       ],
-      "nodes": 454255773,
+      "nodes": 448395886,
       "time_sec": 4.2,
-      "nps": 108871369,
+      "nps": 106117675,
       "error": null
     }
   }
