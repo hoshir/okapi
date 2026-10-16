@@ -3,7 +3,7 @@
 
    Created:       2026
 
-   Contents:      Leaf solvers (4 to 7 empty squares) for the endgame search.
+   Contents:      Leaf solvers (1 to 8 empty squares) for the endgame search.
 */
 
 #ifndef END_LEAF_H
@@ -85,106 +85,15 @@ end_hash_diff( const BitBoard new_my_bits, const BitBoard my_bits,
 }
 
 int
-solve_two_empty( ThreadState *ts,
-		 BitBoard my_bits,
-		 BitBoard opp_bits,
-		 int sq1,
-		 int sq2,
-		 int alpha,
-		 int beta,
-		 int disc_diff,
-		 int pass_legal );
-
-int
-solve_three_empty( ThreadState *ts,
-		   BitBoard my_bits,
-		   BitBoard opp_bits,
-		   int sq1,
-		   int sq2,
-		   int sq3,
-		   int alpha,
-		   int beta,
-		   int disc_diff,
-		   int pass_legal );
-
-int
-solve_four_empty( ThreadState *ts,
-		  BitBoard my_bits,
-		  BitBoard opp_bits,
-		  int sq1,
-		  int sq2,
-		  int sq3,
-		  int sq4,
-		  int alpha,
-		  int beta,
-		  int disc_diff,
-		  int pass_legal );
-
-int
-solve_five_empty( ThreadState *ts,
-		  BitBoard my_bits,
-		  BitBoard opp_bits,
-		  int sq1,
-		  int sq2,
-		  int sq3,
-		  int sq4,
-		  int sq5,
-		  int alpha,
-		  int beta,
-		  int color,
-		  int disc_diff,
-		  int pass_legal );
-
-int
-solve_six_empty( ThreadState *ts,
-		 BitBoard my_bits,
-		 BitBoard opp_bits,
-		 int sq1,
-		 int sq2,
-		 int sq3,
-		 int sq4,
-		 int sq5,
-		 int sq6,
-		 int alpha,
-		 int beta,
-		 int color,
-		 int disc_diff,
-		 int pass_legal );
-
-int
-solve_seven_empty( ThreadState *ts,
-		   BitBoard my_bits,
-		   BitBoard opp_bits,
-		   int sq1,
-		   int sq2,
-		   int sq3,
-		   int sq4,
-		   int sq5,
-		   int sq6,
-		   int sq7,
-		   int alpha,
-		   int beta,
-		   int color,
-		   int disc_diff,
-		   int pass_legal );
-
-int
-solve_eight_empty( ThreadState *ts,
-		   BitBoard my_bits,
-		   BitBoard opp_bits,
-		   int sq1,
-		   int sq2,
-		   int sq3,
-		   int sq4,
-		   int sq5,
-		   int sq6,
-		   int sq7,
-		   int sq8,
-		   int alpha,
-		   int beta,
-		   int color,
-		   int disc_diff,
-		   int pass_legal );
+solve_parity( ThreadState *ts,
+	      BitBoard my_bits,
+	      BitBoard opp_bits,
+	      int alpha,
+	      int beta,
+	      int color,
+	      int empties,
+	      int disc_diff,
+	      int pass_legal );
 
 #ifdef __cplusplus
 }
