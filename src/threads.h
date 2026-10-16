@@ -31,7 +31,6 @@ typedef void (*SplitWorkerFn)( SplitPoint *sp, int move_idx );
 struct SplitPoint {
   BitBoard my_bits;
   BitBoard opp_bits;
-  BitBoard saved_stable[3];
   int side_to_move;
   int empties;
   int disc_diff;

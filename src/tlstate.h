@@ -85,12 +85,8 @@ typedef struct {
   unsigned int ts_region_parity;
   int ts_end_best_move, ts_end_best_root_move;
 
-  /* Monotonically tracked stable discs along the search path, indexed by [color][level]. */
-  BitBoard stable_discs[3][MAX_SEARCH_DEPTH + 1];
-
-  /* Cached flip bitboards, stable disc masks, and endgame interior state per search level. */
+  /* Cached flip bitboards and endgame interior state per search level. */
   BitBoard ts_cached_flips[MAX_SEARCH_DEPTH + 1][100];
-  BitBoard ts_cached_stable[MAX_SEARCH_DEPTH + 1][100];
   int ts_cached_flipped[MAX_SEARCH_DEPTH + 1][100];
   int ts_split_nesting;
   double ts_last_panic_check;
