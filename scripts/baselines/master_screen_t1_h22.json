@@ -1,62 +1,8 @@
 {
-  "verdict": "NEUTRAL",
-  "reason": "Node counts remained virtually unchanged (+0.00% within [-0.5%, +0.5%]).",
-  "tests_passed": true,
-  "all_correct": true,
   "mode": "screen",
   "threads": 1,
   "hash_bits": 22,
-  "simplification_mode": false,
-  "baseline_stale": false,
-  "provenance": {
-    "commit": "ec4f6ce1afd488ba7300e6ae2e3e6aeabca743b0",
-    "src_dirty": true,
-    "binary_mtime": 1792117654.1911783,
-    "written_at": 1792117951.701493,
-    "argv": [
-      "scripts/eval_candidate.py",
-      "--mode",
-      "screen",
-      "--threads",
-      "1",
-      "--hash-bits",
-      "22",
-      "--skip-tests",
-      "--save-json",
-      "scripts/baselines/master_screen_t1_h22.json"
-    ]
-  },
-  "heavy_threshold": 3.0,
-  "totals": {
-    "total_nodes": 609084147,
-    "total_time": 26.1
-  },
-  "summary": {
-    "total_candidate_nodes": 609084147,
-    "total_baseline_nodes": 609084147,
-    "total_node_delta_pct": 0.0,
-    "total_candidate_time": 26.1,
-    "total_baseline_time": 26.7,
-    "total_time_delta_pct": -2.25
-  },
-  "comparison": {
-    "FFO #45": {
-      "candidate_nodes": 172303563,
-      "baseline_nodes": 172303563,
-      "node_delta_pct": 0.0,
-      "candidate_time": 5.8,
-      "baseline_time": 5.8,
-      "time_delta_pct": 0.0
-    },
-    "FFO #50": {
-      "candidate_nodes": 436780584,
-      "baseline_nodes": 436780584,
-      "node_delta_pct": 0.0,
-      "candidate_time": 20.3,
-      "baseline_time": 20.9,
-      "time_delta_pct": -2.87
-    }
-  },
+  "created_at": "2026-10-16T06:03:25Z",
   "results": {
     "FFO #45": {
       "correct": true,
@@ -67,8 +13,8 @@
         "b2"
       ],
       "nodes": 172303563,
-      "time_sec": 5.8,
-      "nps": 29725956,
+      "time_sec": 6.0,
+      "nps": 28904664,
       "error": null
     },
     "FFO #50": {
@@ -80,8 +26,8 @@
         "d8"
       ],
       "nodes": 436780584,
-      "time_sec": 20.3,
-      "nps": 21510307,
+      "time_sec": 20.6,
+      "nps": 21234875,
       "error": null
     }
   }

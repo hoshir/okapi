@@ -1129,43 +1129,37 @@ dispatch_siblings( ThreadState *ts,
 		   int side_to_move, int level, int empties,
 		   int disc_diff, int alpha, int beta,
 		   int selectivity, int searched_move,
-		   const int *hash_moves, int hash_hit,
-		   int pre_search_done,
+		   const int *best_list, int best_list_length,
 		   int *proven, int *proven_score, int *proven_cutoff,
 		   int *cutoff_move, int *cutoff_score, int *cutoff_selective ) {
   SplitPoint *sp = ybwc_get_split_point( thread_id, ts->ts_split_nesting );
   int count = 0;
   int used[100];
   int i, sq;
-  BitBoard dummy_flips;
   int stage = ts->ts_disks_played;
 
   for ( i = 0; i < 100; i++ )
     used[i] = FALSE;
   used[searched_move] = TRUE;
 
-  /* 1. First priority: remaining moves in TT entry (hash_moves[0..3]) */
-  if ( hash_hit ) {
-    for ( i = 0; i < 4; i++ ) {
-      sq = hash_moves[i];
-      if ( (unsigned int) sq < 100 && !used[sq] &&
-	   !((my_bits | opp_bits) & square_mask[sq]) &&
-	   (TestFlips_wrapper_to( sq, my_bits, opp_bits, &dummy_flips ) > 0) ) {
-	used[sq] = TRUE;
-	if ( count < MAX_ROOT_MOVES )
-	  sp->moves[count++] = sq;
-      }
+  /* 1. First priority: any remaining move in best_list (e.g. TT move at root) */
+  for ( i = 0; i < best_list_length; i++ ) {
+    sq = best_list[i];
+    if ( (unsigned int) sq < 100 && !used[sq] ) {
+      used[sq] = TRUE;
+      if ( count < MAX_ROOT_MOVES )
+	sp->moves[count++] = sq;
     }
   }
 
-  /* 2. Second priority: remaining legal moves */
-  if ( pre_search_done ) {
+  /* 2. Second priority: remaining legal moves ordered by end_order_moves_presearch */
+  {
     int rem_moves[MAX_ROOT_MOVES];
     int rem_count = 0;
     int mcnt = move_count[stage];
     const int *mlist = move_list[stage];
     const int *ev = evals[stage];
-    for ( i = 0; i < mcnt; i++ ) {
+    for ( i = best_list_length; i < mcnt; i++ ) {
       sq = mlist[i];
       if ( !used[sq] ) {
 	rem_moves[rem_count++] = sq;
@@ -1189,17 +1183,6 @@ dispatch_siblings( ThreadState *ts,
       }
       if ( count < MAX_ROOT_MOVES )
 	sp->moves[count++] = rem_moves[i];
-    }
-  } else {
-    const int *smo = sorted_move_order[stage];
-    for ( i = 0; i < MOVE_ORDER_SIZE; i++ ) {
-      sq = smo[i];
-      if ( !used[sq] && !((my_bits | opp_bits) & square_mask[sq]) &&
-	   (TestFlips_wrapper_to( sq, my_bits, opp_bits, &dummy_flips ) > 0) ) {
-	used[sq] = TRUE;
-	if ( count < MAX_ROOT_MOVES )
-	  sp->moves[count++] = sq;
-      }
     }
   }
 
@@ -1996,6 +1979,26 @@ end_search_nws( ThreadState *ts,
 	 (ts->ts_split_nesting <= MAX_SPLIT_NESTING) && (threads_count() > 1) &&
 	 (threads_idle_count() > 0) &&
 	 !is_panic_abort() && !force_return ) {
+      if ( !pre_search_done ) {
+	int etc_cutoff_score = 0;
+	if ( end_order_moves_presearch( ts, level, empties, side_to_move,
+					my_bits, opp_bits, beta, alpha,
+					selectivity, use_hash,
+					&hash_move, best_list_length,
+					FALSE, proven, proven_score,
+					&etc_tried,
+					&etc_cutoff_score ) ) {
+	  if ( selectivity > 0 )
+	    *selective_cutoff = TRUE;
+	  if ( use_hash )
+	    add_hash_ts( ts, ENDGAME_MODE, etc_cutoff_score, etc_tried,
+			 ENDGAME_SCORE | LOWER_BOUND, empties,
+			 *selective_cutoff ? selectivity : 0 );
+	  ts->ts_disks_played = saved_disks_played;
+	  return etc_cutoff_score;
+	}
+	pre_search_done = TRUE;
+      }
       can_split = TRUE;
       for ( i = 0; i < 100; i++ )
 	proven[i] = FALSE;
@@ -2003,7 +2006,7 @@ end_search_nws( ThreadState *ts,
       int cut_move = 0, cut_score = 0, cut_selective = 0;
       if ( dispatch_siblings( ts, my_bits, opp_bits, side_to_move, level,
 			      empties, disc_diff, alpha, beta, selectivity, move,
-			      entry.move, hash_hit, pre_search_done,
+			      &hash_move, best_list_length,
 			      proven, proven_score, proven_cutoff,
 			      &cut_move, &cut_score, &cut_selective ) ) {
 	*selective_cutoff = cut_selective;
@@ -2353,6 +2356,8 @@ end_search_pvs( ThreadState *ts,
     if ( !first && can_split && proven[move] && (proven_score[move] <= MAX( best, curr_alpha )) ) {
       curr_alpha = MAX( best, curr_alpha );
       curr_val = proven_score[move];
+      if ( curr_val > best )
+	best = curr_val;
       child_selective_cutoff = proven_cutoff[move];
     }
     else {
@@ -2475,6 +2480,30 @@ end_search_pvs( ThreadState *ts,
 	 (ts->ts_split_nesting <= MAX_SPLIT_NESTING) && (threads_count() > 1) &&
 	 (threads_idle_count() > 0) &&
 	 !is_panic_abort() && !force_return ) {
+      if ( !pre_search_done ) {
+	int etc_cutoff_score = 0;
+	if ( end_order_moves_presearch( ts, level, empties, side_to_move,
+					my_bits, opp_bits, beta, curr_alpha,
+					selectivity, use_hash,
+					best_list, best_list_length,
+					FALSE, proven, proven_score,
+					&etc_tried,
+					&etc_cutoff_score ) ) {
+	  if ( selectivity > 0 )
+	    *selective_cutoff = TRUE;
+	  if ( use_hash )
+	    add_hash_ts( ts, ENDGAME_MODE, etc_cutoff_score, etc_tried,
+			 ENDGAME_SCORE | LOWER_BOUND, empties,
+			 *selective_cutoff ? selectivity : 0 );
+	  pv_depth[level] = level + 1;
+	  pv[level][level] = etc_tried;
+	  if ( level == 0 )
+	    ts->ts_end_best_root_move = etc_tried;
+	  ts->ts_disks_played = saved_disks_played;
+	  return etc_cutoff_score;
+	}
+	pre_search_done = TRUE;
+      }
       can_split = TRUE;
       for ( i = 0; i < 100; i++ )
 	proven[i] = FALSE;
@@ -2482,7 +2511,7 @@ end_search_pvs( ThreadState *ts,
       int cut_move = 0, cut_score = 0, cut_selective = 0;
       if ( dispatch_siblings( ts, my_bits, opp_bits, side_to_move, level,
 			      empties, disc_diff, curr_alpha, beta, selectivity, move,
-			      entry.move, hash_hit, pre_search_done,
+			      best_list, best_list_length,
 			      proven, proven_score, proven_cutoff,
 			      &cut_move, &cut_score, &cut_selective ) ) {
 	best = cut_score;

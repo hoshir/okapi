@@ -75,7 +75,7 @@
 
 
 static _Thread_local int allow_midgame_hash_probe = TRUE;
-static _Thread_local int allow_midgame_hash_update;
+static _Thread_local int allow_midgame_hash_update = TRUE;
 static _Thread_local int midgame_full_width_depth = FULL_WIDTH_DEPTH;
 static _Thread_local int best_mid_move, best_mid_root_move;
 static _Thread_local int midgame_abort;
@@ -1419,7 +1419,7 @@ smp_search_job( int index, void *context ) {
                                       TRUE, ctx->enable_mpc, ctx->void_legal );
     smp_request_stop();
   }
-  else {
+  else if ( thread_id > 0 && !smp_stop ) {
     tls = ctx->root_tls;
     reset_counter( &nodes );
 
@@ -1437,9 +1437,9 @@ smp_search_job( int index, void *context ) {
       helper_depth = ctx->depth + 1;
     }
 
-    (void) root_tree_search( 0, helper_depth, ctx->side_to_move,
-                             helper_alpha, helper_beta,
-                             TRUE, ctx->enable_mpc, ctx->void_legal );
+    (void) tree_search( 0, helper_depth, ctx->side_to_move,
+                        helper_alpha, helper_beta,
+                        TRUE, ctx->enable_mpc, ctx->void_legal );
   }
 }
 
@@ -1469,6 +1469,8 @@ middle_game( int side_to_move, int max_depth,
 
   piece_count[BLACKSQ][disks_played] = disc_count( BLACKSQ );
   piece_count[WHITESQ][disks_played] = disc_count( WHITESQ );
+  determine_pattern_indices();
+  set_board_bits();
   base_stage = disc_count( BLACKSQ ) + disc_count( WHITESQ ) - 4;
 
   val = 0;
@@ -1524,6 +1526,7 @@ middle_game( int side_to_move, int max_depth,
       smp_clear_stop();
 
       threads_run( smp_search_job, &ctx, threads_count() );
+      smp_clear_stop();
       val = ctx.main_val;
 
       if ( !force_return && !is_panic_abort() &&
@@ -1533,6 +1536,7 @@ middle_game( int side_to_move, int max_depth,
         ctx.beta = INFINITE_EVAL;
         smp_clear_stop();
         threads_run( smp_search_job, &ctx, threads_count() );
+        smp_clear_stop();
         val = ctx.main_val;
       }
     }
