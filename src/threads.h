@@ -40,7 +40,7 @@ struct SplitPoint {
   int beta;
   unsigned int sp_hash1, sp_hash2;
   unsigned int sp_region_parity;
-  MoveLink sp_end_move_list[100];
+  BitBoard sp_empty_order_mask;
 
   int moves[MAX_ROOT_MOVES];
   int move_count;

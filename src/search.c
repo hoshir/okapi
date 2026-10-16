@@ -629,7 +629,7 @@ search_state_save( SearchState *state ) {
   state->saved_hash1 = hash1;
   state->saved_hash2 = hash2;
   state->saved_disks_played = disks_played;
-  memcpy( state->saved_end_move_list, end_move_list, sizeof( end_move_list ) );
+  state->saved_empty_order_mask = empty_order_mask;
   state->saved_region_parity = region_parity;
 }
 
@@ -648,7 +648,7 @@ search_state_load( const SearchState *state ) {
   hash1 = state->saved_hash1;
   hash2 = state->saved_hash2;
   disks_played = state->saved_disks_played;
-  memcpy( end_move_list, state->saved_end_move_list, sizeof( end_move_list ) );
+  empty_order_mask = state->saved_empty_order_mask;
   region_parity = state->saved_region_parity;
   determine_pattern_indices();
   set_board_bits();

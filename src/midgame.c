@@ -365,6 +365,7 @@ fast_tree_search( ThreadState *ts, int level, int max_depth, int side_to_move, i
   if ( use_hash && ts->ts_allow_midgame_hash_probe ) {
     find_hash_key( &entry, ts->ts_hash1, ts->ts_hash2 );
     if ( (entry.draft >= remains) &&
+	 (threads_count() == 1 || ((entry.draft & 1) == (remains & 1))) &&
 	 (entry.selectivity == 0) &&
 	 valid_move_bb_ts( ts, entry.move[0], side_to_move ) &&
 	 (entry.flags & MIDGAME_SCORE) &&
@@ -641,6 +642,7 @@ tree_search_ts( ThreadState *ts,
   if ( use_hash && ts->ts_allow_midgame_hash_probe ) {
     find_hash_key( &entry, ts->ts_hash1, ts->ts_hash2 );
     if ( (entry.draft >= remains) &&
+	 (threads_count() == 1 || ((entry.draft & 1) == (remains & 1))) &&
 	 (entry.selectivity <= selectivity) &&
 	 valid_move_bb_ts( ts, entry.move[0], side_to_move ) &&
 	 (entry.flags & MIDGAME_SCORE) &&
@@ -704,6 +706,8 @@ tree_search_ts( ThreadState *ts,
 	    tree_search_ts( ts, level, level + shallow_remains, side_to_move,
 			    alpha_bound, beta_bound, allow_hash, FALSE,
 			    void_legal );
+	  if ( is_panic_abort() || force_return || smp_stop )
+	    return SEARCH_ABORT;
 	  if ( shallow_val >= beta_bound  ) {
 	    if ( use_hash && ts->ts_allow_midgame_hash_update )
 	      add_hash_ts( ts, MIDGAME_MODE, beta, ts->ts_pv[level][level],
@@ -729,9 +733,13 @@ tree_search_ts( ThreadState *ts,
 	}
 	else if ( beta_test ) {
 	  /* Fail-high with high probability? */
-	  if ( tree_search_ts( ts, level, level + shallow_remains, side_to_move,
-			       beta_bound - 1, beta_bound, allow_hash, FALSE,
-			       void_legal ) >= beta_bound ) {
+	  int shallow_val =
+	    tree_search_ts( ts, level, level + shallow_remains, side_to_move,
+			    beta_bound - 1, beta_bound, allow_hash, FALSE,
+			    void_legal );
+	  if ( is_panic_abort() || force_return || smp_stop )
+	    return SEARCH_ABORT;
+	  if ( shallow_val >= beta_bound ) {
 	    if ( use_hash && ts->ts_allow_midgame_hash_update )
 	      add_hash_ts( ts, MIDGAME_MODE, beta, ts->ts_pv[level][level],
 			   MIDGAME_SCORE | LOWER_BOUND, remains, selectivity );
@@ -740,9 +748,13 @@ tree_search_ts( ThreadState *ts,
 	}
 	else if ( alpha_test ) {
 	  /* Fail-low with high probability? */
-	  if ( tree_search_ts( ts, level, level + shallow_remains, side_to_move,
-			       alpha_bound, alpha_bound + 1, allow_hash, FALSE,
-			       void_legal ) <= alpha_bound ) {
+	  int shallow_val =
+	    tree_search_ts( ts, level, level + shallow_remains, side_to_move,
+			    alpha_bound, alpha_bound + 1, allow_hash, FALSE,
+			    void_legal );
+	  if ( is_panic_abort() || force_return || smp_stop )
+	    return SEARCH_ABORT;
+	  if ( shallow_val <= alpha_bound ) {
 	    if ( use_hash && ts->ts_allow_midgame_hash_update )
 	      add_hash_ts( ts, MIDGAME_MODE, alpha, ts->ts_pv[level][level],
 			   MIDGAME_SCORE | UPPER_BOUND, remains, selectivity );
@@ -889,8 +901,10 @@ tree_search_ts( ThreadState *ts,
 	      curr_val = -tree_search_ts( ts, level + 1, level + pre_depth,
 					  OPP( side_to_move ), -INFINITE_EVAL,
 					  -pre_best, FALSE, FALSE, TRUE );
-	      pre_best = MAX( pre_best, curr_val );
 	      unmake_move_bb_ts( ts, side_to_move, move );
+	      if ( is_panic_abort() || force_return || smp_stop )
+		return SEARCH_ABORT;
+	      pre_best = MAX( pre_best, curr_val );
 	      ev_dp[move] = curr_val;
 	      feas_dp[mcnt++] = move_index;
 	    }
@@ -936,6 +950,8 @@ tree_search_ts( ThreadState *ts,
     ts->ts_counter_phase = (ts->ts_counter_phase + 1) & 63;
     if ( ts->ts_counter_phase == 0 ) {
       double node_val;
+      if ( is_panic_abort() || force_return || smp_stop )
+	return SEARCH_ABORT;
       adjust_counter( &ts->ts_nodes );
       node_val = counter_value( &ts->ts_nodes );
       if ( node_val - ts->ts_last_panic_check >= EVENT_CHECK_INTERVAL ) {
@@ -1013,7 +1029,7 @@ tree_search_ts( ThreadState *ts,
       side_idx = (side_to_move == BLACKSQ) ? 0 : 1;
       if ( ts->ts_history_score[side_idx][move] < 1000000 )
 	ts->ts_history_score[side_idx][move] += remains * remains;
-      if ( use_hash && ts->ts_allow_midgame_hash_update )
+      if ( use_hash && ts->ts_allow_midgame_hash_update && (level > 0 || thread_id == 0) )
 	add_hash_extended_ts( ts, MIDGAME_MODE, best, best_list,
 			      MIDGAME_SCORE | LOWER_BOUND, remains, selectivity );
       return best;
@@ -1031,7 +1047,7 @@ tree_search_ts( ThreadState *ts,
 #endif
   if ( ts->ts_move_count[ts->ts_disks_played] > 0 ) {
     advance_move_ts( ts, best_move_index );
-    if ( use_hash && ts->ts_allow_midgame_hash_update ) {
+    if ( use_hash && ts->ts_allow_midgame_hash_update && (level > 0 || thread_id == 0) ) {
       if ( best > alpha )
 	add_hash_extended_ts( ts, MIDGAME_MODE, best, best_list,
 			      MIDGAME_SCORE | EXACT_VALUE, remains, selectivity );
@@ -1048,6 +1064,8 @@ tree_search_ts( ThreadState *ts,
 				-alpha, allow_hash, allow_mpc, FALSE );
     ts->ts_hash1 ^= hash_flip_color1;
     ts->ts_hash2 ^= hash_flip_color2;
+    if ( is_panic_abort() || force_return || smp_stop )
+      return SEARCH_ABORT;
     return curr_val;
   }
   else {
