@@ -128,8 +128,10 @@ def parse_move_coord(move_str: str) -> Tuple[int, int]:
     return row, col
 
 
-def replay_game_to_positions(move_str: str, final_diff: int) -> List[str]:
-    """Replays move string (e.g. 'f5d6c3...') and generates tune8dbs position lines."""
+def replay_game_to_positions(move_str: str, final_diff: int, min_disc_count: int = 16) -> List[str]:
+    """Replays move string (e.g. 'f5d6c3...') and generates tune8dbs position lines,
+    strictly excluding plies from the random opening phase (disc_count < min_disc_count).
+    """
     board = OthelloBoard()
     lines = []
     # Moves are pairs of characters
@@ -139,8 +141,8 @@ def replay_game_to_positions(move_str: str, final_diff: int) -> List[str]:
         i += 2
         r, c = parse_move_coord(m_str)
 
-        # Before making the move, record current position if midgame
-        if 4 <= board.disc_count <= 60 and board.side_to_move != EMPTY:
+        # Record position only after the random opening phase (Egaroucid methodology, DATA-001)
+        if min_disc_count <= board.disc_count <= 60 and board.side_to_move != EMPTY:
             lines.append(board.to_tune8dbs_line(final_diff))
 
         success = board.make_move(r, c)
@@ -155,25 +157,31 @@ def run_zebra_selfplay_batch(
     coeffs_dir: Path,
     openings: List[str],
     games_per_batch: int,
-    depth: int = 2,
-    random_prefix_len: int = 4,
+    depth: int = 4,
+    random_prefix_len: int = 12,
+    random_prefix_choices: Optional[List[int]] = None,
 ) -> List[str]:
     """Run batch of selfplay games with Zebra CLI and return tune8dbs position lines."""
     positions = []
     with tempfile.NamedTemporaryFile(mode="w+", suffix=".log", delete=False) as log_f:
         log_path = Path(log_f.name)
 
+    prefix_disc_counts: List[int] = []
     try:
-        # Pick opening or random moves
         for _ in range(games_per_batch):
-            # Select random opening from list
-            if openings and random.random() < 0.7:
-                seq = random.choice(openings)
+            if random_prefix_choices:
+                plen = random.choice(random_prefix_choices)
             else:
-                # Generate random legal moves prefix
+                plen = random_prefix_len
+
+            if openings and plen <= 8 and random.random() < 0.3:
+                seq = random.choice(openings)
+                min_dc = 4 + (len(seq) // 2)
+            else:
+                # Egaroucid-style variable random prefix (all plies < min_dc excluded)
                 b = OthelloBoard()
                 seq_moves = []
-                for _ in range(random_prefix_len):
+                for _ in range(plen):
                     legals = b.legal_moves(b.side_to_move)
                     if not legals:
                         break
@@ -181,7 +189,9 @@ def run_zebra_selfplay_batch(
                     b.make_move(mr, mc)
                     seq_moves.append(f"{chr(ord('a') + mc)}{mr + 1}")
                 seq = "".join(seq_moves)
+                min_dc = b.disc_count
 
+            prefix_disc_counts.append(min_dc)
             cmd = [
                 str(zebra_bin),
                 "-seq", seq,
@@ -192,15 +202,11 @@ def run_zebra_selfplay_batch(
             ]
             subprocess.run(cmd, cwd=coeffs_dir, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
 
-        # Parse generated log
         if log_path.exists():
             with open(log_path, "r") as f:
                 lines = f.readlines()
-            # Log format:
-            # # date
-            # #     B - W
-            # moves...
             curr_score = None
+            game_idx = 0
             for line in lines:
                 line = line.strip()
                 if line.startswith("#"):
@@ -211,7 +217,9 @@ def run_zebra_selfplay_batch(
                         curr_score = b_score - w_score
                 elif line and not line.startswith("#") and curr_score is not None:
                     moves = line
-                    positions.extend(replay_game_to_positions(moves, curr_score))
+                    min_dc = prefix_disc_counts[game_idx] if game_idx < len(prefix_disc_counts) else (4 + random_prefix_len)
+                    game_idx += 1
+                    positions.extend(replay_game_to_positions(moves, curr_score, min_disc_count=min_dc))
                     curr_score = None
     finally:
         if log_path.exists():

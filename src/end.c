@@ -1226,6 +1226,7 @@ end_order_moves_presearch( ThreadState *ts,
 		     (quadrant_parity ? REGION_PARITY_BONUS : 0);
 
     surv[surv_count].sq = move;
+    surv[surv_count].flipped = candidates[i].flipped;
     surv[surv_count].fast_score = fast_score;
     surv[surv_count].child_my_bits = child_my_bits;
     surv[surv_count].new_opp_bits = new_opp_bits;
@@ -1265,7 +1266,10 @@ end_order_moves_presearch( ThreadState *ts,
 	   (square_mask[m] & CORNER_MASK) != 0 ) {
         int p_score;
         if ( empties <= FAST_PATTERN_DEPTH ) {
-          p_score = end_pattern_evaluate_c33_r24( surv[i].child_my_bits, surv[i].new_opp_bits ) / 2;
+          int raw_c33 = end_pattern_evaluate_c33_r24( surv[i].child_my_bits, surv[i].new_opp_bits );
+          p_score = (empties >= 12) ? ((raw_c33 * 3) / 4)
+                  : (empties == 11) ? ((raw_c33 * 5) / 8)
+                  : (raw_c33 / 2);
         } else {
           p_score = end_pattern_evaluate( surv[i].child_my_bits, surv[i].new_opp_bits );
         }
@@ -1279,9 +1283,15 @@ end_order_moves_presearch( ThreadState *ts,
       mlist_stage[mcnt++] = m;
     }
     if ( any_other_eval ) {
-      int p0 = (empties <= FAST_PATTERN_DEPTH)
-	? (end_pattern_evaluate_c33_r24( surv[0].child_my_bits, surv[0].new_opp_bits ) / 2)
-	: end_pattern_evaluate( surv[0].child_my_bits, surv[0].new_opp_bits );
+      int p0;
+      if ( empties <= FAST_PATTERN_DEPTH ) {
+        int raw_c33 = end_pattern_evaluate_c33_r24( surv[0].child_my_bits, surv[0].new_opp_bits );
+        p0 = (empties >= 12) ? ((raw_c33 * 3) / 4)
+           : (empties == 11) ? ((raw_c33 * 5) / 8)
+           : (raw_c33 / 2);
+      } else {
+        p0 = end_pattern_evaluate( surv[0].child_my_bits, surv[0].new_opp_bits );
+      }
       ev_stage[m0] = p0 + top_fast;
     }
     else {
