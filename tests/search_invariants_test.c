@@ -255,6 +255,45 @@ test_tt_isolation_invariants( void ) {
   CHECK( !(entry.selectivity <= 0),
 	 "Selective TT entry (sel=2) must not satisfy exact bound cutoff (sel<=0)" );
 
+  /* 3. Verify same-position update preserves/shifts move[1..3] */
+  add_hash_ts( ts, ENDGAME_MODE, 8, 34, ENDGAME_SCORE | LOWER_BOUND, 24, 0 );
+  find_hash_key( &entry, ts->ts_hash1, ts->ts_hash2 );
+  CHECK( entry.move[0] == 34 && entry.move[1] == 43 &&
+	 entry.move[2] == 56 && entry.move[3] == 65,
+	 "Same best[0] update wiped move[1..3]: %d,%d,%d,%d",
+	 entry.move[0], entry.move[1], entry.move[2], entry.move[3] );
+
+  add_hash_ts( ts, ENDGAME_MODE, 10, 77, ENDGAME_SCORE | EXACT_VALUE, 24, 0 );
+  find_hash_key( &entry, ts->ts_hash1, ts->ts_hash2 );
+  CHECK( entry.move[0] == 77 && entry.move[1] == 34 &&
+	 entry.move[2] == 43 && entry.move[3] == 56,
+	 "New best[0] update failed to shift move[0..2] into move[1..3]: %d,%d,%d,%d",
+	 entry.move[0], entry.move[1], entry.move[2], entry.move[3] );
+
+  /* 4. Verify 64-bit packed shallow TT depth-partition coexistence (d=5,6,7,8) */
+  add_shallow_hash( -10, 11, ENDGAME_SCORE | EXACT_VALUE, 8, ts );
+  add_shallow_hash(  -4, 22, ENDGAME_SCORE | LOWER_BOUND, 7, ts );
+  add_shallow_hash(   2, 33, ENDGAME_SCORE | UPPER_BOUND, 6, ts );
+  add_shallow_hash(  14, 44, ENDGAME_SCORE | EXACT_VALUE, 5, ts );
+
+  int tt_mv = 0, tt_val = 0;
+  CHECK( probe_shallow_hash_draft( ts, 8, -64, 64, &tt_mv, &tt_val ) &&
+	 tt_val == -10 && ts->ts_end_best_move == 11,
+	 "Shallow TT d=8 entry overwritten by shallower drafts (val=%d, mv=%d)",
+	 tt_val, ts->ts_end_best_move );
+  CHECK( probe_shallow_hash_draft( ts, 7, -5, -4, &tt_mv, &tt_val ) &&
+	 tt_val == -4 && ts->ts_end_best_move == 22,
+	 "Shallow TT d=7 entry overwritten by shallower drafts (val=%d, mv=%d)",
+	 tt_val, ts->ts_end_best_move );
+  CHECK( probe_shallow_hash_draft( ts, 6, 2, 3, &tt_mv, &tt_val ) &&
+	 tt_val == 2 && ts->ts_end_best_move == 33,
+	 "Shallow TT d=6 entry overwritten by shallower drafts (val=%d, mv=%d)",
+	 tt_val, ts->ts_end_best_move );
+  CHECK( probe_shallow_hash_draft( ts, 5, -64, 64, &tt_mv, &tt_val ) &&
+	 tt_val == 14 && ts->ts_end_best_move == 44,
+	 "Shallow TT d=5 entry corrupted (val=%d, mv=%d)",
+	 tt_val, ts->ts_end_best_move );
+
   free_hash();
 }
 

@@ -58,7 +58,7 @@ unsigned int hash_trans2 = 0;
 CompactHashEntry *hash_table;
 
 int shallow_hash_mask = 0;
-CompactHashEntry *shallow_hash_table = NULL;
+unsigned long long *shallow_hash_table = NULL;
 
 unsigned int hash_value1[3][128];
 unsigned int hash_value2[3][128];
@@ -98,9 +98,10 @@ init_shallow_hash( int in_bits ) {
     free_shallow_hash();
   shallow_hash_bits = in_bits;
   shallow_hash_size = 1 << shallow_hash_bits;
-  shallow_hash_mask = shallow_hash_size - 1;
-  shallow_hash_table =
-    (CompactHashEntry *) safe_calloc( shallow_hash_size, sizeof( CompactHashEntry ) );
+  shallow_hash_mask = (shallow_hash_size - 1) & ~3;
+  size_t bytes = (size_t) shallow_hash_size * sizeof( unsigned long long );
+  shallow_hash_table = (unsigned long long *) safe_memalign( 64, bytes );
+  memset( shallow_hash_table, 0, bytes );
 }
 
 
@@ -126,9 +127,7 @@ free_shallow_hash( void ) {
 void
 clear_shallow_hash( void ) {
   if ( shallow_hash_table != NULL ) {
-    int i;
-    for ( i = 0; i < shallow_hash_size; i++ )
-      shallow_hash_table[i].key1_selectivity_flags_draft &= ~DRAFT_MASK;
+    memset( shallow_hash_table, 0, (size_t) shallow_hash_size * sizeof( unsigned long long ) );
   }
 }
 
@@ -221,6 +220,7 @@ setup_hash( int clear ) {
 
   if ( clear ) {
     memset( hash_table, 0, (size_t) hash_size * sizeof( CompactHashEntry ) );
+    clear_shallow_hash();
     hash_generation = 0;
   }
 
@@ -492,12 +492,16 @@ add_hash_extended_ts( const ThreadState *ts, int reverse_mode, int score, int *b
     int entry_gen = (k1_p & DRAFT_GEN_MASK) >> DRAFT_GEN_SHIFT;
     int age = (curr_gen - entry_gen) & 0x03;
     int entry_flags = (k1_p >> 8) & 0xFF;
+    int entry_sel = (k1_p >> 16) & 0xFF;
     int priority = is_empty ? -999999 : (entry_draft - (age << 5));
     if ( (flags & ENDGAME_SCORE) && !(entry_flags & ENDGAME_SCORE) ) {
       priority -= 512;
     }
     if ( !(flags & ENDGAME_SCORE) && (entry_flags & ENDGAME_SCORE) ) {
       priority += 512;
+    }
+    if ( !is_empty && (flags & ENDGAME_SCORE) && (entry_flags & ENDGAME_SCORE) && (entry_sel > selectivity) ) {
+      priority -= 4;
     }
 
     if ( priority < min_priority ) {
@@ -546,6 +550,21 @@ add_hash_extended_ts( const ThreadState *ts, int reverse_mode, int score, int *b
     entry.move[1] = (old_mv >> 8) & 0xFF;
     entry.move[2] = (old_mv >> 16) & 0xFF;
     entry.move[3] = (old_mv >> 24) & 0xFF;
+  } else if ( hit && (old_flags & ENDGAME_SCORE) && best[0] != 0 && best[1] == 0 && (old_mv & 0xFF) != 0 ) {
+    int m0 = old_mv & 0xFF;
+    int m1 = (old_mv >> 8) & 0xFF;
+    int m2 = (old_mv >> 16) & 0xFF;
+    int m3 = (old_mv >> 24) & 0xFF;
+    entry.move[0] = best[0];
+    if ( best[0] == m0 ) {
+      entry.move[1] = m1;
+      entry.move[2] = m2;
+      entry.move[3] = m3;
+    } else {
+      entry.move[1] = m0;
+      entry.move[2] = (m1 == best[0]) ? m2 : m1;
+      entry.move[3] = (m1 == best[0] || m2 == best[0]) ? m3 : m2;
+    }
   } else {
     for ( i = 0; i < 4; i++ )
       entry.move[i] = best[i];

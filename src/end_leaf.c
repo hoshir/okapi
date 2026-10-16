@@ -138,20 +138,7 @@ leaf_probe_shallow_tt( ThreadState *ts,
 		       int beta,
 		       int *tt_move,
 		       int *tt_val ) {
-  HashEntry entry;
-  find_shallow_hash( &entry, ts );
-  if ( (entry.draft == draft) && (entry.flags & ENDGAME_SCORE) ) {
-    if ( (entry.flags & EXACT_VALUE) ||
-	 ((entry.flags & LOWER_BOUND) && entry.eval >= beta) ||
-	 ((entry.flags & UPPER_BOUND) && entry.eval <= alpha) ) {
-      ts->ts_end_best_move = entry.move[0];
-      *tt_val = entry.eval;
-      return TRUE;
-    }
-    if ( (tt_move != NULL) && (entry.flags & (LOWER_BOUND | EXACT_VALUE)) )
-      *tt_move = entry.move[0];
-  }
-  return FALSE;
+  return probe_shallow_hash_draft( ts, draft, alpha, beta, tt_move, tt_val );
 }
 
 static ALWAYS_INLINE void
