@@ -50,13 +50,19 @@ typedef struct {
   /* Counted once per node, placed at offset 0 so every solver accesses
      hot per-node state within a single L1 cache line using immediate offsets. */
   CounterType ts_nodes;
+  CounterType ts_evaluations;
 
   /* The 64-bit hash key of the current position. */
   unsigned int ts_hash1, ts_hash2;
 
-  /* The endgame's hot scalar state. */
+  /* The endgame's and midgame's hot scalar state. */
   unsigned int ts_region_parity;
   int ts_end_best_move, ts_end_best_root_move;
+  int ts_best_mid_move, ts_best_mid_root_move;
+  int ts_allow_midgame_hash_probe;
+  int ts_allow_midgame_hash_update;
+  int ts_midgame_full_width_depth;
+  int ts_counter_phase;
   int ts_disks_played;
   int ts_split_nesting;
   BitBoard ts_bb_flips;
@@ -66,26 +72,36 @@ typedef struct {
   BitBoard ts_board_bits[3];
 
   /* The evaluation pattern indices, in black perspective. */
-  unsigned short ts_eval_pattern_index[48];
+  unsigned short ts_eval_pattern_index[48] __attribute__((aligned(16)));
 
-  /* Doubly-linked list of empty squares in endgame search. */
+  /* Doubly-linked list of empty squares in endgame search (offset < 1 KB). */
   MoveLink ts_end_move_list[100];
+
+  /* Hot endgame & midgame move count per stage (offset < 1.5 KB). */
+  int ts_move_count[MAX_SEARCH_DEPTH];
+  int ts_pv_depth[MAX_SEARCH_DEPTH];
+  int ts_piece_count[3][MAX_SEARCH_DEPTH];
+  unsigned int ts_hash_stored1[MAX_SEARCH_DEPTH];
+  unsigned int ts_hash_stored2[MAX_SEARCH_DEPTH];
+  BitBoard ts_flip_mask[65];
+
+  /* Cached flip counts and bitboards per endgame search level. */
+  unsigned char ts_cached_flipped[MAX_SEARCH_DEPTH + 1][100];
+  BitBoard ts_cached_flips[MAX_SEARCH_DEPTH + 1][100];
+
+  /* Saved pattern indices on the way down for zero-cost unmake in midgame. */
+  unsigned short ts_eval_pattern_stored[MAX_SEARCH_DEPTH][48] __attribute__((aligned(16)));
+
+  /* Per-thread move ordering, evaluation, and PV state. */
+  int ts_move_list[MAX_SEARCH_DEPTH][64];
+  int ts_sorted_move_order[64][64];
+  Board ts_evals[61];
+  int ts_feas_index_list[64][64];
+  int ts_history_score[2][100];
+  int ts_pv[MAX_SEARCH_DEPTH][MAX_SEARCH_DEPTH];
 
   /* The position, one square per entry. */
   Board ts_board;
-
-  /* The discs turned by the move made at each stage. */
-  BitBoard ts_flip_mask[65];
-
-  int ts_piece_count[3][MAX_SEARCH_DEPTH];
-
-  /* The hash codes at each node on the way down. */
-  unsigned int ts_hash_stored1[MAX_SEARCH_DEPTH];
-  unsigned int ts_hash_stored2[MAX_SEARCH_DEPTH];
-
-  /* Cached flip bitboards and endgame interior state per search level. */
-  BitBoard ts_cached_flips[MAX_SEARCH_DEPTH + 1][100];
-  int ts_cached_flipped[MAX_SEARCH_DEPTH + 1][100];
 } ThreadState;
 
 extern _Thread_local ThreadState tls;
@@ -107,7 +123,10 @@ extern _Thread_local ThreadState tls;
 #define end_best_move       (tls.ts_end_best_move)
 #define end_best_root_move  (tls.ts_end_best_root_move)
 #define nodes               (tls.ts_nodes)
+#define evaluations         (tls.ts_evaluations)
 #define last_panic_check    (tls.ts_last_panic_check)
+#define sorted_move_order   (tls.ts_sorted_move_order)
+#define history_score       (tls.ts_history_score)
 
 
 

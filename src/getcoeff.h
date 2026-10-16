@@ -15,6 +15,8 @@
 
 
 
+#include "tlstate.h"
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -32,6 +34,9 @@ clear_coeffs( void );
 
 int
 pattern_evaluation( int side_to_move );
+
+int
+pattern_evaluation_ts( ThreadState *ts, int side_to_move );
 
 
 

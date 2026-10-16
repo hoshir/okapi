@@ -633,25 +633,26 @@ end_probe_2ply_etc( const ThreadState *ts,
 
 
 /*
-  SYNC_BOARD_FROM_BITBOARDS
-  Synchronize 100-cell array board, board_bits, piece_count, and
-  pattern indices from bitboards for midgame heuristic pre-search.
+  SYNC_BOARD_FROM_BITBOARDS_TS
+  Synchronize board_bits, piece_count, and pattern indices from bitboards
+  for midgame heuristic pre-search without any _tlv_get_addr calls.
 */
 
-static void __attribute__((unused))
-sync_board_from_bitboards( BitBoard my_bits, BitBoard opp_bits, int side_to_move, int empties ) {
+static void
+sync_board_from_bitboards_ts( ThreadState *ts, BitBoard my_bits, BitBoard opp_bits, int side_to_move, int empties ) {
   BitBoard b_bits = (side_to_move == BLACKSQ ? my_bits : opp_bits);
   BitBoard w_bits = (side_to_move == BLACKSQ ? opp_bits : my_bits);
+  int dp = 60 - empties;
 
-  board_bits[BLACKSQ] = b_bits;
-  board_bits[WHITESQ] = w_bits;
-  board_bits[EMPTY] = ~(b_bits | w_bits);
+  ts->ts_board_bits[BLACKSQ] = b_bits;
+  ts->ts_board_bits[WHITESQ] = w_bits;
+  ts->ts_board_bits[EMPTY] = ~(b_bits | w_bits);
 
-  disks_played = 60 - empties;
-  piece_count[BLACKSQ][disks_played] = non_iterative_popcount( b_bits );
-  piece_count[WHITESQ][disks_played] = non_iterative_popcount( w_bits );
+  ts->ts_disks_played = dp;
+  ts->ts_piece_count[BLACKSQ][dp] = non_iterative_popcount( b_bits );
+  ts->ts_piece_count[WHITESQ][dp] = non_iterative_popcount( w_bits );
 
-  determine_pattern_indices_bitboard( b_bits, w_bits );
+  determine_pattern_indices_bitboard_ts( ts, b_bits, w_bits );
 }
 
 
@@ -823,9 +824,9 @@ dispatch_siblings( ThreadState *ts,
   {
     int rem_moves[MAX_ROOT_MOVES];
     int rem_count = 0;
-    int mcnt = move_count[stage];
-    const int *mlist = move_list[stage];
-    const int *ev = evals[stage];
+    int mcnt = ts->ts_move_count[stage];
+    const int *mlist = ts->ts_move_list[stage];
+    const int *ev = ts->ts_evals[stage];
     for ( i = best_list_length; i < mcnt; i++ ) {
       sq = mlist[i];
       if ( !used[sq] ) {
@@ -936,9 +937,9 @@ end_order_moves_presearch( ThreadState *ts,
   int i, j;
   int move;
   int stage = ts->ts_disks_played;
-  int *ev_stage = evals[stage];
-  int *mlist_stage = move_list[stage];
-  int mcnt = move_count[stage];
+  int *ev_stage = ts->ts_evals[stage];
+  int *mlist_stage = ts->ts_move_list[stage];
+  int mcnt = ts->ts_move_count[stage];
 
   typedef struct {
     int sq;
@@ -961,7 +962,7 @@ end_order_moves_presearch( ThreadState *ts,
     legal_moves &= ~square_mask[best_list[j]];
   }
 
-  const int *smo = sorted_move_order[stage];
+  const int *smo = ts->ts_sorted_move_order[stage];
   for ( int shallow_index = 0; shallow_index < MOVE_ORDER_SIZE; shallow_index++ ) {
     if ( legal_moves == 0 )
       break;
@@ -1158,7 +1159,7 @@ end_order_moves_presearch( ThreadState *ts,
 	if ( term_score >= beta ) {
 	  *etc_tried_ptr = move;
 	  *etc_cutoff_score = term_score;
-	  move_count[stage] = mcnt;
+	  ts->ts_move_count[stage] = mcnt;
 	  return TRUE;
 	}
 	else if ( term_score <= curr_alpha ) {
@@ -1183,7 +1184,7 @@ end_order_moves_presearch( ThreadState *ts,
 	  if ( (p_entry.flags & (EXACT_VALUE | LOWER_BOUND)) && p_entry.eval >= beta ) {
 	    *etc_tried_ptr = move;
 	    *etc_cutoff_score = p_entry.eval;
-	    move_count[stage] = mcnt;
+	    ts->ts_move_count[stage] = mcnt;
 	    return TRUE;
 	  }
 	  if ( (p_entry.flags & (EXACT_VALUE | UPPER_BOUND)) && p_entry.eval <= curr_alpha ) {
@@ -1301,8 +1302,8 @@ end_order_moves_presearch( ThreadState *ts,
       int parent_b_cnt = non_iterative_popcount( b_parent );
       int parent_w_cnt = non_iterative_popcount( w_parent );
       unsigned short saved_parent_pi[48] __attribute__((aligned(16)));
-      determine_pattern_indices_bitboard( b_parent, w_parent );
-      memcpy( saved_parent_pi, eval_pattern_index, sizeof( saved_parent_pi ) );
+      determine_pattern_indices_bitboard_ts( ts, b_parent, w_parent );
+      memcpy( saved_parent_pi, ts->ts_eval_pattern_index, sizeof( saved_parent_pi ) );
       for ( i = 0; i < k_limit; i++ ) {
         int m = surv[i].sq;
         unsigned int saved_parity = ts->ts_region_parity;
@@ -1315,17 +1316,18 @@ end_order_moves_presearch( ThreadState *ts,
           int flipped_cnt = (int) surv[i].flipped;
           BitBoard b_child = (side_to_move == BLACKSQ) ? surv[i].child_my_bits : surv[i].new_opp_bits;
           BitBoard w_child = (side_to_move == BLACKSQ) ? surv[i].new_opp_bits : surv[i].child_my_bits;
-          board_bits[BLACKSQ] = b_child;
-          board_bits[WHITESQ] = w_child;
-          board_bits[EMPTY] = ~(b_child | w_child);
-          disks_played = 60 - (empties - 1);
-          piece_count[BLACKSQ][disks_played] = (side_to_move == BLACKSQ) ? (parent_b_cnt + flipped_cnt + 1) : (parent_b_cnt - flipped_cnt);
-          piece_count[WHITESQ][disks_played] = (side_to_move == WHITESQ) ? (parent_w_cnt + flipped_cnt + 1) : (parent_w_cnt - flipped_cnt);
-          memcpy( eval_pattern_index, saved_parent_pi, sizeof( saved_parent_pi ) );
-          update_pattern_indices( side_to_move, m, (surv[i].child_my_bits ^ my_bits) & ~square_mask[m], 1 );
+          int child_dp = 60 - (empties - 1);
+          ts->ts_board_bits[BLACKSQ] = b_child;
+          ts->ts_board_bits[WHITESQ] = w_child;
+          ts->ts_board_bits[EMPTY] = ~(b_child | w_child);
+          ts->ts_disks_played = child_dp;
+          ts->ts_piece_count[BLACKSQ][child_dp] = (side_to_move == BLACKSQ) ? (parent_b_cnt + flipped_cnt + 1) : (parent_b_cnt - flipped_cnt);
+          ts->ts_piece_count[WHITESQ][child_dp] = (side_to_move == WHITESQ) ? (parent_w_cnt + flipped_cnt + 1) : (parent_w_cnt - flipped_cnt);
+          memcpy( ts->ts_eval_pattern_index, saved_parent_pi, sizeof( saved_parent_pi ) );
+          update_pattern_indices_ts( ts, side_to_move, m, (surv[i].child_my_bits ^ my_bits) & ~square_mask[m], 1 );
         }
-        int v = -tree_search( level + 1, level + d, OPP( side_to_move ),
-                              -INFINITE_EVAL, upper, TRUE, TRUE, TRUE );
+        int v = -tree_search_ts( ts, level + 1, level + d, OPP( side_to_move ),
+                                 -INFINITE_EVAL, upper, TRUE, TRUE, TRUE );
         ts->ts_hash1 ^= diff1;
         ts->ts_hash2 ^= diff2;
         ts->ts_disks_played = 60 - empties;
@@ -1353,7 +1355,7 @@ end_order_moves_presearch( ThreadState *ts,
     mlist_stage[mcnt++] = fb_move;
   }
 
-  move_count[stage] = mcnt;
+  ts->ts_move_count[stage] = mcnt;
   return FALSE;
 }
 
@@ -1495,7 +1497,7 @@ end_search_nws( ThreadState *ts,
 
   if ( USE_MPC && (level > 2) && (selectivity > 0) && (use_end_cut[stage] > 0) ) {
     int cut;
-    sync_board_from_bitboards( my_bits, opp_bits, side_to_move, empties );
+    sync_board_from_bitboards_ts( ts, my_bits, opp_bits, side_to_move, empties );
     for ( cut = 0; cut < use_end_cut[stage]; cut++ ) {
       int shallow_remains = end_mpc_depth[stage][cut];
       int mpc_bias = ceil( end_mean[stage][shallow_remains] * 128.0 );
@@ -1504,8 +1506,8 @@ end_search_nws( ThreadState *ts,
       int beta_bound = 128 * beta + mpc_bias + mpc_window;
       int alpha_bound = 128 * alpha + mpc_bias - mpc_window;
       int shallow_val =
-	tree_search( level, level + shallow_remains, side_to_move,
-		     alpha_bound, beta_bound, use_hash, FALSE, pass_legal );
+	tree_search_ts( ts, level, level + shallow_remains, side_to_move,
+			alpha_bound, beta_bound, use_hash, FALSE, pass_legal );
       if ( shallow_val >= beta_bound ) {
 	if ( use_hash )
 	  add_hash_ts( ts, ENDGAME_MODE, beta, 0,
@@ -1535,7 +1537,7 @@ end_search_nws( ThreadState *ts,
   hash_move = hash_hit ? entry.move[0] : 0;
   best_move = hash_move;
   best_list_length = hash_hit ? 1 : 0;
-  move_count[stage] = best_list_length;
+  ts->ts_move_count[stage] = best_list_length;
 
   /* 5. NWS Move loop */
   for ( move_index = 0; TRUE; move_index++ ) {
@@ -1568,9 +1570,9 @@ end_search_nws( ThreadState *ts,
 	pre_search_done = TRUE;
       }
 
-      if ( move_index == move_count[stage] )
+      if ( move_index == ts->ts_move_count[stage] )
 	break;
-      move = select_move( move_index, move_count[stage] );
+      move = select_move_ts( ts, move_index, ts->ts_move_count[stage] );
     }
 
     double node_val = counter_value( &ts->ts_nodes );
@@ -1912,7 +1914,7 @@ end_search_pvs( ThreadState *ts,
   /* Use endgame multi-prob-cut to selectively prune the tree */
   if ( USE_MPC && (level > 2) && (selectivity > 0) && (use_end_cut[stage] > 0) ) {
     int cut;
-    sync_board_from_bitboards( my_bits, opp_bits, side_to_move, empties );
+    sync_board_from_bitboards_ts( ts, my_bits, opp_bits, side_to_move, empties );
     for ( cut = 0; cut < use_end_cut[stage]; cut++ ) {
 	int shallow_remains = end_mpc_depth[stage][cut];
 	int mpc_bias = ceil( end_mean[stage][shallow_remains] * 128.0 );
@@ -1921,8 +1923,8 @@ end_search_pvs( ThreadState *ts,
 	int beta_bound = 128 * beta + mpc_bias + mpc_window;
 	int alpha_bound = 128 * alpha + mpc_bias - mpc_window;
 	int shallow_val =
-	  tree_search( level, level + shallow_remains, side_to_move,
-		       alpha_bound, beta_bound, use_hash, FALSE, pass_legal );
+	  tree_search_ts( ts, level, level + shallow_remains, side_to_move,
+			  alpha_bound, beta_bound, use_hash, FALSE, pass_legal );
 	if ( shallow_val >= beta_bound ) {
 	  if ( use_hash )
 	    add_hash_ts( ts, ENDGAME_MODE, beta, 0,
@@ -1959,7 +1961,7 @@ end_search_pvs( ThreadState *ts,
     best_list[best_list_length++] = entry.move[0];
   }
   best_move = (best_list_length > 0) ? best_list[0] : 0;
-  move_count[stage] = best_list_length;
+  ts->ts_move_count[stage] = best_list_length;
 
   for ( move_index = 0; TRUE; move_index++ ) {
     int child_selective_cutoff;
@@ -1995,9 +1997,9 @@ end_search_pvs( ThreadState *ts,
 	  pre_search_done = TRUE;
 	}
 
-	if ( move_index == move_count[stage] )
+	if ( move_index == ts->ts_move_count[stage] )
 	  break;
-	move = select_move( move_index, move_count[stage] );
+	move = select_move_ts( ts, move_index, ts->ts_move_count[stage] );
     }
 
     node_val = counter_value( &ts->ts_nodes );
@@ -2485,7 +2487,7 @@ end_game( int side_to_move,
     int ts_val = 0, ts_val_6 = 0;
     set_midgame_full_width_depth( 4 );
     for ( int id_d = 4; id_d <= 8; id_d += 2 ) {
-      sync_board_from_bitboards( root_my_bits, root_opp_bits, side_to_move, empties );
+      sync_board_from_bitboards_ts( &tls, root_my_bits, root_opp_bits, side_to_move, empties );
       ts_val = tree_search( 0, id_d, side_to_move, -INFINITE_EVAL, INFINITE_EVAL,
                             TRUE, (id_d >= 8), TRUE );
       if ( id_d == 6 )

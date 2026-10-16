@@ -144,7 +144,13 @@ void
 determine_pattern_indices_bitboard( BitBoard b_bits, BitBoard w_bits );
 
 void
+determine_pattern_indices_bitboard_ts( ThreadState *ts, BitBoard b_bits, BitBoard w_bits );
+
+void
 update_pattern_indices( int color, int move, BitBoard flipped, int dir );
+
+void
+update_pattern_indices_ts( ThreadState *ts, int color, int move, BitBoard flipped, int dir );
 
 void
 verify_pattern_indices( void );

@@ -1081,12 +1081,11 @@ rdtsc( void ) {
 #include "display.h"
 #endif
 
-_Thread_local short pattern_score;
-
 INLINE int
-pattern_evaluation( int side_to_move ) {
+pattern_evaluation_ts( ThreadState *ts, int side_to_move ) {
   int eval_phase;
   int score;
+  int dp = ts->ts_disks_played;
 #if TIME_EVAL
   long long t0 = rdtsc();
 #endif
@@ -1094,18 +1093,18 @@ pattern_evaluation( int side_to_move ) {
 #ifdef LOG_EVAL
   FILE *stream = fopen( "eval.log", "a" );
 
-  display_board( stream, board, side_to_move, FALSE, FALSE, FALSE );
+  display_board( stream, ts->ts_board, side_to_move, FALSE, FALSE, FALSE );
 #endif
 
   /* Any player wiped out? Game over then... */
 
-  if ( piece_count[BLACKSQ][disks_played] == 0 ) {
+  if ( ts->ts_piece_count[BLACKSQ][dp] == 0 ) {
     if ( side_to_move == BLACKSQ )
       return -(MIDGAME_WIN + 64);
     else
       return +(MIDGAME_WIN + 64);
   }
-  else if ( piece_count[WHITESQ][disks_played] == 0 ) {
+  else if ( ts->ts_piece_count[WHITESQ][dp] == 0 ) {
     if ( side_to_move == BLACKSQ )
       return +(MIDGAME_WIN + 64);
     else
@@ -1114,16 +1113,16 @@ pattern_evaluation( int side_to_move ) {
 
   /* Load and/or initialize the pattern coefficients */
 
-  eval_phase = eval_map[disks_played];
+  eval_phase = eval_map[dp];
 
   /* The constant feature and the parity feature */
 
-  score = set[eval_phase].parity_constant[disks_played & 1];
+  score = set[eval_phase].parity_constant[dp & 1];
 
 #ifdef LOG_EVAL
   fprintf( stream, "parity=%d\n", score );
-  fprintf( stream, "disks_played=%d (%d)\n", disks_played,
-	disks_played & 1 );
+  fprintf( stream, "disks_played=%d (%d)\n", dp,
+	dp & 1 );
 #endif
 
   /* The pattern features. */
@@ -1138,7 +1137,7 @@ pattern_evaluation( int side_to_move ) {
 #endif
 
   {
-    const unsigned short *pi = eval_pattern_index;
+    const unsigned short *pi = ts->ts_eval_pattern_index;
 
     if ( side_to_move == BLACKSQ ) {
 #ifdef LOG_EVAL
@@ -1624,6 +1623,11 @@ pattern_evaluation( int side_to_move ) {
 #endif
 
   return score;
+}
+
+INLINE int
+pattern_evaluation( int side_to_move ) {
+  return pattern_evaluation_ts( &tls, side_to_move );
 }
 
 

@@ -552,8 +552,8 @@ determine_pattern_indices( void ) {
 */
 
 void
-determine_pattern_indices_bitboard( BitBoard b_bits, BitBoard w_bits ) {
-  unsigned short *pi = eval_pattern_index;
+determine_pattern_indices_bitboard_ts( ThreadState *ts, BitBoard b_bits, BitBoard w_bits ) {
+  unsigned short *pi = ts->ts_eval_pattern_index;
 
 #if defined( __ARM_NEON )
   uint16x8_t p0 = vld1q_u16( empty_pattern_index      );
@@ -606,6 +606,11 @@ determine_pattern_indices_bitboard( BitBoard b_bits, BitBoard w_bits ) {
 #endif
 }
 
+void
+determine_pattern_indices_bitboard( BitBoard b_bits, BitBoard w_bits ) {
+  determine_pattern_indices_bitboard_ts( &tls, b_bits, w_bits );
+}
+
 
 /*
   UPDATE_PATTERN_INDICES
@@ -622,9 +627,8 @@ determine_pattern_indices_bitboard( BitBoard b_bits, BitBoard w_bits ) {
 */
 
 void
-update_pattern_indices( int color, int move, BitBoard flipped, int dir ) {
-  /* EVAL_PATTERN_INDEX is thread-local; resolve it once. */
-  unsigned short *pi = eval_pattern_index;
+update_pattern_indices_ts( ThreadState *ts, int color, int move, BitBoard flipped, int dir ) {
+  unsigned short *pi = ts->ts_eval_pattern_index;
   const int subtract = ((color == BLACKSQ) == (dir > 0));
 
 #if defined( __ARM_NEON )
@@ -701,6 +705,11 @@ update_pattern_indices( int color, int move, BitBoard flipped, int dir ) {
   }
 
 #endif
+}
+
+void
+update_pattern_indices( int color, int move, BitBoard flipped, int dir ) {
+  update_pattern_indices_ts( &tls, color, move, flipped, dir );
 }
 
 
