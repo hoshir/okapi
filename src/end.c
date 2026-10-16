@@ -920,6 +920,7 @@ static int
 end_order_moves_presearch( ThreadState *ts,
 			   int level,
 			   int empties,
+			   int disc_diff,
 			   int side_to_move,
 			   BitBoard my_bits,
 			   BitBoard opp_bits,
@@ -979,6 +980,12 @@ end_order_moves_presearch( ThreadState *ts,
       if ( flipped > 0 ) {
 	BitBoard new_opp_bits;
 	FULL_ANDNOT( new_opp_bits, opp_bits, child_my_bits );
+	if ( new_opp_bits == 0 ) {
+	  *etc_tried_ptr = move;
+	  *etc_cutoff_score = 64;
+	  ts->ts_move_count[stage] = mcnt;
+	  return TRUE;
+	}
 	candidates[candidate_count].sq = move;
 	candidates[candidate_count].flipped = (short) flipped;
 	candidates[candidate_count].opp_mob = -1;
@@ -1150,9 +1157,7 @@ end_order_moves_presearch( ThreadState *ts,
     if ( raw_opp_mob == 0 ) {
       BitBoard my_replies = generate_all_c( child_my_bits, new_opp_bits );
       if ( my_replies == 0 ) {
-	int my_cnt = non_iterative_popcount( child_my_bits );
-	int opp_cnt = non_iterative_popcount( new_opp_bits );
-	int term_diff = my_cnt - opp_cnt;
+	int term_diff = disc_diff + 2 * (int) candidates[i].flipped + 1;
 	int rem_empties = empties - 1;
 	int term_score = (term_diff > 0) ? (term_diff + rem_empties)
 		       : (term_diff < 0) ? (term_diff - rem_empties) : 0;
@@ -1247,12 +1252,16 @@ end_order_moves_presearch( ThreadState *ts,
     }
 
     /* Branch & Bound Pattern Evaluation:
-       Evaluate candidate 0, then only evaluate subsequent candidates within LAZY_PATTERN_MARGIN
-       (or corner moves, whose high pattern value can overcome temporary opponent mobility) */
+       Only evaluate subsequent candidates within LAZY_PATTERN_MARGIN (or corner moves).
+       If no subsequent candidate qualifies, candidate 0 is already guaranteed to rank
+       strictly first, so its pattern evaluation can also be skipped completely. */
     int top_fast = surv[0].fast_score;
-    for ( i = 0; i < surv_count; i++ ) {
+    int m0 = surv[0].sq;
+    int any_other_eval = 0;
+    mlist_stage[mcnt++] = m0;
+    for ( i = 1; i < surv_count; i++ ) {
       int m = surv[i].sq;
-      if ( i == 0 || (top_fast - surv[i].fast_score <= LAZY_PATTERN_MARGIN) ||
+      if ( (top_fast - surv[i].fast_score <= LAZY_PATTERN_MARGIN) ||
 	   (square_mask[m] & CORNER_MASK) != 0 ) {
         int p_score;
         if ( empties <= FAST_PATTERN_DEPTH ) {
@@ -1261,12 +1270,22 @@ end_order_moves_presearch( ThreadState *ts,
           p_score = end_pattern_evaluate( surv[i].child_my_bits, surv[i].new_opp_bits );
         }
         ev_stage[m] = p_score + surv[i].fast_score;
+        any_other_eval = 1;
       }
       else {
         /* Pruned candidate: assign fast_score with offset to rank strictly behind evaluated candidates */
         ev_stage[m] = surv[i].fast_score - 10000;
       }
       mlist_stage[mcnt++] = m;
+    }
+    if ( any_other_eval ) {
+      int p0 = (empties <= FAST_PATTERN_DEPTH)
+	? (end_pattern_evaluate_c33_r24( surv[0].child_my_bits, surv[0].new_opp_bits ) / 2)
+	: end_pattern_evaluate( surv[0].child_my_bits, surv[0].new_opp_bits );
+      ev_stage[m0] = p0 + top_fast;
+    }
+    else {
+      ev_stage[m0] = top_fast;
     }
 
     /* Selective shallow tree_search deepening on top-K candidates (SRCH-005)
@@ -1558,7 +1577,7 @@ end_search_nws( ThreadState *ts,
     else {
       if ( !pre_search_done ) {
 	int etc_cutoff_score = 0;
-	if ( end_order_moves_presearch( ts, level, empties, side_to_move,
+	if ( end_order_moves_presearch( ts, level, empties, disc_diff, side_to_move,
 					my_bits, opp_bits, beta, alpha,
 					selectivity, use_hash,
 					&hash_move, best_list_length,
@@ -1600,7 +1619,6 @@ end_search_nws( ThreadState *ts,
       child_selective_cutoff = proven_cutoff[move];
     }
     else {
-      unsigned int diff1, diff2;
       int flipped;
       if ( pre_search_done && level <= MAX_SEARCH_DEPTH ) {
         flipped = ts->ts_cached_flipped[level][move];
@@ -1611,18 +1629,33 @@ end_search_nws( ThreadState *ts,
       }
       FULL_ANDNOT( new_opp_bits, opp_bits, new_my_bits );
 
-      end_make_move( ts, move, new_my_bits, my_bits, side_to_move, &diff1, &diff2 );
-
       int new_disc_diff = -disc_diff - 2 * flipped - 1;
 
-      curr_val = -end_search_nws( ts, new_opp_bits, new_my_bits,
-				  -beta, OPP( side_to_move ),
-				  empties - 1, new_disc_diff,
-				  (pre_search_done && level <= MAX_SEARCH_DEPTH) ? 2 : TRUE,
-				  level + 1,
-				  selectivity, &child_selective_cutoff );
-
-      end_unmake_move( ts, move, diff1, diff2 );
+      if ( empties == LOW_LEVEL_DEPTH + 1 ) {
+        if ( SPLIT_ABANDONED() ) {
+          ts->ts_disks_played = saved_disks_played;
+          return SEARCH_ABORT;
+        }
+        ts->ts_region_parity ^= quadrant_mask[move];
+        ts->ts_empty_order_mask ^= sq_to_order_mask[move];
+        curr_val = -solve_parity( ts, new_opp_bits, new_my_bits,
+				  -beta, -alpha, OPP( side_to_move ),
+				  LOW_LEVEL_DEPTH, new_disc_diff, TRUE );
+        ts->ts_region_parity ^= quadrant_mask[move];
+        ts->ts_empty_order_mask ^= sq_to_order_mask[move];
+        child_selective_cutoff = FALSE;
+      }
+      else {
+        unsigned int diff1, diff2;
+        end_make_move( ts, move, new_my_bits, my_bits, side_to_move, &diff1, &diff2 );
+        curr_val = -end_search_nws( ts, new_opp_bits, new_my_bits,
+				    -beta, OPP( side_to_move ),
+				    empties - 1, new_disc_diff,
+				    (pre_search_done && level <= MAX_SEARCH_DEPTH) ? 2 : TRUE,
+				    level + 1,
+				    selectivity, &child_selective_cutoff );
+        end_unmake_move( ts, move, diff1, diff2 );
+      }
     }
 
     if ( abs( curr_val ) >= 20000 || is_panic_abort() || force_return || SPLIT_ABANDONED() ) {
@@ -1656,7 +1689,7 @@ end_search_nws( ThreadState *ts,
 	 !is_panic_abort() && !force_return ) {
       if ( !pre_search_done ) {
 	int etc_cutoff_score = 0;
-	if ( end_order_moves_presearch( ts, level, empties, side_to_move,
+	if ( end_order_moves_presearch( ts, level, empties, disc_diff, side_to_move,
 					my_bits, opp_bits, beta, alpha,
 					selectivity, use_hash,
 					&hash_move, best_list_length,
@@ -1984,7 +2017,7 @@ end_search_pvs( ThreadState *ts,
     else {
 	if ( !pre_search_done ) {
 	  int etc_cutoff_score = 0;
-	  if ( end_order_moves_presearch( ts, level, empties, side_to_move,
+	  if ( end_order_moves_presearch( ts, level, empties, disc_diff, side_to_move,
 					  my_bits, opp_bits, beta, curr_alpha,
 					  selectivity, use_hash,
 					  best_list, best_list_length,
@@ -2040,7 +2073,6 @@ end_search_pvs( ThreadState *ts,
       child_selective_cutoff = proven_cutoff[move];
     }
     else {
-      unsigned int diff1, diff2;
       int flipped;
       if ( pre_search_done && (move_index >= best_list_length) && (level <= MAX_SEARCH_DEPTH) ) {
         flipped = ts->ts_cached_flipped[level][move];
@@ -2051,7 +2083,13 @@ end_search_pvs( ThreadState *ts,
       }
       FULL_ANDNOT( new_opp_bits, opp_bits, new_my_bits );
 
-      end_make_move( ts, move, new_my_bits, my_bits, side_to_move, &diff1, &diff2 );
+      unsigned int diff1 = 0, diff2 = 0;
+      if ( empties == LOW_LEVEL_DEPTH + 1 ) {
+        ts->ts_region_parity ^= quadrant_mask[move];
+        ts->ts_empty_order_mask ^= sq_to_order_mask[move];
+      } else {
+        end_make_move( ts, move, new_my_bits, my_bits, side_to_move, &diff1, &diff2 );
+      }
 
       int new_disc_diff = -disc_diff - 2 * flipped - 1;
 
@@ -2104,7 +2142,12 @@ end_search_pvs( ThreadState *ts,
 	}
       }
 
-      end_unmake_move( ts, move, diff1, diff2 );
+      if ( empties == LOW_LEVEL_DEPTH + 1 ) {
+        ts->ts_region_parity ^= quadrant_mask[move];
+        ts->ts_empty_order_mask ^= sq_to_order_mask[move];
+      } else {
+        end_unmake_move( ts, move, diff1, diff2 );
+      }
     }
 
     if ( best >= beta )
@@ -2161,7 +2204,7 @@ end_search_pvs( ThreadState *ts,
 	 !is_panic_abort() && !force_return ) {
       if ( !pre_search_done ) {
 	int etc_cutoff_score = 0;
-	if ( end_order_moves_presearch( ts, level, empties, side_to_move,
+	if ( end_order_moves_presearch( ts, level, empties, disc_diff, side_to_move,
 					my_bits, opp_bits, beta, curr_alpha,
 					selectivity, use_hash,
 					best_list, best_list_length,

@@ -209,8 +209,7 @@ clear_shallow_hash( void );
 
 /*
   64-bit Packed Shallow Hash Entry Layout (8 bytes/entry, partitioned by draft & 3):
-  Bits [63:32]: code2 (32 bits)
-  Bits [31:24]: code1 & 0xFF000000u (8 bits)
+  Bits [63:24]: 40-bit verification tag from 2-multiply bitboard hash (h2 & 0xFFFFFFFFFF000000ULL)
   Bits [23:16]: score as signed char (8 bits, range -64..+64)
   Bits [15: 8]: best move (8 bits, range 0..88)
   Bits [ 7: 4]: flags & 0x0F (4 bits: EXACT_VALUE=1, LOWER_BOUND=2, UPPER_BOUND=4)
@@ -218,8 +217,24 @@ clear_shallow_hash( void );
 */
 #define SHALLOW_TAG_DRAFT_MASK 0xFFFFFFFFFF00000FULL
 
+static ALWAYS_INLINE void
+shallow_hash_bitboards( BitBoard my_bits,
+			BitBoard opp_bits,
+			int draft,
+			unsigned int *index_out,
+			unsigned long long *tag_out ) {
+  unsigned long long p = my_bits * 0x9dda1c54cfe6b6e9ULL;
+  unsigned long long o = opp_bits * 0xa2e6c0300831e05aULL;
+  unsigned long long h1 = p ^ o;
+  unsigned long long h2 = ((p >> 29) | (p << 35)) ^ ((o >> 17) | (o << 47)) ^ my_bits;
+  *index_out = ((unsigned int)(h1 >> 44) & (unsigned int)shallow_hash_mask) | (unsigned int)(draft & 3);
+  *tag_out = h2 & 0xFFFFFFFFFF000000ULL;
+}
+
 static ALWAYS_INLINE int
 probe_shallow_hash_draft( const ThreadState *ts,
+                          BitBoard my_bits,
+                          BitBoard opp_bits,
                           int draft,
                           int alpha,
                           int beta,
@@ -228,12 +243,10 @@ probe_shallow_hash_draft( const ThreadState *ts,
   if ( shallow_hash_table == NULL )
     return FALSE;
 
-  unsigned int code1 = ts->ts_hash2 ^ hash_trans2;
-  unsigned int code2 = ts->ts_hash1 ^ hash_trans1;
-  unsigned int index = (code1 & (unsigned int)shallow_hash_mask) | (unsigned int)(draft & 3);
-  unsigned long long expected = ((unsigned long long) code2 << 32) |
-                                (unsigned long long)(code1 & KEY1_MASK) |
-                                (unsigned long long)(draft & 0x0F);
+  unsigned int index;
+  unsigned long long tag;
+  shallow_hash_bitboards( my_bits, opp_bits, draft, &index, &tag );
+  unsigned long long expected = tag | (unsigned long long)(draft & 0x0F);
   unsigned long long raw = __atomic_load_n( &shallow_hash_table[index], __ATOMIC_RELAXED );
 
   if ( (raw & SHALLOW_TAG_DRAFT_MASK) != expected )
@@ -256,19 +269,19 @@ probe_shallow_hash_draft( const ThreadState *ts,
 }
 
 static ALWAYS_INLINE void
-add_shallow_hash( int score,
+add_shallow_hash( BitBoard my_bits,
+		  BitBoard opp_bits,
+		  int score,
 		  int best,
 		  int flags,
-		  int draft,
-		  const ThreadState *ts ) {
+		  int draft ) {
   if ( shallow_hash_table == NULL )
     return;
 
-  unsigned int code1 = ts->ts_hash2 ^ hash_trans2;
-  unsigned int code2 = ts->ts_hash1 ^ hash_trans1;
-  unsigned int index = (code1 & (unsigned int)shallow_hash_mask) | (unsigned int)(draft & 3);
-  unsigned long long packed = ((unsigned long long) code2 << 32) |
-                              (unsigned long long)(code1 & KEY1_MASK) |
+  unsigned int index;
+  unsigned long long tag;
+  shallow_hash_bitboards( my_bits, opp_bits, draft, &index, &tag );
+  unsigned long long packed = tag |
                               ((unsigned long long)(unsigned char)(signed char)score << 16) |
                               ((unsigned long long)(best & 0xFF) << 8) |
                               ((unsigned long long)(flags & 0x0F) << 4) |

@@ -271,25 +271,27 @@ test_tt_isolation_invariants( void ) {
 	 entry.move[0], entry.move[1], entry.move[2], entry.move[3] );
 
   /* 4. Verify 64-bit packed shallow TT depth-partition coexistence (d=5,6,7,8) */
-  add_shallow_hash( -10, 11, ENDGAME_SCORE | EXACT_VALUE, 8, ts );
-  add_shallow_hash(  -4, 22, ENDGAME_SCORE | LOWER_BOUND, 7, ts );
-  add_shallow_hash(   2, 33, ENDGAME_SCORE | UPPER_BOUND, 6, ts );
-  add_shallow_hash(  14, 44, ENDGAME_SCORE | EXACT_VALUE, 5, ts );
+  BitBoard test_my = 0x0000000810000000ULL;
+  BitBoard test_opp = 0x0000001008000000ULL;
+  add_shallow_hash( test_my, test_opp, -10, 11, ENDGAME_SCORE | EXACT_VALUE, 8 );
+  add_shallow_hash( test_my, test_opp,  -4, 22, ENDGAME_SCORE | LOWER_BOUND, 7 );
+  add_shallow_hash( test_my, test_opp,   2, 33, ENDGAME_SCORE | UPPER_BOUND, 6 );
+  add_shallow_hash( test_my, test_opp,  14, 44, ENDGAME_SCORE | EXACT_VALUE, 5 );
 
   int tt_mv = 0, tt_val = 0;
-  CHECK( probe_shallow_hash_draft( ts, 8, -64, 64, &tt_mv, &tt_val ) &&
+  CHECK( probe_shallow_hash_draft( ts, test_my, test_opp, 8, -64, 64, &tt_mv, &tt_val ) &&
 	 tt_val == -10 && ts->ts_end_best_move == 11,
 	 "Shallow TT d=8 entry overwritten by shallower drafts (val=%d, mv=%d)",
 	 tt_val, ts->ts_end_best_move );
-  CHECK( probe_shallow_hash_draft( ts, 7, -5, -4, &tt_mv, &tt_val ) &&
+  CHECK( probe_shallow_hash_draft( ts, test_my, test_opp, 7, -5, -4, &tt_mv, &tt_val ) &&
 	 tt_val == -4 && ts->ts_end_best_move == 22,
 	 "Shallow TT d=7 entry overwritten by shallower drafts (val=%d, mv=%d)",
 	 tt_val, ts->ts_end_best_move );
-  CHECK( probe_shallow_hash_draft( ts, 6, 2, 3, &tt_mv, &tt_val ) &&
+  CHECK( probe_shallow_hash_draft( ts, test_my, test_opp, 6, 2, 3, &tt_mv, &tt_val ) &&
 	 tt_val == 2 && ts->ts_end_best_move == 33,
 	 "Shallow TT d=6 entry overwritten by shallower drafts (val=%d, mv=%d)",
 	 tt_val, ts->ts_end_best_move );
-  CHECK( probe_shallow_hash_draft( ts, 5, -64, 64, &tt_mv, &tt_val ) &&
+  CHECK( probe_shallow_hash_draft( ts, test_my, test_opp, 5, -64, 64, &tt_mv, &tt_val ) &&
 	 tt_val == 14 && ts->ts_end_best_move == 44,
 	 "Shallow TT d=5 entry corrupted (val=%d, mv=%d)",
 	 tt_val, ts->ts_end_best_move );
