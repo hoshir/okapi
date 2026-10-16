@@ -76,6 +76,42 @@ main( void ) {
   CHECK( end_aspiration_center( -500 * UNITS_PER_DISC, 62 ) == -62,
 	 "lower clamp" );
 
+  /* Verify exact re-search opposite-bound tightening (SRCH-012):
+     After initial null window [9, 11] centered at 10 fails low twice
+     (first returning 9, then returning 5), beta must tighten to 6 (not reset to 11). */
+  {
+    int alpha = 9, beta = 11, delta = 4;
+    end_aspiration_next_bounds( 9, &alpha, &beta, &delta );
+    CHECK( alpha == 6 && beta == 10 && delta == 8,
+	   "1st fail-low bounds: got [%d, %d] delta=%d", alpha, beta, delta );
+    end_aspiration_next_bounds( 6, &alpha, &beta, &delta );
+    CHECK( alpha == -2 && beta == 7 && delta == 16,
+	   "2nd fail-low bounds: got [%d, %d] delta=%d", alpha, beta, delta );
+  }
+  {
+    int alpha = 9, beta = 11, delta = 4;
+    end_aspiration_next_bounds( 11, &alpha, &beta, &delta );
+    CHECK( alpha == 10 && beta == 14 && delta == 8,
+	   "1st fail-high bounds: got [%d, %d] delta=%d", alpha, beta, delta );
+    end_aspiration_next_bounds( 14, &alpha, &beta, &delta );
+    CHECK( alpha == 13 && beta == 22 && delta == 16,
+	   "2nd fail-high bounds: got [%d, %d] delta=%d", alpha, beta, delta );
+  }
+
+  /* Verify selective step-center snapping on large bound returns: */
+  CHECK( end_aspiration_step_center( 10, 9, -2 ) == 8,
+	 "normal -2 step from 10 on eval=9" );
+  CHECK( end_aspiration_step_center( 10, 2, -2 ) == 2,
+	 "snap downward from 10 to even bound 2" );
+  CHECK( end_aspiration_step_center( 10, 3, -2 ) == 2,
+	 "snap downward from 10 on odd bound 3 to even 2" );
+  CHECK( end_aspiration_step_center( 10, 11, 2 ) == 12,
+	 "normal +2 step from 10 on eval=11" );
+  CHECK( end_aspiration_step_center( 10, 18, 2 ) == 18,
+	 "snap upward from 10 to even bound 18" );
+  CHECK( end_aspiration_step_center( 10, 17, 2 ) == 18,
+	 "snap upward from 10 on odd bound 17 to even 18" );
+
   if ( failures != 0 ) {
     fprintf( stderr, "aspirationtest: %d failure(s)\n", failures );
     return 1;

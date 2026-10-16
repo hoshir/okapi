@@ -35,3 +35,61 @@ end_aspiration_center( int eval, int limit ) {
     center = limit;
   return center;
 }
+
+void
+end_aspiration_next_bounds( int root_eval, int *alpha, int *beta, int *delta ) {
+  int d = *delta;
+  if ( d >= 64 ) {
+    *alpha = -64;
+    *beta = 64;
+    *delta = 64;
+    return;
+  }
+
+  if ( root_eval <= *alpha ) {
+    /* Fail low: score is proven <= root_eval, so tighten beta to root_eval + 1
+       and widen alpha downward by delta (anchored at center on the first step
+       from the [c - 1, c + 1] null window). */
+    int new_beta = root_eval + 1;
+    int anchor = (d == 4 && root_eval == *alpha) ? (*alpha + 1) : root_eval;
+    int new_alpha = anchor - d;
+    if ( new_alpha < -64 ) new_alpha = -64;
+    if ( new_beta > 64 ) new_beta = 64;
+    *alpha = new_alpha;
+    *beta = new_beta;
+  }
+  else if ( root_eval >= *beta ) {
+    /* Fail high: score is proven >= root_eval, so tighten alpha to root_eval - 1
+       and widen beta upward by delta (anchored at center on the first step
+       from the [c - 1, c + 1] null window). */
+    int new_alpha = root_eval - 1;
+    int anchor = (d == 4 && root_eval == *beta) ? (*beta - 1) : root_eval;
+    int new_beta = anchor + d;
+    if ( new_alpha < -64 ) new_alpha = -64;
+    if ( new_beta > 64 ) new_beta = 64;
+    *alpha = new_alpha;
+    *beta = new_beta;
+  }
+
+  d *= 2;
+  if ( d > 64 ) d = 64;
+  *delta = d;
+}
+
+int
+end_aspiration_step_center( int center, int root_eval, int step_dir ) {
+  int next_center = center + step_dir;
+  if ( step_dir < 0 && root_eval < center - 1 ) {
+    int snapped = (root_eval >= 0) ? (root_eval & ~1) : -((-root_eval + 1) & ~1);
+    if ( snapped < next_center )
+      next_center = snapped;
+  }
+  else if ( step_dir > 0 && root_eval > center + 1 ) {
+    int snapped = (root_eval >= 0) ? ((root_eval + 1) & ~1) : -((-root_eval) & ~1);
+    if ( snapped > next_center )
+      next_center = snapped;
+  }
+  if ( next_center < -64 ) next_center = -64;
+  if ( next_center > 64 ) next_center = 64;
+  return next_center;
+}
