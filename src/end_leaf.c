@@ -926,6 +926,37 @@ solve_eight_empty( ThreadState *ts,
 
 
 /*
+  Fixed best-to-worst square ordering for shallow leaf solvers (64 bytes, 1 cache line).
+  Matches prepare_to_solve's descending scan of worst2best[59..0].
+*/
+const unsigned char order_bit_to_sq[64] __attribute__((aligned(64))) = {
+  /* A1 */ 88, 81, 18, 11,
+  /* C3 */ 66, 63, 36, 33,
+  /* D1 */ 85, 84, 58, 51, 48, 41, 15, 14,
+  /* C1 */ 86, 83, 68, 61, 38, 31, 16, 13,
+  /* D3 */ 65, 64, 56, 53, 46, 43, 35, 34,
+  /* D2 */ 75, 74, 57, 52, 47, 42, 25, 24,
+  /* C2 */ 76, 73, 67, 62, 37, 32, 26, 23,
+  /* B1 */ 87, 82, 78, 71, 28, 21, 17, 12,
+  /* B2 */ 77, 72, 27, 22,
+  /* D4 */ 44, 45, 54, 55
+};
+
+const BitBoard sq_to_order_mask[100] = {
+  0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+  0, (1ULL <<  3), (1ULL << 55), (1ULL << 23), (1ULL << 15), (1ULL << 14), (1ULL << 22), (1ULL << 54), (1ULL <<  2), 0,
+  0, (1ULL << 53), (1ULL << 59), (1ULL << 47), (1ULL << 39), (1ULL << 38), (1ULL << 46), (1ULL << 58), (1ULL << 52), 0,
+  0, (1ULL << 21), (1ULL << 45), (1ULL <<  7), (1ULL << 31), (1ULL << 30), (1ULL <<  6), (1ULL << 44), (1ULL << 20), 0,
+  0, (1ULL << 13), (1ULL << 37), (1ULL << 29),            0,            0, (1ULL << 28), (1ULL << 36), (1ULL << 12), 0,
+  0, (1ULL << 11), (1ULL << 35), (1ULL << 27),            0,            0, (1ULL << 26), (1ULL << 34), (1ULL << 10), 0,
+  0, (1ULL << 19), (1ULL << 43), (1ULL <<  5), (1ULL << 25), (1ULL << 24), (1ULL <<  4), (1ULL << 42), (1ULL << 18), 0,
+  0, (1ULL << 51), (1ULL << 57), (1ULL << 41), (1ULL << 33), (1ULL << 32), (1ULL << 40), (1ULL << 56), (1ULL << 50), 0,
+  0, (1ULL <<  1), (1ULL << 49), (1ULL << 17), (1ULL <<  9), (1ULL <<  8), (1ULL << 16), (1ULL << 48), (1ULL <<  0), 0,
+  0, 0, 0, 0, 0, 0, 0, 0, 0, 0
+};
+
+
+/*
   SOLVE_PARITY
   Dispatcher to register-packed leaf solvers for depths 1 through 8.
 */
@@ -941,86 +972,84 @@ solve_parity( ThreadState *ts,
 	      int disc_diff,
 	      int pass_legal ) {
   unsigned int state = LEAF_STATE( ts->ts_region_parity, color, pass_legal );
+  BitBoard m = ts->ts_empty_order_mask;
 
   if ( empties == 8 ) {
-    int sq1 = ts->ts_end_move_list[END_MOVE_LIST_HEAD].succ;
-    int sq2 = ts->ts_end_move_list[sq1].succ;
-    int sq3 = ts->ts_end_move_list[sq2].succ;
-    int sq4 = ts->ts_end_move_list[sq3].succ;
-    int sq5 = ts->ts_end_move_list[sq4].succ;
-    int sq6 = ts->ts_end_move_list[sq5].succ;
-    int sq7 = ts->ts_end_move_list[sq6].succ;
-    int sq8 = ts->ts_end_move_list[sq7].succ;
-    uint64_t packed = (uint64_t)sq1 | ((uint64_t)sq2 << 8) | ((uint64_t)sq3 << 16) |
-                      ((uint64_t)sq4 << 24) | ((uint64_t)sq5 << 32) | ((uint64_t)sq6 << 40) |
-                      ((uint64_t)sq7 << 48) | ((uint64_t)sq8 << 56);
+    uint64_t sq1 = order_bit_to_sq[FIRST_BIT( m )]; m &= m - 1;
+    uint64_t sq2 = order_bit_to_sq[FIRST_BIT( m )]; m &= m - 1;
+    uint64_t sq3 = order_bit_to_sq[FIRST_BIT( m )]; m &= m - 1;
+    uint64_t sq4 = order_bit_to_sq[FIRST_BIT( m )]; m &= m - 1;
+    uint64_t sq5 = order_bit_to_sq[FIRST_BIT( m )]; m &= m - 1;
+    uint64_t sq6 = order_bit_to_sq[FIRST_BIT( m )]; m &= m - 1;
+    uint64_t sq7 = order_bit_to_sq[FIRST_BIT( m )]; m &= m - 1;
+    uint64_t sq8 = order_bit_to_sq[FIRST_BIT( m )];
+    uint64_t packed = sq1 | (sq2 << 8) | (sq3 << 16) | (sq4 << 24) |
+                      (sq5 << 32) | (sq6 << 40) | (sq7 << 48) | (sq8 << 56);
     return solve_eight_empty( ts, my_bits, opp_bits, packed, alpha, beta, disc_diff, state );
   }
 
   if ( empties == 7 ) {
-    int sq1 = ts->ts_end_move_list[END_MOVE_LIST_HEAD].succ;
-    int sq2 = ts->ts_end_move_list[sq1].succ;
-    int sq3 = ts->ts_end_move_list[sq2].succ;
-    int sq4 = ts->ts_end_move_list[sq3].succ;
-    int sq5 = ts->ts_end_move_list[sq4].succ;
-    int sq6 = ts->ts_end_move_list[sq5].succ;
-    int sq7 = ts->ts_end_move_list[sq6].succ;
-    uint64_t packed = (uint64_t)sq1 | ((uint64_t)sq2 << 8) | ((uint64_t)sq3 << 16) |
-                      ((uint64_t)sq4 << 24) | ((uint64_t)sq5 << 32) | ((uint64_t)sq6 << 40) |
-                      ((uint64_t)sq7 << 48);
+    uint64_t sq1 = order_bit_to_sq[FIRST_BIT( m )]; m &= m - 1;
+    uint64_t sq2 = order_bit_to_sq[FIRST_BIT( m )]; m &= m - 1;
+    uint64_t sq3 = order_bit_to_sq[FIRST_BIT( m )]; m &= m - 1;
+    uint64_t sq4 = order_bit_to_sq[FIRST_BIT( m )]; m &= m - 1;
+    uint64_t sq5 = order_bit_to_sq[FIRST_BIT( m )]; m &= m - 1;
+    uint64_t sq6 = order_bit_to_sq[FIRST_BIT( m )]; m &= m - 1;
+    uint64_t sq7 = order_bit_to_sq[FIRST_BIT( m )];
+    uint64_t packed = sq1 | (sq2 << 8) | (sq3 << 16) | (sq4 << 24) |
+                      (sq5 << 32) | (sq6 << 40) | (sq7 << 48);
     return solve_seven_empty( ts, my_bits, opp_bits, packed, alpha, beta, disc_diff, state );
   }
 
   if ( empties == 6 ) {
-    int sq1 = ts->ts_end_move_list[END_MOVE_LIST_HEAD].succ;
-    int sq2 = ts->ts_end_move_list[sq1].succ;
-    int sq3 = ts->ts_end_move_list[sq2].succ;
-    int sq4 = ts->ts_end_move_list[sq3].succ;
-    int sq5 = ts->ts_end_move_list[sq4].succ;
-    int sq6 = ts->ts_end_move_list[sq5].succ;
-    uint64_t packed = (uint64_t)sq1 | ((uint64_t)sq2 << 8) | ((uint64_t)sq3 << 16) |
-                      ((uint64_t)sq4 << 24) | ((uint64_t)sq5 << 32) | ((uint64_t)sq6 << 40);
+    uint64_t sq1 = order_bit_to_sq[FIRST_BIT( m )]; m &= m - 1;
+    uint64_t sq2 = order_bit_to_sq[FIRST_BIT( m )]; m &= m - 1;
+    uint64_t sq3 = order_bit_to_sq[FIRST_BIT( m )]; m &= m - 1;
+    uint64_t sq4 = order_bit_to_sq[FIRST_BIT( m )]; m &= m - 1;
+    uint64_t sq5 = order_bit_to_sq[FIRST_BIT( m )]; m &= m - 1;
+    uint64_t sq6 = order_bit_to_sq[FIRST_BIT( m )];
+    uint64_t packed = sq1 | (sq2 << 8) | (sq3 << 16) | (sq4 << 24) |
+                      (sq5 << 32) | (sq6 << 40);
     return solve_six_empty( ts, my_bits, opp_bits, packed, alpha, beta, disc_diff, state );
   }
 
   if ( empties == 5 ) {
-    int sq1 = ts->ts_end_move_list[END_MOVE_LIST_HEAD].succ;
-    int sq2 = ts->ts_end_move_list[sq1].succ;
-    int sq3 = ts->ts_end_move_list[sq2].succ;
-    int sq4 = ts->ts_end_move_list[sq3].succ;
-    int sq5 = ts->ts_end_move_list[sq4].succ;
-    uint64_t packed = (uint64_t)sq1 | ((uint64_t)sq2 << 8) | ((uint64_t)sq3 << 16) |
-                      ((uint64_t)sq4 << 24) | ((uint64_t)sq5 << 32);
+    uint64_t sq1 = order_bit_to_sq[FIRST_BIT( m )]; m &= m - 1;
+    uint64_t sq2 = order_bit_to_sq[FIRST_BIT( m )]; m &= m - 1;
+    uint64_t sq3 = order_bit_to_sq[FIRST_BIT( m )]; m &= m - 1;
+    uint64_t sq4 = order_bit_to_sq[FIRST_BIT( m )]; m &= m - 1;
+    uint64_t sq5 = order_bit_to_sq[FIRST_BIT( m )];
+    uint64_t packed = sq1 | (sq2 << 8) | (sq3 << 16) | (sq4 << 24) |
+                      (sq5 << 32);
     return solve_five_empty( ts, my_bits, opp_bits, packed, alpha, beta, disc_diff, state );
   }
 
   if ( empties == 4 ) {
-    int sq1 = ts->ts_end_move_list[END_MOVE_LIST_HEAD].succ;
-    int sq2 = ts->ts_end_move_list[sq1].succ;
-    int sq3 = ts->ts_end_move_list[sq2].succ;
-    int sq4 = ts->ts_end_move_list[sq3].succ;
-    uint64_t packed = (uint64_t)sq1 | ((uint64_t)sq2 << 8) | ((uint64_t)sq3 << 16) |
-                      ((uint64_t)sq4 << 24);
+    uint64_t sq1 = order_bit_to_sq[FIRST_BIT( m )]; m &= m - 1;
+    uint64_t sq2 = order_bit_to_sq[FIRST_BIT( m )]; m &= m - 1;
+    uint64_t sq3 = order_bit_to_sq[FIRST_BIT( m )]; m &= m - 1;
+    uint64_t sq4 = order_bit_to_sq[FIRST_BIT( m )];
+    uint64_t packed = sq1 | (sq2 << 8) | (sq3 << 16) | (sq4 << 24);
     return solve_four_empty( ts, my_bits, opp_bits, packed, alpha, beta, disc_diff, state );
   }
 
   if ( empties == 3 ) {
-    int sq1 = ts->ts_end_move_list[END_MOVE_LIST_HEAD].succ;
-    int sq2 = ts->ts_end_move_list[sq1].succ;
-    int sq3 = ts->ts_end_move_list[sq2].succ;
-    uint64_t packed = (uint64_t)sq1 | ((uint64_t)sq2 << 8) | ((uint64_t)sq3 << 16);
+    uint64_t sq1 = order_bit_to_sq[FIRST_BIT( m )]; m &= m - 1;
+    uint64_t sq2 = order_bit_to_sq[FIRST_BIT( m )]; m &= m - 1;
+    uint64_t sq3 = order_bit_to_sq[FIRST_BIT( m )];
+    uint64_t packed = sq1 | (sq2 << 8) | (sq3 << 16);
     return solve_three_empty( ts, my_bits, opp_bits, packed, alpha, beta, disc_diff, state );
   }
 
   if ( empties == 2 ) {
-    int sq1 = ts->ts_end_move_list[END_MOVE_LIST_HEAD].succ;
-    int sq2 = ts->ts_end_move_list[sq1].succ;
+    int sq1 = order_bit_to_sq[FIRST_BIT( m )]; m &= m - 1;
+    int sq2 = order_bit_to_sq[FIRST_BIT( m )];
     return solve_two_empty( ts, my_bits, opp_bits, sq1, sq2,
 			    alpha, beta, disc_diff, pass_legal );
   }
 
   if ( empties == 1 ) {
-    int sq1 = ts->ts_end_move_list[END_MOVE_LIST_HEAD].succ;
+    int sq1 = order_bit_to_sq[FIRST_BIT( m )];
     int flipped = CountFlips_bitboard( sq1, my_bits );
     if ( flipped != 0 ) {
       ts->ts_end_best_move = sq1;

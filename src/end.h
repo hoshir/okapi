@@ -21,11 +21,6 @@
 
 
 
-#define END_MOVE_LIST_HEAD        0
-#define END_MOVE_LIST_TAIL        99
-
-
-
 int
 end_game( int side_to_move,
 	  int wld,

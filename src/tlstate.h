@@ -37,15 +37,6 @@
 typedef int Board[128];
 
 
-/* A doubly linked entry in the list of empty squares the endgame
-   walks; defined here because the list itself lives below. */
-
-typedef struct {
-  int pred;
-  int succ;
-} MoveLink;
-
-
 typedef struct {
   /* Counted once per node, placed at offset 0 so every solver accesses
      hot per-node state within a single L1 cache line using immediate offsets. */
@@ -65,6 +56,7 @@ typedef struct {
   int ts_counter_phase;
   int ts_disks_played;
   int ts_split_nesting;
+  BitBoard ts_empty_order_mask;
   BitBoard ts_bb_flips;
   double ts_last_panic_check;
 
@@ -74,10 +66,7 @@ typedef struct {
   /* The evaluation pattern indices, in black perspective. */
   unsigned short ts_eval_pattern_index[48] __attribute__((aligned(16)));
 
-  /* Doubly-linked list of empty squares in endgame search (offset < 1 KB). */
-  MoveLink ts_end_move_list[100];
-
-  /* Hot endgame & midgame move count per stage (offset < 1.5 KB). */
+  /* Hot endgame & midgame move count per stage (offset < 512B). */
   int ts_move_count[MAX_SEARCH_DEPTH];
   int ts_pv_depth[MAX_SEARCH_DEPTH];
   int ts_piece_count[3][MAX_SEARCH_DEPTH];
@@ -118,7 +107,7 @@ extern _Thread_local ThreadState tls;
 #define hash2               (tls.ts_hash2)
 #define disks_played        (tls.ts_disks_played)
 #define bb_flips            (tls.ts_bb_flips)
-#define end_move_list       (tls.ts_end_move_list)
+#define empty_order_mask    (tls.ts_empty_order_mask)
 #define region_parity       (tls.ts_region_parity)
 #define end_best_move       (tls.ts_end_best_move)
 #define end_best_root_move  (tls.ts_end_best_root_move)

@@ -84,6 +84,9 @@ end_hash_diff( const BitBoard new_my_bits, const BitBoard my_bits,
   *diff2 = (unsigned int) (d >> 32);
 }
 
+extern const unsigned char order_bit_to_sq[64];
+extern const BitBoard sq_to_order_mask[100];
+
 int
 solve_parity( ThreadState *ts,
 	      BitBoard my_bits,

@@ -118,36 +118,21 @@ bb_valid_move( int move, BitBoard my_bits, BitBoard opp_bits ) {
 
 static void
 prepare_to_solve( BitBoard occupied ) {
-  /* fixed square ordering: */
-  /* jcw's order, which is the best of 4 tried (according to Warren Smith) */
-  static const unsigned char worst2best[64] = {
-    /*B2*/      22 , 27 , 72 , 77 ,
-    /*B1*/      12 , 17 , 21 , 28 , 71 , 78 , 82,  87 ,
-    /*C2*/      23 , 26 , 32 , 37 , 62 , 67 , 73 , 76 ,
-    /*D2*/      24 , 25 , 42 , 47 , 52 , 57 , 74 , 75 ,
-    /*D3*/      34 , 35 , 43 , 46 , 53 , 56 , 64 , 65 ,
-    /*C1*/      13 , 16 , 31 , 38 , 61 , 68 , 83 , 86 ,
-    /*D1*/      14 , 15 , 41 , 48 , 51 , 58 , 84 , 85 ,
-    /*C3*/      33 , 36 , 63 , 66 ,
-    /*A1*/      11 , 18 , 81 , 88 , 
-    /*D4*/      44 , 45 , 54 , 45
-  };
-  int i;
-  int last_sq;
+  BitBoard empty_bb = ~occupied;
+  BitBoard order_mask = 0;
+  unsigned int par = 0;
 
-  region_parity = 0;
-
-  last_sq = END_MOVE_LIST_HEAD;
-  for ( i = 59; i >=0; i-- ) {
-    int sq = worst2best[i];
-    if ( !(occupied & square_mask[sq]) ) {
-      end_move_list[last_sq].succ = sq;
-      end_move_list[sq].pred = last_sq;
-      region_parity ^= quadrant_mask[sq];
-      last_sq = sq;
+  while ( empty_bb != 0 ) {
+    int sq = square_of_bit[FIRST_BIT( empty_bb )];
+    empty_bb &= empty_bb - 1;
+    BitBoard m = sq_to_order_mask[sq];
+    if ( m != 0 ) {
+      order_mask |= m;
+      par ^= quadrant_mask[sq];
     }
   }
-  end_move_list[last_sq].succ = END_MOVE_LIST_TAIL;
+  empty_order_mask = order_mask;
+  region_parity = par;
 }
 
 
@@ -190,7 +175,7 @@ end_search_nws( ThreadState *ts,
 
 /*
   END_MAKE_MOVE
-  Make SQ: update incremental hash keys, region parity, and unlink from move list.
+  Make SQ: update incremental hash keys, region parity, and empty_order_mask.
 */
 
 static ALWAYS_INLINE void
@@ -200,39 +185,31 @@ end_make_move( ThreadState *ts,
 	       BitBoard my_bits,
 	       int color,
 	       unsigned int *diff1,
-	       unsigned int *diff2,
-	       int *pred,
-	       int *succ ) {
+	       unsigned int *diff2 ) {
   end_hash_diff( new_my_bits, my_bits, color, sq, diff1, diff2 );
   ts->ts_hash1 ^= *diff1;
   ts->ts_hash2 ^= *diff2;
   prefetch_hash_endgame_key( ts->ts_hash2 );
   ts->ts_region_parity ^= quadrant_mask[sq];
-  *pred = ts->ts_end_move_list[sq].pred;
-  *succ = ts->ts_end_move_list[sq].succ;
-  ts->ts_end_move_list[*pred].succ = *succ;
-  ts->ts_end_move_list[*succ].pred = *pred;
+  ts->ts_empty_order_mask ^= sq_to_order_mask[sq];
 }
 
 
 
 /*
   END_UNMAKE_MOVE
-  Unmake SQ: restore incremental hash keys, region parity, and relink into move list.
+  Unmake SQ: restore incremental hash keys, region parity, and empty_order_mask.
 */
 
 static ALWAYS_INLINE void
 end_unmake_move( ThreadState *ts,
 		 int sq,
 		 unsigned int diff1,
-		 unsigned int diff2,
-		 int pred,
-		 int succ ) {
+		 unsigned int diff2 ) {
   ts->ts_region_parity ^= quadrant_mask[sq];
+  ts->ts_empty_order_mask ^= sq_to_order_mask[sq];
   ts->ts_hash1 ^= diff1;
   ts->ts_hash2 ^= diff2;
-  ts->ts_end_move_list[pred].succ = sq;
-  ts->ts_end_move_list[succ].pred = sq;
 }
 
 
@@ -739,7 +716,7 @@ end_search_sibling( SplitPoint *sp, int idx ) {
   ts->ts_hash1 = sp->sp_hash1;
   ts->ts_hash2 = sp->sp_hash2;
   ts->ts_region_parity = sp->sp_region_parity;
-  memcpy( ts->ts_end_move_list, sp->sp_end_move_list, sizeof( ts->ts_end_move_list ) );
+  ts->ts_empty_order_mask = sp->sp_empty_order_mask;
 
   int flipped = TestFlips_wrapper_to( move, my_bits, opp_bits, &new_my_bits );
   if ( flipped == 0 )
@@ -748,8 +725,7 @@ end_search_sibling( SplitPoint *sp, int idx ) {
   FULL_ANDNOT( new_opp_bits, opp_bits, new_my_bits );
 
   unsigned int diff1, diff2;
-  int pred, succ;
-  end_make_move( ts, move, new_my_bits, my_bits, sp->side_to_move, &diff1, &diff2, &pred, &succ );
+  end_make_move( ts, move, new_my_bits, my_bits, sp->side_to_move, &diff1, &diff2 );
 
   int child_disc_diff = -sp->disc_diff - 2 * flipped - 1;
 
@@ -766,7 +742,7 @@ end_search_sibling( SplitPoint *sp, int idx ) {
                            &child_selective_cutoff );
   ts->ts_split_nesting--;
 
-  end_unmake_move( ts, move, diff1, diff2, pred, succ );
+  end_unmake_move( ts, move, diff1, diff2 );
 
   if ( !split_abandoned() && !is_panic_abort() && !force_return && abs( score ) < 20000 ) {
     sp->score[idx] = score;
@@ -809,6 +785,12 @@ dispatch_siblings( ThreadState *ts,
   for ( i = 0; i < 100; i++ )
     used[i] = FALSE;
   used[searched_move] = TRUE;
+  for ( i = 0; i < best_list_length; i++ ) {
+    if ( best_list[i] == searched_move )
+      break;
+    if ( (unsigned int) best_list[i] < 100 )
+      used[best_list[i]] = TRUE;
+  }
 
   /* 1. First priority: any remaining move in best_list (e.g. TT move at root) */
   for ( i = 0; i < best_list_length; i++ ) {
@@ -877,7 +859,7 @@ dispatch_siblings( ThreadState *ts,
   sp->sp_hash1 = ts->ts_hash1;
   sp->sp_hash2 = ts->ts_hash2;
   sp->sp_region_parity = ts->ts_region_parity;
-  memcpy( sp->sp_end_move_list, ts->ts_end_move_list, sizeof( ts->ts_end_move_list ) );
+  sp->sp_empty_order_mask = ts->ts_empty_order_mask;
 
   sp->search_fn = end_search_sibling;
   sp->parent = current_split_point;
@@ -891,13 +873,14 @@ dispatch_siblings( ThreadState *ts,
   for ( i = 0; i < count; i++ ) {
     if ( sp->valid[i] ) {
       if ( sp->score[i] >= beta ) {
-        *cutoff_move = sp->moves[i];
-        *cutoff_score = sp->score[i];
-        *cutoff_selective = sp->cutoff[i];
-        found_cutoff = TRUE;
-        break;
+        if ( !found_cutoff ) {
+          *cutoff_move = sp->moves[i];
+          *cutoff_score = sp->score[i];
+          *cutoff_selective = sp->cutoff[i];
+          found_cutoff = TRUE;
+        }
       }
-      if ( (sp->score[i] <= sp->searched_alpha[i]) && (sp->score[i] <= final_alpha) ) {
+      else if ( (sp->score[i] <= sp->searched_alpha[i]) && (sp->score[i] <= final_alpha) ) {
         proven[sp->moves[i]] = TRUE;
         proven_score[sp->moves[i]] = sp->score[i];
         proven_cutoff[sp->moves[i]] = sp->cutoff[i];
@@ -1326,12 +1309,15 @@ end_order_moves_presearch( ThreadState *ts,
           memcpy( ts->ts_eval_pattern_index, saved_parent_pi, sizeof( saved_parent_pi ) );
           update_pattern_indices_ts( ts, side_to_move, m, (surv[i].child_my_bits ^ my_bits) & ~square_mask[m], 1 );
         }
-        int v = -tree_search_ts( ts, level + 1, level + d, OPP( side_to_move ),
-                                 -INFINITE_EVAL, upper, TRUE, TRUE, TRUE );
+        int raw_v = tree_search_ts( ts, level + 1, level + d, OPP( side_to_move ),
+                                    -INFINITE_EVAL, upper, TRUE, TRUE, TRUE );
+        int v = -raw_v;
         ts->ts_hash1 ^= diff1;
         ts->ts_hash2 ^= diff2;
         ts->ts_disks_played = 60 - empties;
         ts->ts_region_parity = saved_parity;
+        if ( raw_v == SEARCH_ABORT || is_panic_abort() || force_return )
+          break;
         if ( i == 0 )
           v0 = v;
 
@@ -1508,6 +1494,10 @@ end_search_nws( ThreadState *ts,
       int shallow_val =
 	tree_search_ts( ts, level, level + shallow_remains, side_to_move,
 			alpha_bound, beta_bound, use_hash, FALSE, pass_legal );
+      if ( shallow_val == SEARCH_ABORT || is_panic_abort() || force_return || SPLIT_ABANDONED() ) {
+	ts->ts_disks_played = saved_disks_played;
+	return alpha;
+      }
       if ( shallow_val >= beta_bound ) {
 	if ( use_hash )
 	  add_hash_ts( ts, ENDGAME_MODE, beta, 0,
@@ -1594,7 +1584,6 @@ end_search_nws( ThreadState *ts,
     }
     else {
       unsigned int diff1, diff2;
-      int pred, succ;
       int flipped;
       if ( pre_search_done && level <= MAX_SEARCH_DEPTH ) {
         flipped = ts->ts_cached_flipped[level][move];
@@ -1605,7 +1594,7 @@ end_search_nws( ThreadState *ts,
       }
       FULL_ANDNOT( new_opp_bits, opp_bits, new_my_bits );
 
-      end_make_move( ts, move, new_my_bits, my_bits, side_to_move, &diff1, &diff2, &pred, &succ );
+      end_make_move( ts, move, new_my_bits, my_bits, side_to_move, &diff1, &diff2 );
 
       int new_disc_diff = -disc_diff - 2 * flipped - 1;
 
@@ -1616,7 +1605,7 @@ end_search_nws( ThreadState *ts,
 				  level + 1,
 				  selectivity, &child_selective_cutoff );
 
-      end_unmake_move( ts, move, diff1, diff2, pred, succ );
+      end_unmake_move( ts, move, diff1, diff2 );
     }
 
     if ( abs( curr_val ) >= 20000 || is_panic_abort() || force_return || SPLIT_ABANDONED() ) {
@@ -1925,6 +1914,10 @@ end_search_pvs( ThreadState *ts,
 	int shallow_val =
 	  tree_search_ts( ts, level, level + shallow_remains, side_to_move,
 			  alpha_bound, beta_bound, use_hash, FALSE, pass_legal );
+	if ( shallow_val == SEARCH_ABORT || is_panic_abort() || force_return ) {
+	  ts->ts_disks_played = saved_disks_played;
+	  return alpha;
+	}
 	if ( shallow_val >= beta_bound ) {
 	  if ( use_hash )
 	    add_hash_ts( ts, ENDGAME_MODE, beta, 0,
@@ -2031,9 +2024,8 @@ end_search_pvs( ThreadState *ts,
     }
     else {
       unsigned int diff1, diff2;
-      int pred, succ;
       int flipped;
-      if ( pre_search_done && level <= MAX_SEARCH_DEPTH ) {
+      if ( pre_search_done && (move_index >= best_list_length) && (level <= MAX_SEARCH_DEPTH) ) {
         flipped = ts->ts_cached_flipped[level][move];
         new_my_bits = ts->ts_cached_flips[level][move];
       }
@@ -2042,7 +2034,7 @@ end_search_pvs( ThreadState *ts,
       }
       FULL_ANDNOT( new_opp_bits, opp_bits, new_my_bits );
 
-      end_make_move( ts, move, new_my_bits, my_bits, side_to_move, &diff1, &diff2, &pred, &succ );
+      end_make_move( ts, move, new_my_bits, my_bits, side_to_move, &diff1, &diff2 );
 
       int new_disc_diff = -disc_diff - 2 * flipped - 1;
 
@@ -2063,7 +2055,7 @@ end_search_pvs( ThreadState *ts,
 	  -end_search_nws( ts, new_opp_bits, new_my_bits,
 			   -(curr_alpha + 1), OPP( side_to_move ),
 			   empties - 1, new_disc_diff,
-			   (pre_search_done && level <= MAX_SEARCH_DEPTH) ? 2 : TRUE,
+			   (pre_search_done && (move_index >= best_list_length) && (level <= MAX_SEARCH_DEPTH)) ? 2 : TRUE,
 			   level + 1,
 			   selectivity, &child_selective_cutoff );
 
@@ -2095,7 +2087,7 @@ end_search_pvs( ThreadState *ts,
 	}
       }
 
-      end_unmake_move( ts, move, diff1, diff2, pred, succ );
+      end_unmake_move( ts, move, diff1, diff2 );
     }
 
     if ( best >= beta )
@@ -2144,7 +2136,8 @@ end_search_pvs( ThreadState *ts,
 	return best;
     }
 
-    if ( !siblings_dispatched && first &&
+    if ( !siblings_dispatched &&
+	 ((best > alpha) || (move_index + 1 >= best_list_length)) &&
 	 (empties >= PARALLEL_SPLIT_DEPTH + SPLIT_NESTING_MARGIN * ts->ts_split_nesting) &&
 	 (ts->ts_split_nesting <= MAX_SPLIT_NESTING) && (threads_count() > 1) &&
 	 (threads_idle_count() > 0) &&
