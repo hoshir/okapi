@@ -161,18 +161,8 @@ def run_cutoff_collection(repo_root: Path, log_path: Path, positions_file: Optio
                 if line and not line.startswith("#"):
                     positions.append(line)
     else:
-        # 1. 20 FFO positions from tests/ffotest.scr
-        ffo_scr = repo_root / "tests" / "ffotest.scr"
-        if ffo_scr.exists():
-            with open(ffo_scr, "r") as f:
-                for line in f:
-                    line = line.strip()
-                    if line and not line.startswith("%") and not line.startswith("#"):
-                        parts = line.split()
-                        if len(parts) >= 2 and len(parts[0]) == 64:
-                            positions.append(f"{parts[0]} {parts[1]}")
-
-        # 2. Extract diverse positions from WTHOR databases across stages 7, 8, 9, 10 (empties 12 to 20)
+        # Extract diverse positions strictly from WTHOR databases (never from tests/ffotest.scr
+        # to prevent FFO benchmark leakage, DATA-001) across stages 7, 8, 9, 10 (empties 12 to 20)
         wthor_dir = repo_root / "data" / "wthor"
         wthor_files = sorted(wthor_dir.glob("WTH_202*.wtb"), reverse=True)
         if wthor_files:
