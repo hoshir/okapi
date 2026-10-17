@@ -917,6 +917,17 @@ dispatch_siblings( ThreadState *ts,
   move ordering to order candidate moves.
 */
 
+static inline int
+eval_move_pattern_score( BitBoard child_my_bits, BitBoard new_opp_bits, int empties ) {
+  if ( empties <= FAST_PATTERN_DEPTH ) {
+    int raw_c33 = end_pattern_evaluate_c33_r24( child_my_bits, new_opp_bits );
+    return (empties >= 12) ? ((raw_c33 * 3) / 4)
+         : (empties == 11) ? ((raw_c33 * 5) / 8)
+         : (raw_c33 / 2);
+  }
+  return end_pattern_evaluate( child_my_bits, new_opp_bits );
+}
+
 static int
 end_order_moves_presearch( ThreadState *ts,
 			   int level,
@@ -1265,16 +1276,7 @@ end_order_moves_presearch( ThreadState *ts,
       int m = surv[i].sq;
       if ( (top_fast - surv[i].fast_score <= LAZY_PATTERN_MARGIN) ||
 	   (square_mask[m] & CORNER_MASK) != 0 ) {
-        int p_score;
-        if ( empties <= FAST_PATTERN_DEPTH ) {
-          int raw_c33 = end_pattern_evaluate_c33_r24( surv[i].child_my_bits, surv[i].new_opp_bits );
-          p_score = (empties >= 12) ? ((raw_c33 * 3) / 4)
-                  : (empties == 11) ? ((raw_c33 * 5) / 8)
-                  : (raw_c33 / 2);
-        } else {
-          p_score = end_pattern_evaluate( surv[i].child_my_bits, surv[i].new_opp_bits );
-        }
-        ev_stage[m] = p_score + surv[i].fast_score;
+        ev_stage[m] = eval_move_pattern_score( surv[i].child_my_bits, surv[i].new_opp_bits, empties ) + surv[i].fast_score;
         any_other_eval = 1;
       }
       else {
@@ -1284,22 +1286,13 @@ end_order_moves_presearch( ThreadState *ts,
       mlist_stage[mcnt++] = m;
     }
     if ( any_other_eval ) {
-      int p0;
-      if ( empties <= FAST_PATTERN_DEPTH ) {
-        int raw_c33 = end_pattern_evaluate_c33_r24( surv[0].child_my_bits, surv[0].new_opp_bits );
-        p0 = (empties >= 12) ? ((raw_c33 * 3) / 4)
-           : (empties == 11) ? ((raw_c33 * 5) / 8)
-           : (raw_c33 / 2);
-      } else {
-        p0 = end_pattern_evaluate( surv[0].child_my_bits, surv[0].new_opp_bits );
-      }
-      ev_stage[m0] = p0 + top_fast;
+      ev_stage[m0] = eval_move_pattern_score( surv[0].child_my_bits, surv[0].new_opp_bits, empties ) + top_fast;
     }
     else {
       ev_stage[m0] = top_fast;
     }
 
-    /* Selective shallow tree_search deepening on top-K candidates (SRCH-005 / NNUE-003 / NNUE-004)
+    /* Selective shallow tree_search deepening on top-K candidates (SRCH-005 / NNUE-003)
        Evaluates shallow lookahead for the top surviving candidates at deep endgame
        nodes (empties >= ORDER_TS_MIN_DEPTH), providing tactical lookahead to avoid
        combinatorial tree explosion during both selective passes and exact solve. */
@@ -1325,54 +1318,22 @@ end_order_moves_presearch( ThreadState *ts,
         }
       }
 
-      /* At shallow lookahead depths (empties <= 17, d == 2):
-         1. Break near-ties (<= 64 units = 0.5 discs) at empties <= 16 between top-2 candidates
-            using FastD4OthelloNNUE ordering head (NNUE-004).
-         2. Skip 46-pattern reconstruction + 2-ply tree_search_ts at empties <= 16 when surv[0]
-            already leads surv[1] by >= 384 units (3.0 discs) (NNUE-003).
-         3. Leverage FastD4OthelloNNUE score prediction head (value_weight, MAE = 9.22d) against
-            curr_alpha at empties <= 17 to skip 2-ply tree_search_ts when:
-            - surv[0] already has low opponent mobility (mob0 <= mob1), leads by >= 128 units,
-              and v0_nnue > 128 * curr_alpha + 1536 (high-confidence Fail-High CUT node), OR
-            - surv[0] leads by >= 192 units and v0_nnue < 128 * curr_alpha - 2560 (deep ALL node). */
+      /* At 2-ply lookahead depth (d == 2, empties < 18), skip 46-pattern reconstruction +
+         tree_search_ts when surv[0] already leads surv[1] by >= 384 units (3.0 discs), or
+         when surv[0] has minimum opponent mobility (mob0 <= mob1), leads by >= 128 units
+         (1.0 disc), and FastD4OthelloNNUE's score prediction head (MAE = 9.22d) predicts
+         a high-confidence Fail-High CUT node (v0_nnue > 128 * curr_alpha + 1536). */
+      int d = (empties < 18) ? 2 : (empties < 24) ? 3 : (empties < 28) ? 4 : 6;
       int skip_ts = 0;
-      if ( empties <= 17 && surv_count >= 2 ) {
+      if ( d == 2 && surv_count >= 2 ) {
         int diff01 = ev_stage[surv[0].sq] - ev_stage[surv[1].sq];
-        int has_base_acc = 0;
-        NnueAcc parent_base_acc;
-        if ( empties <= 16 && diff01 <= 64 ) {
-          nnue_init_parent_base_acc( &parent_base_acc, my_bits, opp_bits );
-          has_base_acc = 1;
-          for ( i = 0; i < 2; i++ ) {
-            int m = surv[i].sq;
-            int bit_sq = bit_position[m];
-            BitBoard flips = (surv[i].child_my_bits ^ my_bits) & ~square_mask[m];
-            NnueTactical tact = {
-              non_iterative_popcount( surv[i].opp_moves ),
-              non_iterative_popcount( surv[i].opp_moves & 0x8100000000000081ull ),
-              ( (square_mask[m] & CORNER_MASK) != 0 ) ? 1 : 0,
-              0,
-              ( (quadrant_mask[m] & effective_parity) != 0 ) ? 1 : 0,
-              (int) surv[i].flipped
-            };
-            int nnue_sc = nnue_update_and_evaluate_order(
-              &parent_base_acc, bit_sq, flips, surv[i].child_my_bits, surv[i].new_opp_bits, &tact, empties );
-            ev_stage[m] += (nnue_sc >> 3);
-          }
-          if ( ev_stage[surv[1].sq] > ev_stage[surv[0].sq] ) {
-            CandidateMove tmp = surv[0];
-            surv[0] = surv[1];
-            surv[1] = tmp;
-          }
-          diff01 = ev_stage[surv[0].sq] - ev_stage[surv[1].sq];
-        }
-        if ( empties <= 16 && diff01 >= 384 )
+        if ( diff01 >= 384 )
           skip_ts = 1;
         else if ( diff01 >= 128 ) {
           int m0 = surv[0].sq;
           int mob0 = non_iterative_popcount( surv[0].opp_moves );
           int mob1 = non_iterative_popcount( surv[1].opp_moves );
-          if ( mob0 <= mob1 || diff01 >= 192 ) {
+          if ( mob0 <= mob1 ) {
             NnueTactical tact0 = {
               mob0,
               non_iterative_popcount( surv[0].opp_moves & 0x8100000000000081ull ),
@@ -1381,26 +1342,14 @@ end_order_moves_presearch( ThreadState *ts,
               ( (quadrant_mask[m0] & effective_parity) != 0 ) ? 1 : 0,
               (int) surv[0].flipped
             };
-            int v0_nnue;
-            if ( has_base_acc ) {
-              BitBoard flips0 = (surv[0].child_my_bits ^ my_bits) & ~square_mask[m0];
-              v0_nnue = nnue_update_and_evaluate_value(
-                &parent_base_acc, bit_position[m0], flips0,
-                surv[0].child_my_bits, surv[0].new_opp_bits, &tact0, empties );
-            } else {
-              v0_nnue = nnue_evaluate_value_board(
-                surv[0].child_my_bits, surv[0].new_opp_bits, &tact0, empties );
-            }
-            if ( mob0 <= mob1 && v0_nnue > 128 * curr_alpha + 1536 )
-              skip_ts = 1;
-            else if ( diff01 >= 192 && v0_nnue < 128 * curr_alpha - 2560 )
+            if ( nnue_evaluate_value_board( surv[0].child_my_bits, surv[0].new_opp_bits, &tact0, empties ) >
+                 128 * curr_alpha + 1536 )
               skip_ts = 1;
           }
         }
       }
 
       if ( !skip_ts ) {
-        int d = (empties < 18) ? 2 : (empties < 24) ? 3 : (empties < 28) ? 4 : 6;
         if ( best_list_length == 0 &&
              ((empties >= 20 && empties <= 22) ||
               (empties == 23 && level >= 2)) )

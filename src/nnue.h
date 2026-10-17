@@ -85,37 +85,15 @@ int nnue_evaluate_value_acc(
 );
 
 /*
-   Fused incremental update + move-ordering readout in registers without storing/reloading
-   child_acc to stack memory (~17 ns/call on Apple Silicon ARM64 NEON).
+   Fused full-board NEON accumulator init + value-head readout in registers
+   without storing/reloading NnueAcc to stack memory (~35 ns/call on Apple Silicon).
 */
-int nnue_update_and_evaluate_order(
-  const NnueAcc *base_acc,
-  int sq,
-  uint64_t flips,
-  uint64_t n_my,
-  uint64_t n_opp,
-  const NnueTactical *tact,
-  int empties
-);
-
-int nnue_update_and_evaluate_value(
-  const NnueAcc *base_acc,
-  int sq,
-  uint64_t flips,
-  uint64_t n_my,
-  uint64_t n_opp,
-  const NnueTactical *tact,
-  int empties
-);
-
 int nnue_evaluate_value_board(
   uint64_t n_my,
   uint64_t n_opp,
   const NnueTactical *tact,
   int empties
 );
-
-int nnue_evaluate_board_value(uint64_t my_bits, uint64_t opp_bits, int empties);
 
 /* Bit-exact verification against Python QAT reference cases */
 int nnue_verify_reference_cases(void);
