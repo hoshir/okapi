@@ -357,6 +357,8 @@ class FastD4OthelloNNUE(nn.Module):
         b = torch.where(empties >= 11, torch.ones_like(b) * 1, b)
         b = torch.where(empties >= 14, torch.ones_like(b) * 2, b)
         b = torch.where(empties >= 17, torch.ones_like(b) * 3, b)
+        if self.num_stage_buckets >= 5:
+            b = torch.where(empties >= 20, torch.ones_like(b) * 4, b)
         return b
 
     def forward(
@@ -519,6 +521,8 @@ def simulate_int16_exact_c(
     b_idx = np.where(empties_np >= 11, 1, b_idx)
     b_idx = np.where(empties_np >= 14, 2, b_idx)
     b_idx = np.where(empties_np >= 17, 3, b_idx)
+    if model.num_stage_buckets >= 5:
+        b_idx = np.where(empties_np >= 20, 4, b_idx)
 
     raw_ord = (feats_q * ow_q[b_idx][:, None, :]).sum(axis=-1) + ob_q[b_idx][:, None]
     raw_val = (feats_q * vw_q[b_idx][:, None, :]).sum(axis=-1) + vb_q[b_idx][:, None]
@@ -691,8 +695,9 @@ def train_fast_nnue(
     test_data: Dict[str, torch.Tensor],
     device: torch.device,
     epochs: int = 55,
+    num_stage_buckets: int = 5,
 ):
-    model = FastD4OthelloNNUE(num_spatial_channels=7).to(device)
+    model = FastD4OthelloNNUE(num_spatial_channels=7, num_stage_buckets=num_stage_buckets).to(device)
     opt = torch.optim.AdamW(model.parameters(), lr=4e-3, weight_decay=2e-4)
     sched = torch.optim.lr_scheduler.CosineAnnealingLR(opt, T_max=epochs, eta_min=1e-4)
 
@@ -750,12 +755,23 @@ def train_fast_nnue(
     for name, p in model.named_parameters():
         p.requires_grad = "value_" in name
     v_opt = torch.optim.AdamW([model.value_weight, model.value_bias], lr=5e-3, weight_decay=5e-4)
+    v_sched = torch.optim.lr_scheduler.CosineAnnealingLR(v_opt, T_max=300, eta_min=1e-4)
     with torch.no_grad():
         tr_feats = model.forward_features(train_data, qat=True)
         N = tr_feats.shape[0]
         best_tr_feats = tr_feats[torch.arange(N, device=device), train_data["best_idx"]]
         tr_buckets = model.stage_bucket_index(train_data["empties"])
         tr_target = train_data["exact_score"]
+
+        va_feats = model.forward_features(val_data, qat=True)
+        N_va = va_feats.shape[0]
+        best_va_feats = va_feats[torch.arange(N_va, device=device), val_data["best_idx"]]
+        va_buckets = model.stage_bucket_index(val_data["empties"])
+        va_target = val_data["exact_score"]
+
+    best_val_mae = 1e9
+    best_vw = model.value_weight.detach().clone()
+    best_vb = model.value_bias.detach().clone()
 
     for _ in range(300):
         v_opt.zero_grad()
@@ -766,11 +782,25 @@ def train_fast_nnue(
         loss = F.l1_loss(preds, tr_target)
         loss.backward()
         v_opt.step()
+        v_sched.step()
+        with torch.no_grad():
+            vw_q = torch.round(model.value_weight * Q2) / Q2
+            vb_q = torch.round(model.value_bias * Q2) / Q2
+            va_preds = (best_va_feats * vw_q[va_buckets]).sum(dim=-1) + vb_q[va_buckets]
+            va_mae = F.l1_loss(va_preds, va_target).item()
+            if va_mae < best_val_mae:
+                best_val_mae = va_mae
+                best_vw = model.value_weight.detach().clone()
+                best_vb = model.value_bias.detach().clone()
+
+    with torch.no_grad():
+        model.value_weight.copy_(best_vw)
+        model.value_bias.copy_(best_vb)
 
     elapsed = time.time() - t0
     model.eval()
     print(
-        f"\n--- Fast-Readout NNUE-64 (7 D4 spatial channels + a7 parity channel = 64 int16 lanes, FeatDim={model.feat_dim}, trained in {elapsed:.1f}s) ---"
+        f"\n--- Fast-Readout NNUE-64 (7 D4 spatial channels + a7 parity channel = 64 int16 lanes, FeatDim={model.feat_dim}, Buckets={num_stage_buckets}, trained in {elapsed:.1f}s) ---"
     )
     with torch.no_grad():
         val_ord_fp, val_val_fp = model(val_data, qat=True)
@@ -809,17 +839,24 @@ def train_fast_nnue(
 
 
 def main():
+    import argparse
+    parser = argparse.ArgumentParser(description="Train Fast-Readout Othello NNUE (NNUE-002).")
+    parser.add_argument("--data", type=str, default="data/clean_exact_dataset.pt", help="Path to clean_exact_dataset*.pt")
+    parser.add_argument("--export-header", type=str, default="src/nnue_data.h", help="Path to export C header")
+    parser.add_argument("--stage-buckets", type=int, default=5, help="Number of stage buckets (4 or 5)")
+    args = parser.parse_args()
+
     torch.manual_seed(42)
     np.random.seed(42)
     device = torch.device("mps" if torch.backends.mps.is_available() else "cpu")
     print(f"Using device: {device}")
 
-    raw_samples = torch.load("data/clean_exact_dataset.pt", weights_only=False)
+    raw_samples = torch.load(args.data, weights_only=False)
     train_s = [s for s in raw_samples if s.get("split") == "train"]
     val_s = [s for s in raw_samples if s.get("split") == "val"]
     test_s = [s for s in raw_samples if s.get("split") == "test"]
     print(
-        f"Loaded {len(raw_samples)} exact samples: train={len(train_s)}, val={len(val_s)}, test={len(test_s)}"
+        f"Loaded {len(raw_samples):,} exact samples from {args.data}: train={len(train_s):,}, val={len(val_s):,}, test={len(test_s):,}"
     )
 
     train_data = build_e_unified_tensors(train_s, device)
@@ -844,8 +881,33 @@ def main():
     print("TRAINING FAST-READOUT E-UNIFIED OTHELLO NNUE (NNUE-002)")
     print("=" * 120)
 
-    _, q64 = train_fast_nnue(train_data, val_data, test_data, device, epochs=55)
-    export_nnue_header("src/nnue_data.h", q64, num_spatial_channels=7)
+    model, q64 = train_fast_nnue(
+        train_data, val_data, test_data, device, epochs=55, num_stage_buckets=args.stage_buckets
+    )
+
+    val_d3_s = [s for s in val_s if s.get("empties", 0) >= 18]
+    test_d3_s = [s for s in test_s if s.get("empties", 0) >= 18]
+    if len(test_d3_s) > 0:
+        print(f"\n--- Evaluation on d=3 Target Range (empties >= 18: val={len(val_d3_s):,}, test={len(test_d3_s):,}) ---")
+        vd3_data = build_e_unified_tensors(val_d3_s, device)
+        td3_data = build_e_unified_tensors(test_d3_s, device)
+        vo_d3, vv_d3, _ = simulate_int16_exact_c(model, vd3_data)
+        to_d3, tv_d3, _ = simulate_int16_exact_c(model, td3_data)
+        eval_dual_heads(vo_d3, vv_d3, vd3_data, "[VAL-d=3 (18..22)]  Exact int16 C/NEON")
+        eval_dual_heads(to_d3, tv_d3, td3_data, "[TEST-d=3 (18..22)] Exact int16 C/NEON")
+
+    val_1x_s = [s for s in val_s if s.get("game_id", 0) < 3000]
+    test_1x_s = [s for s in test_s if s.get("game_id", 0) < 3000]
+    if 0 < len(val_1x_s) < len(val_s):
+        print("\n--- Evaluation on Identical 1x Held-Out Val/Test Sets (game_id < 3000) ---")
+        v1x_data = build_e_unified_tensors(val_1x_s, device)
+        t1x_data = build_e_unified_tensors(test_1x_s, device)
+        vo_q, vv_q, _ = simulate_int16_exact_c(model, v1x_data)
+        to_q, tv_q, _ = simulate_int16_exact_c(model, t1x_data)
+        eval_dual_heads(vo_q, vv_q, v1x_data, "[VAL-1x]  Fast-Readout NNUE-64 (Exact int16 C/NEON)")
+        eval_dual_heads(to_q, tv_q, t1x_data, "[TEST-1x] Fast-Readout NNUE-64 (Exact int16 C/NEON)")
+
+    export_nnue_header(args.export_header, q64, num_spatial_channels=7)
 
 
 if __name__ == "__main__":

@@ -1318,14 +1318,19 @@ end_order_moves_presearch( ThreadState *ts,
         }
       }
 
-      /* At 2-ply lookahead depth (d == 2, empties < 18), skip 46-pattern reconstruction +
+      /* At 2..3-ply lookahead depth (d <= 3, empties <= 23), skip 46-pattern reconstruction +
          tree_search_ts when surv[0] already leads surv[1] by >= 384 units (3.0 discs), or
          when surv[0] has minimum opponent mobility (mob0 <= mob1), leads by >= 128 units
-         (1.0 disc), and FastD4OthelloNNUE's score prediction head (MAE = 9.22d) predicts
+         (1.0 disc), and FastD4OthelloNNUE's score prediction head (MAE = 8.57d) predicts
          a high-confidence Fail-High CUT node (v0_nnue > 128 * curr_alpha + 1536). */
       int d = (empties < 18) ? 2 : (empties < 24) ? 3 : (empties < 28) ? 4 : 6;
+      if ( best_list_length == 0 &&
+           ((empties >= 20 && empties <= 22) ||
+            (empties == 23 && level >= 2)) )
+        d += 1;
+
       int skip_ts = 0;
-      if ( d == 2 && surv_count >= 2 ) {
+      if ( d <= 3 && surv_count >= 2 ) {
         int diff01 = ev_stage[surv[0].sq] - ev_stage[surv[1].sq];
         if ( diff01 >= 384 )
           skip_ts = 1;
@@ -1350,10 +1355,6 @@ end_order_moves_presearch( ThreadState *ts,
       }
 
       if ( !skip_ts ) {
-        if ( best_list_length == 0 &&
-             ((empties >= 20 && empties <= 22) ||
-              (empties == 23 && level >= 2)) )
-          d += 1;
         int upper = (-curr_alpha + 8) * 128;
         int ff_thr = 128 * curr_alpha + (int) ceil( (end_mean[stage][d] + 0.45 * end_sigma[stage][d]) * 128.0 );
         int k_limit = (ORDER_TS_TOPK < surv_count) ? ORDER_TS_TOPK : surv_count;

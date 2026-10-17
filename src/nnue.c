@@ -16,6 +16,10 @@
 
 static inline int
 nnue_stage_bucket( int empties ) {
+#if NNUE_STAGE_BUCKETS >= 5
+  if ( empties >= 20 )
+    return 4;
+#endif
   if ( empties >= 17 )
     return 3;
   if ( empties >= 14 )
