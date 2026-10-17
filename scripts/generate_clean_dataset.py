@@ -205,15 +205,17 @@ def generate_egaroucid_style_seed_roots(
     forbidden_ffo: Set[Tuple[int, int]],
     seen_roots: Set[Tuple[int, int]],
     seed: int = 42,
+    target_empties_choices: Optional[List[int]] = None,
 ) -> List[Tuple[int, str, int, int]]:
-    """Generates diverse root positions at 18-20 empties using Egaroucid's methodology:
+    """Generates diverse root positions at target empties using Egaroucid's methodology:
     Variable random opening prefix N_rand in {12, 18, 24, 30, 36, 40}, discarding all plies < N_rand,
-    followed by mobility/corner-guided midgame play to reach realistic 18-20 empty roots.
+    followed by mobility/corner-guided midgame play to reach realistic empty roots.
     Returns list of (game_id, source, my_bits, opp_bits).
     """
     rng = random.Random(seed)
     random_choices = [12, 18, 24, 30, 36, 40]
-    target_empties_choices = [18, 18, 18, 19, 20]
+    if not target_empties_choices:
+        target_empties_choices = [18, 18, 18, 19, 20]
     roots = []
     game_id = 0
     attempts = 0
@@ -223,6 +225,8 @@ def generate_egaroucid_style_seed_roots(
         n_rand = rng.choice(random_choices)
         target_emp = rng.choice(target_empties_choices)
         target_dc = 64 - target_emp
+        if 4 + n_rand > target_dc:
+            n_rand = max(8, target_dc - 6)
 
         # Initial standard board: d4=W(27), e4=B(28), d5=B(35), e5=W(36), Black to move
         my_b = (1 << 28) | (1 << 35)
@@ -289,11 +293,14 @@ def collect_wthor_seed_roots(
     forbidden_ffo: Set[Tuple[int, int]],
     seen_roots: Set[Tuple[int, int]],
     seed: int = 123,
+    target_empties_choices: Optional[List[int]] = None,
 ) -> List[Tuple[int, str, int, int]]:
-    """Extracts diverse 18-20 empty board states from WTHOR files (used purely as board seeds,
+    """Extracts diverse empty board states from WTHOR files (used purely as board seeds,
     ignoring human moves and human scores).
     """
     rng = random.Random(seed)
+    if not target_empties_choices:
+        target_empties_choices = [18, 18, 18, 19, 20]
     wthor_files = sorted(wthor_dir.glob("WTH_*.wtb"), reverse=True)
     roots = []
     game_id = start_game_id
@@ -302,7 +309,7 @@ def collect_wthor_seed_roots(
         for g in parse_wthor_file(wf):
             if len(roots) >= num_games:
                 break
-            target_emp = rng.choice([18, 18, 18, 19, 20])
+            target_emp = rng.choice(target_empties_choices)
             target_dc = 64 - target_emp
             b = OthelloBoard()
             leaked = False
@@ -407,11 +414,14 @@ def _solve_root_batch_worker(args_tuple) -> List[Tuple[int, str, int, int, int, 
 def expand_pv_to_samples(
     solved_roots: List[Tuple[int, str, int, int, int, List[int]]],
     forbidden_ffo: Set[Tuple[int, int]],
+    initial_seen_canon: Optional[Set[Tuple[int, int]]] = None,
+    min_empties: int = 8,
+    max_empties: int = 20,
 ) -> List[dict]:
-    """Expands each solved root along its exact Principal Variation down to 8 empties,
+    """Expands each solved root along its exact Principal Variation down to min_empties,
     deduplicating under D4 symmetry and enforcing zero FFO collisions.
     """
-    seen_canon: Set[Tuple[int, int]] = set()
+    seen_canon: Set[Tuple[int, int]] = set(initial_seen_canon) if initial_seen_canon else set()
     samples = []
 
     for game_id, source, root_my, root_opp, root_score, pv_sqs in solved_roots:
@@ -425,7 +435,7 @@ def expand_pv_to_samples(
         for mv_sq in pv_sqs:
             dc = popcount(my_b | opp_b)
             empties = 64 - dc
-            if empties < 8:
+            if empties < min_empties:
                 break
 
             if mv_sq == -1:
@@ -440,7 +450,7 @@ def expand_pv_to_samples(
             if mv_sq not in legals:
                 break
 
-            if len(legals) >= 2 and 8 <= empties <= 20:
+            if len(legals) >= 2 and min_empties <= empties <= max_empties:
                 canon = canonical_board(my_b, opp_b)
                 if canon not in forbidden_ffo and canon not in seen_canon:
                     seen_canon.add(canon)
@@ -496,13 +506,19 @@ def expand_pv_to_samples(
 
 def main():
     parser = argparse.ArgumentParser(description="Generate 100% engine-solved, FFO-free master dataset (DATA-001).")
+    parser.add_argument("--extend-from", type=Path, default=None, help="Existing dataset .pt to extend while preserving its exact samples and canonical deduplication")
     parser.add_argument("--selfplay-roots", type=int, default=1200, help="Number of Egaroucid-style self-play root games")
     parser.add_argument("--wthor-roots", type=int, default=1800, help="Number of WTHOR board-seed root games")
+    parser.add_argument("--root-empties", type=str, default="18,18,18,19,20", help="Comma-separated target root empties choices")
+    parser.add_argument("--min-sample-empties", type=int, default=8, help="Minimum empties to record along PV")
+    parser.add_argument("--max-sample-empties", type=int, default=20, help="Maximum empties to record along PV")
+    parser.add_argument("--seed", type=int, default=42, help="Random seed")
     parser.add_argument("--workers", type=int, default=max(1, (os.cpu_count() or 8) - 1), help="Parallel solver workers")
     parser.add_argument("--batch-size", type=int, default=50, help="Root positions per worker batch")
     parser.add_argument("--out", type=Path, default=Path("data/clean_exact_dataset.pt"))
     parser.add_argument("--out-scores", type=Path, default=Path("data/clean_exact_scores.pt"))
     args = parser.parse_args()
+    root_emp_choices = [int(x.strip()) for x in args.root_empties.split(",") if x.strip()]
 
     repo_root = Path(__file__).resolve().parent.parent
     bin_dir = repo_root / "build" / "bin"
@@ -514,18 +530,34 @@ def main():
     forbidden_ffo = build_ffo_forbidden_set(repo_root, max_ply=3)
     print(f"      Indexed {len(forbidden_ffo):,} forbidden FFO canonical board states.")
 
+    base_samples = []
     seen_roots: Set[Tuple[int, int]] = set()
-    print(f"[2/4] Generating {args.selfplay_roots:,} Egaroucid-style stratified random+selfplay root boards...")
-    sp_roots = generate_egaroucid_style_seed_roots(args.selfplay_roots, forbidden_ffo, seen_roots)
+    start_gid = 0
+    if args.extend_from is not None:
+        ext_path = repo_root / args.extend_from
+        base_samples = torch.load(ext_path, weights_only=False)
+        for s in base_samples:
+            seen_roots.add(canonical_board(s["my_bits"], s["opp_bits"]))
+        start_gid = max(s["game_id"] for s in base_samples) + 1
+        print(f"      Loaded {len(base_samples):,} existing samples from {ext_path} (pre-seeded {len(seen_roots):,} canonical boards, start_gid={start_gid}).")
+
+    initial_seen_canon = set(seen_roots)
+    print(f"[2/4] Generating {args.selfplay_roots:,} Egaroucid-style stratified random+selfplay root boards (empties={root_emp_choices})...")
+    sp_roots = generate_egaroucid_style_seed_roots(
+        args.selfplay_roots, forbidden_ffo, seen_roots, seed=args.seed, target_empties_choices=root_emp_choices
+    )
+    sp_roots = [(start_gid + i, src, my_b, opp_b) for i, (_, src, my_b, opp_b) in enumerate(sp_roots)]
     print(f"      Generated {len(sp_roots):,} unique selfplay roots in {time.time() - t0:.1f}s.")
 
-    print(f"[3/4] Collecting {args.wthor_roots:,} WTHOR seed root boards (ignoring human labels)...")
+    print(f"[3/4] Collecting {args.wthor_roots:,} WTHOR seed root boards (ignoring human labels, empties={root_emp_choices})...")
     wt_roots = collect_wthor_seed_roots(
         repo_root / "data" / "wthor",
         args.wthor_roots,
-        start_game_id=len(sp_roots),
+        start_game_id=start_gid + len(sp_roots),
         forbidden_ffo=forbidden_ffo,
         seen_roots=seen_roots,
+        seed=args.seed + 81,
+        target_empties_choices=root_emp_choices,
     )
     all_roots = sp_roots + wt_roots
     print(f"      Total unique root games to solve with scrzebra -e 0: {len(all_roots):,}")
@@ -551,8 +583,15 @@ def main():
                     flush=True,
                 )
 
-    print("Expanding exact Principal Variations (8..20 empties) and extracting bitboard/pattern features...")
-    samples = expand_pv_to_samples(solved_roots, forbidden_ffo)
+    print(f"Expanding exact Principal Variations ({args.min_sample_empties}..{args.max_sample_empties} empties) and extracting bitboard/pattern features...")
+    new_samples = expand_pv_to_samples(
+        solved_roots,
+        forbidden_ffo,
+        initial_seen_canon=initial_seen_canon,
+        min_empties=args.min_sample_empties,
+        max_empties=args.max_sample_empties,
+    )
+    samples = base_samples + new_samples
     scores_tensor = torch.tensor([s["exact_score"] for s in samples], dtype=torch.float32)
 
     out_path = repo_root / args.out
@@ -569,10 +608,10 @@ def main():
     print(f"\n======================================================================")
     print(f"Clean Master Dataset Summary ({out_path})")
     print(f"======================================================================")
-    print(f"  Total exact-solved samples : {len(samples):,} (from {len(solved_roots):,} solved games)")
+    print(f"  Total exact-solved samples : {len(samples):,} (added {len(new_samples):,} from {len(solved_roots):,} solved games)")
     print(f"  Splits (by Game ID)        : train={split_cnt['train']:,}, val={split_cnt['val']:,}, test={split_cnt['test']:,}")
     print(f"  Stages                     : " + ", ".join(f"Stage {k}: {v:,}" for k, v in sorted(stage_cnt.items())))
-    print(f"  Empties (8..20)            : " + ", ".join(f"{k}:{v:,}" for k, v in sorted(emp_cnt.items())))
+    print(f"  Empties                    : " + ", ".join(f"{k}:{v:,}" for k, v in sorted(emp_cnt.items())))
     print(f"  True Draw (0.0) Rate       : {100.0 * zero_sc / max(1, len(samples)):.2f}% ({zero_sc:,} samples)")
     print(f"  Total elapsed time         : {time.time() - t0:.1f}s")
 
