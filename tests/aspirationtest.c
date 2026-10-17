@@ -97,6 +97,128 @@ main( void ) {
     CHECK( alpha == 13 && beta == 22 && delta == 16,
 	   "2nd fail-high bounds: got [%d, %d] delta=%d", alpha, beta, delta );
   }
+  /* Even-score 1-disc fail-low/fail-high from [c - 1, c + 1] must still
+     anchor the first step (d == 4) at center c (e.g. FFO #57: c = -8,
+     window [-9, -7], root_eval = -10 -> [-12, -9], NOT [-14, -9]). */
+  {
+    int alpha = -9, beta = -7, delta = 4;
+    end_aspiration_next_bounds( -10, &alpha, &beta, &delta );
+    CHECK( alpha == -12 && beta == -9 && delta == 8,
+	   "even 1st fail-low bounds from [-9,-7]: got [%d, %d] delta=%d",
+	   alpha, beta, delta );
+  }
+  {
+    int alpha = 9, beta = 11, delta = 4;
+    end_aspiration_next_bounds( 12, &alpha, &beta, &delta );
+    CHECK( alpha == 11 && beta == 14 && delta == 8,
+	   "even 1st fail-high bounds from [9,11]: got [%d, %d] delta=%d",
+	   alpha, beta, delta );
+  }
+  /* Multi-disc stability bound jump on 1st step (root_eval < *alpha - 1)
+     must anchor at root_eval rather than center. */
+  {
+    int alpha = -9, beta = -7, delta = 4;
+    end_aspiration_next_bounds( -14, &alpha, &beta, &delta );
+    CHECK( alpha == -18 && beta == -13 && delta == 8,
+	   "deep stability fail-low bounds from [-9,-7]: got [%d, %d] delta=%d",
+	   alpha, beta, delta );
+  }
+
+  /* Exhaustive property check across all even centers c in [-60, 60]:
+     1. Single-even-score first re-search invariant (the FFO #57 invariant):
+        On a 1-disc fail-low from [c - 1, c + 1] (returning even c - 2 or odd c - 1),
+        new_alpha must be MAX(-64, c - 4) so that c - 4 <= new_alpha (cutoff boundary)
+        and at most ONE even score (c - 2) lies strictly inside (new_alpha, new_beta).
+        Likewise on a 1-disc fail-high (returning even c + 2 or odd c + 1),
+        new_beta must be MIN(64, c + 4) so that c + 4 >= new_beta.
+     2. Full multi-step aspiration loop convergence across all even true_eval in [-64, 64]
+        when the solver returns even fail-low/fail-high bounds. */
+  {
+    int c, true_eval;
+    for ( c = -60; c <= 60; c += 2 ) {
+      /* 1-disc fail-low returning even c - 2 */
+      {
+	int alpha = c - 1, beta = c + 1, delta = 4;
+	int expected_alpha = (c - 4 < -64) ? -64 : (c - 4);
+	int even_inside = 0, s;
+	end_aspiration_next_bounds( c - 2, &alpha, &beta, &delta );
+	CHECK( alpha == expected_alpha && beta == c - 1,
+	       "c=%d even 1-disc fail-low: got [%d, %d], expected [%d, %d]",
+	       c, alpha, beta, expected_alpha, c - 1 );
+	for ( s = -64; s <= 64; s += 2 ) {
+	  if ( s > alpha && s < beta )
+	    even_inside++;
+	}
+	CHECK( even_inside <= 1,
+	       "c=%d even 1-disc fail-low window (%d, %d) contains %d even scores (must be <= 1)",
+	       c, alpha, beta, even_inside );
+      }
+      /* 1-disc fail-high returning even c + 2 */
+      {
+	int alpha = c - 1, beta = c + 1, delta = 4;
+	int expected_beta = (c + 4 > 64) ? 64 : (c + 4);
+	int even_inside = 0, s;
+	end_aspiration_next_bounds( c + 2, &alpha, &beta, &delta );
+	CHECK( alpha == c + 1 && beta == expected_beta,
+	       "c=%d even 1-disc fail-high: got [%d, %d], expected [%d, %d]",
+	       c, alpha, beta, c + 1, expected_beta );
+	for ( s = -64; s <= 64; s += 2 ) {
+	  if ( s > alpha && s < beta )
+	    even_inside++;
+	}
+	CHECK( even_inside <= 1,
+	       "c=%d even 1-disc fail-high window (%d, %d) contains %d even scores (must be <= 1)",
+	       c, alpha, beta, even_inside );
+      }
+      /* Full aspiration convergence for every even true_eval in [-64, 64] */
+      for ( true_eval = -64; true_eval <= 64; true_eval += 2 ) {
+	int alpha = c - 1, beta = c + 1, delta = 4;
+	int steps = 0;
+	while ( 1 ) {
+	  /* Alpha-beta with even endgame scores returns:
+	     - true_eval if strictly inside (alpha, beta)
+	     - largest even score <= alpha on fail-low
+	     - smallest even score >= beta on fail-high */
+	  int root_eval;
+	  if ( true_eval <= alpha )
+	    root_eval = (alpha >= 0) ? (alpha & ~1) : -((-alpha + 1) & ~1);
+	  else if ( true_eval >= beta )
+	    root_eval = (beta >= 0) ? ((beta + 1) & ~1) : -((-beta) & ~1);
+	  else
+	    root_eval = true_eval;
+
+	  if ( root_eval > alpha && root_eval < beta ) {
+	    CHECK( root_eval == true_eval,
+		   "c=%d true=%d converged to wrong eval %d", c, true_eval, root_eval );
+	    break;
+	  }
+	  if ( (alpha <= -64 && beta >= 64) || root_eval >= 64 || root_eval <= -64 ) {
+	    CHECK( root_eval == true_eval,
+		   "c=%d true=%d boundary exit with %d", c, true_eval, root_eval );
+	    break;
+	  }
+	  int prev_alpha = alpha, prev_beta = beta;
+	  end_aspiration_next_bounds( root_eval, &alpha, &beta, &delta );
+	  steps++;
+	  CHECK( alpha < beta && alpha >= -64 && beta <= 64,
+		 "c=%d true=%d invalid bounds [%d, %d] at step %d",
+		 c, true_eval, alpha, beta, steps );
+	  if ( root_eval <= prev_alpha )
+	    CHECK( beta <= prev_beta,
+		   "c=%d true=%d beta widened on fail-low (%d -> %d)",
+		   c, true_eval, prev_beta, beta );
+	  if ( root_eval >= prev_beta )
+	    CHECK( alpha >= prev_alpha,
+		   "c=%d true=%d alpha widened on fail-high (%d -> %d)",
+		   c, true_eval, prev_alpha, alpha );
+	  CHECK( steps <= 6,
+		 "c=%d true=%d failed to converge in 6 steps", c, true_eval );
+	  if ( steps > 6 )
+	    break;
+	}
+      }
+    }
+  }
 
   /* Verify selective step-center snapping on large bound returns: */
   CHECK( end_aspiration_step_center( 10, 9, -2 ) == 8,
