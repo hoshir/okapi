@@ -17,6 +17,7 @@
 #include <string.h>
 
 #include "autoplay.h"
+#include "bitbmob.h"
 #include "bitbtest.h"
 #include "constant.h"
 #include "display.h"
@@ -350,7 +351,6 @@ fast_tree_search( ThreadState *ts, int level, int max_depth, int side_to_move, i
   int remains;
   int use_hash, new_use_hash;
   int curr_alpha;
-  int empties_remaining;
   HashEntry entry;
 
   ts->ts_nodes.lo++;
@@ -395,20 +395,20 @@ fast_tree_search( ThreadState *ts, int level, int max_depth, int side_to_move, i
     int dp = ts->ts_disks_played;
     BitBoard my_bits = ts->ts_board_bits[side_to_move];
     BitBoard opp_bits = ts->ts_board_bits[OPP( side_to_move )];
-    BitBoard empty_bits = ts->ts_board_bits[EMPTY];
-    const int *smo = ts->ts_sorted_move_order[dp];
-    int b_cnt = ts->ts_piece_count[BLACKSQ][dp];
-    int w_cnt = ts->ts_piece_count[WHITESQ][dp];
-    unsigned short saved_pi[48] __attribute__((aligned(16)));
-    memcpy( saved_pi, ts->ts_eval_pattern_index, sizeof( saved_pi ) );
-    empties_remaining = 60 - dp;
-    for ( move_index = 0; move_index < MOVE_ORDER_SIZE; move_index++ ) {
-      move = smo[move_index];
-      if ( empty_bits & square_mask[move] ) {
-	BitBoard new_my_bits;
-	int flipped = TestFlips_bitboard_to( move, my_bits, opp_bits, &new_my_bits );
-	if ( flipped != 0 ) {
-	  BitBoard mask = (new_my_bits ^ my_bits) & ~square_mask[move];
+    BitBoard legal_bits = generate_all_c( my_bits, opp_bits );
+    if ( legal_bits != 0 ) {
+      const int *smo = ts->ts_sorted_move_order[dp];
+      int b_cnt = ts->ts_piece_count[BLACKSQ][dp];
+      int w_cnt = ts->ts_piece_count[WHITESQ][dp];
+      unsigned short saved_pi[48] __attribute__((aligned(16)));
+      memcpy( saved_pi, ts->ts_eval_pattern_index, sizeof( saved_pi ) );
+      for ( move_index = 0; ; move_index++ ) {
+	move = smo[move_index];
+	BitBoard sq_m = square_mask[move];
+	if ( legal_bits & sq_m ) {
+	  BitBoard new_my_bits;
+	  int flipped = TestFlips_bitboard_to( move, my_bits, opp_bits, &new_my_bits );
+	  BitBoard mask = (new_my_bits ^ my_bits) & ~sq_m;
 	  if ( !first )
 	    memcpy( ts->ts_eval_pattern_index, saved_pi, sizeof( saved_pi ) );
 	  update_pattern_indices_ts( ts, side_to_move, move, mask, 1 );
@@ -442,28 +442,28 @@ fast_tree_search( ThreadState *ts, int level, int max_depth, int side_to_move, i
 	    }
 	  }
 	  first = FALSE;
+	  legal_bits &= ~sq_m;
+	  if ( legal_bits == 0 )
+	    break;
 	}
-	empties_remaining--;
-	if ( empties_remaining == 0 )
-	  break;
       }
-    }
-    if ( !first ) {
       ts->ts_disks_played = dp;
       memcpy( ts->ts_eval_pattern_index, saved_pi, sizeof( saved_pi ) );
     }
   }
   else {  /* Principal variation search for deeper searches */
     int dp = ts->ts_disks_played;
-    BitBoard empty_bits = ts->ts_board_bits[EMPTY];
-    const int *smo = ts->ts_sorted_move_order[dp];
-    new_use_hash = (remains >= HASH_THRESHOLD + 1) && use_hash;
-    curr_alpha = alpha;
-    empties_remaining = 60 - dp;
-    for ( move_index = 0; move_index < MOVE_ORDER_SIZE; move_index++ ) {
-      move = smo[move_index];
-      if ( empty_bits & square_mask[move] ) {
-	if ( make_move_bb_ts( ts, side_to_move, move, new_use_hash ) != 0 ) {
+    BitBoard legal_bits = generate_all_c( ts->ts_board_bits[side_to_move],
+					  ts->ts_board_bits[OPP( side_to_move )] );
+    if ( legal_bits != 0 ) {
+      const int *smo = ts->ts_sorted_move_order[dp];
+      new_use_hash = (remains >= HASH_THRESHOLD + 1) && use_hash;
+      curr_alpha = alpha;
+      for ( move_index = 0; ; move_index++ ) {
+	move = smo[move_index];
+	BitBoard sq_m = square_mask[move];
+	if ( legal_bits & sq_m ) {
+	  (void) make_move_bb_ts( ts, side_to_move, move, new_use_hash );
 	  if ( first ) {
 	    best = curr_val =
 	      -fast_tree_search( ts, level + 1, max_depth, OPP( side_to_move ),
@@ -501,10 +501,10 @@ fast_tree_search( ThreadState *ts, int level, int max_depth, int side_to_move, i
 	    return best;
 	  }
 	  first = FALSE;
+	  legal_bits &= ~sq_m;
+	  if ( legal_bits == 0 )
+	    break;
 	}
-	empties_remaining--;
-	if ( empties_remaining == 0 )
-	  break;
       }
     }
   }
@@ -594,7 +594,6 @@ tree_search_ts( ThreadState *ts,
   int searched;
   int move, hash_move;
   int move_index, best_move_index;
-  int empties_remaining;
   int hash_hit;
   int pre_depth;
   int update_pv;
@@ -767,25 +766,25 @@ tree_search_ts( ThreadState *ts,
 	int dp = ts->ts_disks_played;
 	BitBoard my_bits = ts->ts_board_bits[side_to_move];
 	BitBoard opp_bits = ts->ts_board_bits[OPP( side_to_move )];
-	BitBoard empty_bits = ts->ts_board_bits[EMPTY];
-	const int *smo = ts->ts_sorted_move_order[dp];
-	int *ev_dp = ts->ts_evals[dp];
-	int *feas_dp = ts->ts_feas_index_list[dp];
-	int b_cnt = ts->ts_piece_count[BLACKSQ][dp];
-	int w_cnt = ts->ts_piece_count[WHITESQ][dp];
-	unsigned short saved_pi[48] __attribute__((aligned(16)));
-	memcpy( saved_pi, ts->ts_eval_pattern_index, sizeof( saved_pi ) );
+	BitBoard legal_bits = generate_all_c( my_bits, opp_bits );
 	int mcnt = 0;
 	int best_1ply_move = 0;
 	best = -INFINITE_EVAL;
-	empties_remaining = 60 - dp;
-	for ( move_index = 0; move_index < MOVE_ORDER_SIZE; move_index++ ) {
-	  move = smo[move_index];
-	  if ( empty_bits & square_mask[move] ) {
-	    BitBoard new_my_bits;
-	    int flipped = TestFlips_bitboard_to( move, my_bits, opp_bits, &new_my_bits );
-	    if ( flipped != 0 ) {
-	      BitBoard mask = (new_my_bits ^ my_bits) & ~square_mask[move];
+	if ( legal_bits != 0 ) {
+	  const int *smo = ts->ts_sorted_move_order[dp];
+	  int *ev_dp = ts->ts_evals[dp];
+	  int *feas_dp = ts->ts_feas_index_list[dp];
+	  int b_cnt = ts->ts_piece_count[BLACKSQ][dp];
+	  int w_cnt = ts->ts_piece_count[WHITESQ][dp];
+	  unsigned short saved_pi[48] __attribute__((aligned(16)));
+	  memcpy( saved_pi, ts->ts_eval_pattern_index, sizeof( saved_pi ) );
+	  for ( move_index = 0; ; move_index++ ) {
+	    move = smo[move_index];
+	    BitBoard sq_m = square_mask[move];
+	    if ( legal_bits & sq_m ) {
+	      BitBoard new_my_bits;
+	      int flipped = TestFlips_bitboard_to( move, my_bits, opp_bits, &new_my_bits );
+	      BitBoard mask = (new_my_bits ^ my_bits) & ~sq_m;
 	      if ( mcnt > 0 )
 		memcpy( ts->ts_eval_pattern_index, saved_pi, sizeof( saved_pi ) );
 	      update_pattern_indices_ts( ts, side_to_move, move, mask, 1 );
@@ -819,13 +818,11 @@ tree_search_ts( ThreadState *ts,
 	      if ( move == hash_move )  /* Always try hash table move first */
 		ev_dp[move] += HASH_MOVE_BONUS;
 	      feas_dp[mcnt++] = move_index;
+	      legal_bits &= ~sq_m;
+	      if ( legal_bits == 0 )
+		break;
 	    }
-	    empties_remaining--;
-	    if ( empties_remaining == 0 )
-	      break;
 	  }
-	}
-	if ( mcnt > 0 ) {
 	  ts->ts_disks_played = dp;
 	  memcpy( ts->ts_eval_pattern_index, saved_pi, sizeof( saved_pi ) );
 	}
@@ -879,26 +876,22 @@ tree_search_ts( ThreadState *ts,
       int *ev_dp = ts->ts_evals[dp];
       int *feas_dp = ts->ts_feas_index_list[dp];
       if ( !pre_search_done ) {
-	BitBoard empty_bits = ts->ts_board_bits[EMPTY];
+	BitBoard legal_bits = generate_all_c( ts->ts_board_bits[side_to_move],
+					      ts->ts_board_bits[OPP( side_to_move )] );
+	for ( j = 0; j < best_list_length; j++ )
+	  legal_bits &= ~square_mask[best_list[j]];
 	int mcnt = ts->ts_move_count[dp];
 	if ( remains < DEPTH_TWO_DEPTH )
 	  pre_depth = 1;
 	else
 	  pre_depth = 2;
 	pre_best = -INFINITE_EVAL;
-	empties_remaining = 60 - dp;
-	for ( move_index = 0; move_index < MOVE_ORDER_SIZE; move_index++ ) {
-	  int already_checked;
-
-	  move = smo[move_index];
-	  already_checked = FALSE;
-	  for ( j = 0; j < best_list_length; j++ )
-	    if ( move == best_list[j] )
-	      already_checked = TRUE;
-
-	  if ( empty_bits & square_mask[move] ) {
-	    if ( !already_checked &&
-		 (make_move_bb_ts( ts, side_to_move, move, TRUE ) != 0 ) ) {
+	if ( legal_bits != 0 ) {
+	  for ( move_index = 0; ; move_index++ ) {
+	    move = smo[move_index];
+	    BitBoard sq_m = square_mask[move];
+	    if ( legal_bits & sq_m ) {
+	      (void) make_move_bb_ts( ts, side_to_move, move, TRUE );
 	      curr_val = -tree_search_ts( ts, level + 1, level + pre_depth,
 					  OPP( side_to_move ), -INFINITE_EVAL,
 					  -pre_best, FALSE, FALSE, TRUE );
@@ -908,10 +901,10 @@ tree_search_ts( ThreadState *ts,
 	      pre_best = MAX( pre_best, curr_val );
 	      ev_dp[move] = curr_val;
 	      feas_dp[mcnt++] = move_index;
+	      legal_bits &= ~sq_m;
+	      if ( legal_bits == 0 )
+		break;
 	    }
-	    empties_remaining--;
-	    if ( empties_remaining == 0 )
-	      break;
 	  }
 	}
 	ts->ts_move_count[dp] = mcnt;

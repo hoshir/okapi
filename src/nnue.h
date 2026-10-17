@@ -1,7 +1,7 @@
 /*
    File:          nnue.h
-   Description:   E-Unified Pattern-Free Othello NNUE with ARM64 NEON Incremental Accumulator,
-                  Corner/Quadrant Empty Parity, and Zero-Cost Bitboard Tactical Features (Othello NNUE Training & Export).
+   Description:   Fast-Readout Pattern-Free Othello NNUE with ARM64 NEON Incremental Accumulator,
+                  Accumulator-Embedded Corner/Quadrant Parity, and Bitboard Tactical Features (NNUE-002).
 */
 
 #ifndef NNUE_H
@@ -38,6 +38,8 @@ void nnue_init_parent_base_acc(NnueAcc *base_acc, uint64_t p_my, uint64_t p_opp)
    Incrementally compute child accumulator from parent base_acc for a move at `sq`
    flipping `flips`:
      child_acc = base_acc + nnue_w_my[sq] + sum_{f in flips} nnue_w_flip[f]
+   Note: lanes 56..63 hold accumulator-embedded corner/quadrant empty counts & open-corner
+   flags where `nnue_w_flip[f][56..63] == 0` for all 64 squares.
 */
 void nnue_update_child_acc(NnueAcc *child_acc, const NnueAcc *base_acc, int sq, uint64_t flips);
 
@@ -76,6 +78,37 @@ int nnue_evaluate_order_acc(
 
 int nnue_evaluate_value_acc(
   const NnueAcc *acc,
+  uint64_t n_my,
+  uint64_t n_opp,
+  const NnueTactical *tact,
+  int empties
+);
+
+/*
+   Fused incremental update + move-ordering readout in registers without storing/reloading
+   child_acc to stack memory (~17 ns/call on Apple Silicon ARM64 NEON).
+*/
+int nnue_update_and_evaluate_order(
+  const NnueAcc *base_acc,
+  int sq,
+  uint64_t flips,
+  uint64_t n_my,
+  uint64_t n_opp,
+  const NnueTactical *tact,
+  int empties
+);
+
+int nnue_update_and_evaluate_value(
+  const NnueAcc *base_acc,
+  int sq,
+  uint64_t flips,
+  uint64_t n_my,
+  uint64_t n_opp,
+  const NnueTactical *tact,
+  int empties
+);
+
+int nnue_evaluate_value_board(
   uint64_t n_my,
   uint64_t n_opp,
   const NnueTactical *tact,

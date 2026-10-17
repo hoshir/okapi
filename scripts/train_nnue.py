@@ -2,19 +2,18 @@
 """
 Othello NNUE Training & Export: Pattern-Free Othello NNUE Training, Quantization & C Header Export
 ============================================================================
-Trains the E-Unified Pattern-Free Othello NNUE on the audited 100% engine-solved
-dataset (`data/clean_exact_dataset.pt`, train=18,820, val=2,303, test=2,313):
+Trains the Fast-Readout E-Unified Pattern-Free Othello NNUE on the audited 100%
+engine-solved dataset (`data/clean_exact_dataset.pt`, train=18,820, val=2,303, test=2,313):
   - 192-bit raw board input `(my_bits[0..63], opp_bits[0..63], empty_bits[0..63])`
     where `empty_bits` is folded into `(nnue_w_my, nnue_w_opp, nnue_bias)` at
     export time with zero inference overhead.
-  - Incremental `int16_t` accumulator (`64` lanes = `8` D4 channels x `8` symmetries)
-    with non-saturating soft L1 normalization.
-  - All-Pairs Local & Global D4-equivariant SCReLU / Bilinear activations (`196` features).
-  - 16 Corner 3x3 & Quadrant Empty Parity features (`pf[0..15]`) + 8 Zero-Cost
-    Bitboard Tactical features (`tf[0..7]`: `opp_mob`, `opp_corner`, `is_corner`,
-    `is_open_x_or_c`, `quad_parity`, `flipped`, `is_wipeout`, `is_single_reply`)
-    + 8 Tactical SCReLU/Bilinear interactions (`ts[0..7]`) + 64 Spatial x Tactical/Parity
-    cross-interactions (`cross_r[0..31]`, `cross_a[0..31]`) = 292 features total (NNUE-64).
+  - Incremental `int16_t` accumulator (`64` lanes = `7` D4 spatial channels x `8` symmetries
+    in lanes `0..55` + `1` accumulator-embedded Corner 3x3 / Quadrant Empty Count / Open-Corner
+    channel in lanes `56..63` where `nnue_w_flip[sq][56..63] == 0` for all 64 squares).
+  - Vectorized `hsum8_s16` SCReLU / cyclic neighbor readout (`f0..f4` = 40 features) +
+    post-`hsum8` register interactions (`f5..f8` = 32 features) + `hsum4_halves_s16`
+    corner/quadrant parity (`f9` = 8 features) + bitboard tactical & bilinear interactions
+    (`f10..f11` = 16 features) = 96 features (`12` ARM64 NEON `int16x8_t` vectors).
 """
 
 import os
@@ -44,7 +43,6 @@ QUAD_MASKS = [
     0xF0F0F0F000000000,
 ]
 CORNER_BITS = [0, 7, 56, 63]
-X_BITS = [9, 14, 49, 54]
 
 
 def mask_to_64vec(m: int) -> torch.Tensor:
@@ -55,24 +53,38 @@ C33_MAT = torch.stack([mask_to_64vec(m) for m in C33_MASKS], dim=1)    # (64, 4)
 QUAD_MAT = torch.stack([mask_to_64vec(m) for m in QUAD_MASKS], dim=1)  # (64, 4)
 
 
-def upper_tri_indices(c: int) -> Tuple[List[int], List[int]]:
-    idx1, idx2 = [], []
-    for i in range(c):
-        for j in range(i, c):
-            idx1.append(i)
-            idx2.append(j)
-    return idx1, idx2
+def build_parity_channel_weights() -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """
+    Constructs the exact integer weights for accumulator lanes 56..63 (`a7`):
+      - Lanes 0..3 (`56..59`): `c33_empty_cnt[c] + (c_emp[c] << 5)` for corner c = 0..3
+      - Lanes 4..7 (`60..63`): `quad_empty_cnt[c]` for quadrant c = 0..3
+    Because `w_my_par == w_opp_par` for every square on the board,
+    `w_flip_par = w_my_par - w_opp_par == 0` identically for all 64 squares!
+    """
+    bias_par = np.array([9 + 32, 9 + 32, 9 + 32, 9 + 32, 16, 16, 16, 16], dtype=np.int32)
+    w_par = np.zeros((64, 8), dtype=np.int32)
+    for sq in range(64):
+        for c in range(4):
+            if (C33_MASKS[c] >> sq) & 1:
+                w_par[sq, c] -= 1
+            if sq == CORNER_BITS[c]:
+                w_par[sq, c] -= 32
+            if (QUAD_MASKS[c] >> sq) & 1:
+                w_par[sq, 4 + c] -= 1
+    return w_par, w_par.copy(), bias_par
 
 
 def build_e_unified_tensors(samples: List[dict], device: torch.device) -> Dict[str, torch.Tensor]:
-    """Builds padded candidate tensors including exact int16-scaled Corner Parity (16) and Tactical (8) features."""
+    """Builds padded candidate tensors including exact int16-scaled Corner Parity and Tactical features."""
     n = len(samples)
     max_k = max(len(s["child_my_bits"]) for s in samples)
 
     child_x = torch.zeros((n, max_k, 128), dtype=torch.float32)
     fast_sc = torch.zeros((n, max_k), dtype=torch.float32)
-    pf_q = torch.zeros((n, max_k, 16), dtype=torch.int32)
-    tf_q = torch.zeros((n, max_k, 8), dtype=torch.int32)
+    hsum_par_q = torch.zeros((n, max_k, 5), dtype=torch.int32)
+    f9_par_q = torch.zeros((n, max_k, 8), dtype=torch.int32)
+    f10_tact_q = torch.zeros((n, max_k, 8), dtype=torch.int32)
+    f11_extra_q = torch.zeros((n, max_k, 8), dtype=torch.int32)
     tact_raw = torch.zeros((n, max_k, 6), dtype=torch.int32)
     mask = torch.zeros((n, max_k), dtype=torch.bool)
     best_idx = torch.zeros(n, dtype=torch.long)
@@ -102,28 +114,36 @@ def build_e_unified_tensors(samples: List[dict], device: torch.device) -> Dict[s
         quad_odd = quad_cnt & 1                                   # (k, 4)
 
         c_emp = torch.round(emp_b[:, CORNER_BITS]).to(torch.int32)
-        my_x = torch.round(my_b[:, X_BITS]).to(torch.int32)
-        opp_x = torch.round(opp_b[:, X_BITS]).to(torch.int32)
-        my_corn = torch.round(my_b[:, CORNER_BITS]).to(torch.int32)
-        opp_corn = torch.round(opp_b[:, CORNER_BITS]).to(torch.int32)
+        my_corn = torch.round(my_b[:, CORNER_BITS]).to(torch.int32).sum(dim=-1)
+        opp_corn = torch.round(opp_b[:, CORNER_BITS]).to(torch.int32).sum(dim=-1)
         disc_diff = torch.round(my_b.sum(dim=-1) - opp_b.sum(dim=-1)).to(torch.int32)
 
-        pf_q[i, :k, 0] = c33_odd.sum(dim=-1) << 5
-        pf_q[i, :k, 1] = (c_emp & c33_odd).sum(dim=-1) << 5
-        pf_q[i, :k, 2] = (c_emp & (1 - c33_odd)).sum(dim=-1) << 5
-        pf_q[i, :k, 3] = (c33_cnt == 1).to(torch.int32).sum(dim=-1) << 5
-        pf_q[i, :k, 4] = (c33_cnt == 2).to(torch.int32).sum(dim=-1) << 5
-        pf_q[i, :k, 5] = (c33_cnt == 3).to(torch.int32).sum(dim=-1) << 5
-        pf_q[i, :k, 6] = quad_odd.sum(dim=-1) << 5
-        pf_q[i, :k, 7] = (quad_cnt == 1).to(torch.int32).sum(dim=-1) << 5
-        pf_q[i, :k, 8] = c_emp.sum(dim=-1) << 5
-        pf_q[i, :k, 9] = (c_emp & my_x).sum(dim=-1) << 5
-        pf_q[i, :k, 10] = (c_emp & opp_x).sum(dim=-1) << 5
-        pf_q[i, :k, 11] = my_corn.sum(dim=-1) << 5
-        pf_q[i, :k, 12] = opp_corn.sum(dim=-1) << 5
-        pf_q[i, :k, 13] = disc_diff << 2
-        pf_q[i, :k, 14] = (c_emp & c33_odd & my_x).sum(dim=-1) << 5
-        pf_q[i, :k, 15] = (c_emp & c33_odd & opp_x).sum(dim=-1) << 5
+        open_odd = (c_emp & c33_odd).sum(dim=-1)
+        open_even = (c_emp & (1 - c33_odd)).sum(dim=-1)
+        sum_c33_odd = c33_odd.sum(dim=-1)
+        sum_quad_odd = quad_odd.sum(dim=-1)
+        sum_c33_eq1 = (c33_cnt == 1).to(torch.int32).sum(dim=-1)
+        sum_quad_eq1 = (quad_cnt == 1).to(torch.int32).sum(dim=-1)
+        sum_c33_eq2 = (c33_cnt == 2).to(torch.int32).sum(dim=-1)
+        sum_quad_eq2 = (quad_cnt == 2).to(torch.int32).sum(dim=-1)
+        sum_c_emp = c_emp.sum(dim=-1)
+
+        # Lane 7 of f0..f4 (hsum8_s16 8th vector sums)
+        hsum_par_q[i, :k, 0] = open_odd << 6
+        hsum_par_q[i, :k, 1] = open_even << 6
+        hsum_par_q[i, :k, 2] = (sum_c33_odd + sum_quad_odd) << 5
+        hsum_par_q[i, :k, 3] = (sum_c33_eq1 + sum_quad_eq1) << 5
+        hsum_par_q[i, :k, 4] = (sum_c33_eq2 + sum_quad_eq2) << 5
+
+        # Vector f9: hsum4_halves_s16(odd_vec, eq1_vec, eq2_vec, cemp_vec) << 5
+        f9_par_q[i, :k, 0] = sum_c33_odd << 5
+        f9_par_q[i, :k, 1] = sum_quad_odd << 5
+        f9_par_q[i, :k, 2] = sum_c33_eq1 << 5
+        f9_par_q[i, :k, 3] = sum_quad_eq1 << 5
+        f9_par_q[i, :k, 4] = sum_c33_eq2 << 5
+        f9_par_q[i, :k, 5] = sum_quad_eq2 << 5
+        f9_par_q[i, :k, 6] = sum_c_emp << 5
+        f9_par_q[i, :k, 7] = 0
 
         tc_t = torch.tensor(tc, dtype=torch.float32)
         opp_mob = torch.round(tc_t[:, 0]).to(torch.int32)
@@ -152,14 +172,26 @@ def build_e_unified_tensors(samples: List[dict], device: torch.device) -> Dict[s
         tact_raw[i, :k, 4] = parity
         tact_raw[i, :k, 5] = flips
 
-        tf_q[i, :k, 0] = torch.clamp(opp_mob, 0, 16) << 3
-        tf_q[i, :k, 1] = torch.clamp(opp_corner, 0, 4) << 6
-        tf_q[i, :k, 2] = is_corner << 7
-        tf_q[i, :k, 3] = is_open_xc << 7
-        tf_q[i, :k, 4] = parity << 7
-        tf_q[i, :k, 5] = torch.clamp(flips, 0, 16) << 3
-        tf_q[i, :k, 6] = is_wipeout << 7
-        tf_q[i, :k, 7] = is_single << 7
+        tf0 = torch.clamp(opp_mob, 0, 16) << 3
+        tf1 = torch.clamp(opp_corner, 0, 4) << 6
+        tf2 = is_corner << 7
+        tf3 = is_open_xc << 7
+        tf4 = parity << 7
+        tf5 = torch.clamp(flips, 0, 16) << 3
+        tf6 = is_wipeout << 7
+        tf7 = (tf0 * tf0) >> 7
+
+        f10_tact_q[i, :k, 0] = tf0
+        f10_tact_q[i, :k, 1] = tf1
+        f10_tact_q[i, :k, 2] = tf2
+        f10_tact_q[i, :k, 3] = tf3
+        f10_tact_q[i, :k, 4] = tf4
+        f10_tact_q[i, :k, 5] = tf5
+        f10_tact_q[i, :k, 6] = tf6
+        f10_tact_q[i, :k, 7] = tf7
+
+        # Put (tf0 * tf4) >> 7 into f9_par_q[:, 7] (where cemp_vec[4..7] was 0)
+        f9_par_q[i, :k, 7] = (tf0 * tf4) >> 7
 
         mask[i, :k] = True
         best_idx[i] = int(s["best_idx"])
@@ -169,8 +201,9 @@ def build_e_unified_tensors(samples: List[dict], device: torch.device) -> Dict[s
     return {
         "child_x": child_x.to(device),
         "fast_sc": fast_sc.to(device),
-        "pf_q": pf_q.to(device),
-        "tf_q": tf_q.to(device),
+        "hsum_par_q": hsum_par_q.to(device),
+        "f9_par_q": f9_par_q.to(device),
+        "f10_tact_q": f10_tact_q.to(device),
         "tact_raw": tact_raw.to(device),
         "mask": mask.to(device),
         "best_idx": best_idx.to(device),
@@ -179,24 +212,21 @@ def build_e_unified_tensors(samples: List[dict], device: torch.device) -> Dict[s
     }
 
 
-class D4OthelloNNUE(nn.Module):
+class FastD4OthelloNNUE(nn.Module):
     """
-    E-Unified Pattern-Free D4-Equivariant Othello NNUE:
-      - 192-bit input `(my_64, opp_64, empty_64)` folded into `(w_my, w_opp, bias)`
-      - Incremental `int16_t` accumulator (`H = 8 * C` lanes)
-      - All-Pairs Local + Global D4 SCReLU / Bilinear features (`2*C + 5*P`)
-      - 16 Corner 3x3 & Quadrant Empty Parity features (`pf[0..15]`)
-      - 8 Zero-Cost Bitboard Tactical features (`tf[0..7]`)
-      - 8 Tactical SCReLU / Bilinear interaction terms (`ts[0..7]`)
-      - `8*C` Cross-Interactions (`cross_r`, `cross_a`) between spatial channels and
-        `[opp_mob, quad_parity, open_corner_odd_c33, open_corner_x_diff]`.
+    Fast-Readout Pattern-Free D4-Equivariant Othello NNUE (NNUE-002):
+      - `C = 7` D4 spatial channels (`56` int16 lanes `acc->v[0..55]`)
+      - `1` accumulator-embedded parity/open-corner channel (`8` int16 lanes `acc->v[56..63]`, `w_flip == 0`)
+      - `11` ARM64 NEON `int16x8_t` feature vectors (`NNUE_FEAT_DIM = 88`), zero popcountll!
     """
 
-    def __init__(self, num_channels: int = 8, num_stage_buckets: int = 5):
+    def __init__(self, num_spatial_channels: int = 7, num_stage_buckets: int = 4):
         super().__init__()
-        self.C = num_channels
-        self.H = 8 * num_channels
+        self.C = num_spatial_channels
+        self.H_spatial = 8 * num_spatial_channels
+        self.H_total = 64
         self.num_stage_buckets = num_stage_buckets
+        self.feat_dim = 88
 
         self.w_my_canon = nn.Parameter(torch.randn(self.C, 64) * 0.15)
         self.w_opp_canon = nn.Parameter(torch.randn(self.C, 64) * 0.15)
@@ -204,14 +234,10 @@ class D4OthelloNNUE(nn.Module):
         self.bias_canon = nn.Parameter(torch.zeros(self.C))
 
         self.register_buffer("d4_perms", torch.tensor(D4_MAPS, dtype=torch.long))
-        i1, i2 = upper_tri_indices(self.C)
-        self.register_buffer("pair_i", torch.tensor(i1, dtype=torch.long))
-        self.register_buffer("pair_j", torch.tensor(i2, dtype=torch.long))
-
-        self.num_pairs = len(i1)
-        self.base_feat_dim = 2 * self.C + 5 * self.num_pairs
-        self.extra_feat_dim = 16 + 8 + 8 + 8 * self.C
-        self.feat_dim = self.base_feat_dim + self.extra_feat_dim
+        c1 = [(c + 1) % self.C for c in range(self.C)]
+        self.register_buffer("c1_idx", torch.tensor(c1, dtype=torch.long))
+        rot1 = [(k + 1) % 8 for k in range(8)]
+        self.register_buffer("rot1_idx", torch.tensor(rot1, dtype=torch.long))
 
         self.order_weight = nn.Parameter(
             torch.randn(num_stage_buckets, self.feat_dim) * 0.02
@@ -254,12 +280,11 @@ class D4OthelloNNUE(nn.Module):
 
     def forward_features(
         self,
-        child_x: torch.Tensor,
-        pf_q: torch.Tensor,
-        tf_q: torch.Tensor,
+        data: Dict[str, torch.Tensor],
         qat: bool = False,
     ) -> torch.Tensor:
         Q1 = 128.0
+        child_x = data["child_x"]
         w_my, w_opp, bias = self.get_expanded_transformer(qat=qat)
         orig_shape = child_x.shape[:-1]
         B = int(np.prod(orig_shape))
@@ -268,15 +293,14 @@ class D4OthelloNNUE(nn.Module):
         o_flat = flat[:, 64:128]
 
         acc = (
-            torch.matmul(m_flat, w_my.reshape(64, self.H))
-            + torch.matmul(o_flat, w_opp.reshape(64, self.H))
-            + bias.reshape(1, self.H)
+            torch.matmul(m_flat, w_my.reshape(64, self.H_spatial))
+            + torch.matmul(o_flat, w_opp.reshape(64, self.H_spatial))
+            + bias.reshape(1, self.H_spatial)
         ).reshape(B, self.C, 8)
 
         vp = torch.clamp(acc, 0.0, 1.0)
         vn = torch.clamp(-acc, 0.0, 1.0)
         r = vp - vn
-        a = vp + vn
 
         def q_mul(x, y):
             prod = x * y
@@ -284,82 +308,61 @@ class D4OthelloNNUE(nn.Module):
                 prod = prod + (torch.floor(prod * Q1) / Q1 - prod).detach()
             return prod
 
-        r_i = r[:, self.pair_i, :]
-        r_j = r[:, self.pair_j, :]
-        a_i = a[:, self.pair_i, :]
-        a_j = a[:, self.pair_j, :]
-
         s_vp = vp.sum(dim=-1)
         s_vn = vn.sum(dim=-1)
-        s_r = s_vp - s_vn
-        s_a = s_vp + s_vn
+        sp = q_mul(vp, vp).sum(dim=-1)
+        sn = q_mul(vn, vn).sum(dim=-1)
+        cr = q_mul(r, r[:, self.c1_idx, :]).sum(dim=-1)
 
-        s_rr = q_mul(r_i, r_j).sum(dim=-1)
-        s_aa = q_mul(a_i, a_j).sum(dim=-1)
-        s_ra = q_mul(r_i, a_j).sum(dim=-1)
+        hp_f = data["hsum_par_q"].reshape(B, 5).float() / Q1
+        f0 = torch.cat([s_vp, hp_f[:, 0:1]], dim=-1)
+        f1 = torch.cat([s_vn, hp_f[:, 1:2]], dim=-1)
+        f2 = torch.cat([sp, hp_f[:, 2:3]], dim=-1)
+        f3 = torch.cat([sn, hp_f[:, 3:4]], dim=-1)
+        f4 = torch.cat([cr, hp_f[:, 4:5]], dim=-1)
 
-        g_rr = (s_r[:, self.pair_i] * s_r[:, self.pair_j]) * (1.0 / 8.0)
-        g_aa = (s_a[:, self.pair_i] * s_a[:, self.pair_j]) * (1.0 / 8.0)
+        sr_raw = f0 - f1
+        sa_raw = f0 + f1
         if qat:
-            g_rr = g_rr + (torch.floor(g_rr * Q1) / Q1 - g_rr).detach()
-            g_aa = g_aa + (torch.floor(g_aa * Q1) / Q1 - g_aa).detach()
+            sr_q = torch.round(sr_raw * Q1)
+            sa_q = torch.round(sa_raw * Q1)
+            sr_s = torch.floor(sr_q / 8.0) / Q1
+            sa_s = torch.floor(sa_q / 8.0) / Q1
+            sr_s = sr_raw * 0.125 + (sr_s - sr_raw * 0.125).detach()
+            sa_s = sa_raw * 0.125 + (sa_s - sa_raw * 0.125).detach()
+        else:
+            sr_s = sr_raw * 0.125
+            sa_s = sa_raw * 0.125
 
-        pf_i = pf_q.reshape(B, 16)
-        tf_i = tf_q.reshape(B, 8)
-        pf_f = pf_i.float() / Q1
-        tf_f = tf_i.float() / Q1
+        def q_post(prod, shift_div: float):
+            out = prod * (128.0 / shift_div)
+            if qat:
+                out = out + (torch.floor(out * Q1) / Q1 - out).detach()
+            return out
 
-        ts_i = torch.stack(
-            [
-                (tf_i[:, 0] * tf_i[:, 0]) >> 7,
-                (tf_i[:, 0] * tf_i[:, 4]) >> 7,
-                (tf_i[:, 0] * pf_i[:, 1]) >> 7,
-                (tf_i[:, 4] * pf_i[:, 1]) >> 7,
-                (pf_i[:, 9] * pf_i[:, 1]) >> 7,
-                (pf_i[:, 10] * pf_i[:, 1]) >> 7,
-                (tf_i[:, 5] * tf_i[:, 5]) >> 7,
-                (pf_i[:, 13] * pf_i[:, 13]) >> 7,
-            ],
-            dim=-1,
-        )
-        ts_f = ts_i.float() / Q1
+        f5 = q_post(sr_s * sr_s, 16.0)
+        f6 = q_post(sa_s * sa_s, 16.0)
+        f7 = q_post(sr_s * sr_s[:, self.rot1_idx], 16.0)
 
-        keys_f = torch.stack(
-            [
-                tf_f[:, 0],
-                tf_f[:, 4],
-                pf_f[:, 1],
-                pf_f[:, 9] - pf_f[:, 10],
-            ],
-            dim=-1,
-        )  # (B, 4)
+        f9 = data["f9_par_q"].reshape(B, 8).float() / Q1
+        f10 = data["f10_tact_q"].reshape(B, 8).float() / Q1
 
-        cross_r = (s_r.unsqueeze(-1) * keys_f.unsqueeze(1)).reshape(B, self.C * 4) * 0.25
-        cross_a = (s_a.unsqueeze(-1) * keys_f.unsqueeze(1)).reshape(B, self.C * 4) * 0.25
-        if qat:
-            cross_r = cross_r + (torch.floor(cross_r * Q1) / Q1 - cross_r).detach()
-            cross_a = cross_a + (torch.floor(cross_a * Q1) / Q1 - cross_a).detach()
+        f8 = q_post(sr_s * f10[:, 0:1], 64.0)
 
-        feats = torch.cat(
-            [s_vp, s_vn, s_rr, s_aa, s_ra, g_rr, g_aa, pf_f, tf_f, ts_f, cross_r, cross_a],
-            dim=-1,
-        )
+        feats = torch.cat([f0, f1, f2, f3, f4, f5, f6, f7, f8, f9, f10], dim=-1)
         return feats.reshape(*orig_shape, self.feat_dim)
 
     def stage_bucket_index(self, empties: torch.Tensor) -> torch.Tensor:
         b = torch.zeros_like(empties, dtype=torch.long)
         b = torch.where(empties >= 11, torch.ones_like(b) * 1, b)
         b = torch.where(empties >= 14, torch.ones_like(b) * 2, b)
-        b = torch.where(empties >= 18, torch.ones_like(b) * 3, b)
-        b = torch.where(empties >= 22, torch.ones_like(b) * 4, b)
+        b = torch.where(empties >= 17, torch.ones_like(b) * 3, b)
         return b
 
     def forward(
         self, data: Dict[str, torch.Tensor], qat: bool = False
     ) -> Tuple[torch.Tensor, torch.Tensor]:
-        feats = self.forward_features(
-            data["child_x"], data["pf_q"], data["tf_q"], qat=qat
-        )
+        feats = self.forward_features(data, qat=qat)
         buckets = self.stage_bucket_index(data["empties"])
 
         ow, ob = self.order_weight, self.order_bias
@@ -415,110 +418,107 @@ def eval_dual_heads(
 
 
 def simulate_int16_exact_c(
-    model: D4OthelloNNUE,
+    model: FastD4OthelloNNUE,
     data: Dict[str, torch.Tensor],
 ) -> Tuple[torch.Tensor, torch.Tensor, tuple]:
     """
     Bit-exact integer simulation of the C/NEON evaluation pipeline (`int16_t` Q1=128
-    accumulator + `int16_t` Q2=64 stage-bucketed readout weights).
+    64-lane accumulator with `a7` embedded parity + `int16_t` Q2=64 88-feature readout).
     """
     Q1 = 128
     Q2 = 64
     model.eval()
     with torch.no_grad():
         w_my, w_opp, bias = model.get_expanded_transformer(qat=True)
-        w_my_q = torch.round(w_my * Q1).to(torch.int32).cpu().numpy()
-        w_opp_q = torch.round(w_opp * Q1).to(torch.int32).cpu().numpy()
-        bias_q = torch.round(bias * Q1).to(torch.int32).cpu().numpy()
+        w_my_sp = torch.round(w_my * Q1).to(torch.int32).cpu().numpy().reshape(64, 56)
+        w_opp_sp = torch.round(w_opp * Q1).to(torch.int32).cpu().numpy().reshape(64, 56)
+        bias_sp = torch.round(bias * Q1).to(torch.int32).cpu().numpy().reshape(56)
         ow_q = torch.round(model.order_weight * Q2).to(torch.int32).cpu().numpy()
         ob_q = torch.round(model.order_bias * Q2 * Q1).to(torch.int32).cpu().numpy()
         vw_q = torch.round(model.value_weight * Q2).to(torch.int32).cpu().numpy()
         vb_q = torch.round(model.value_bias * Q2 * Q1).to(torch.int32).cpu().numpy()
 
-    C = model.C
-    H = model.H
+    w_my_par, w_opp_par, bias_par = build_parity_channel_weights()
+    w_my_q = np.concatenate([w_my_sp, w_my_par], axis=1)    # (64, 64)
+    w_opp_q = np.concatenate([w_opp_sp, w_opp_par], axis=1)  # (64, 64)
+    bias_q = np.concatenate([bias_sp, bias_par], axis=0)     # (64,)
+
     cx_np = data["child_x"].cpu().numpy()
-    pf_np = data["pf_q"].cpu().numpy().astype(np.int32)
-    tf_np = data["tf_q"].cpu().numpy().astype(np.int32)
+    f10_np = data["f10_tact_q"].cpu().numpy().astype(np.int32)
     tact_raw_np = data["tact_raw"].cpu().numpy().astype(np.int32)
     empties_np = data["empties"].cpu().numpy()
     B, M, _ = cx_np.shape
-    m_np = cx_np[:, :, 0:64].reshape(B * M, 64).astype(np.int32)
-    o_np = cx_np[:, :, 64:128].reshape(B * M, 64).astype(np.int32)
+    N = B * M
+    m_np = cx_np[:, :, 0:64].reshape(N, 64).astype(np.int32)
+    o_np = cx_np[:, :, 64:128].reshape(N, 64).astype(np.int32)
 
-    acc = (
-        m_np @ w_my_q.reshape(64, H)
-        + o_np @ w_opp_q.reshape(64, H)
-        + bias_q.reshape(1, H)
-    ).reshape(B * M, C, 8)
-    assert np.all(acc >= -32768) and np.all(acc <= 32767), "int16 overflow!"
+    acc64 = m_np @ w_my_q + o_np @ w_opp_q + bias_q[None, :]
+    assert np.all(acc64 >= -32768) and np.all(acc64 <= 32767), "int16 overflow!"
 
-    vp = np.clip(acc, 0, Q1)
-    vn = np.clip(-acc, 0, Q1)
+    acc_sp = acc64[:, :56].reshape(N, 7, 8)
+    a7 = acc64[:, 56:64]  # (N, 8)
+
+    vp = np.clip(acc_sp, 0, Q1)
+    vn = np.clip(-acc_sp, 0, Q1)
     r = vp - vn
-    a = vp + vn
-
-    i1, i2 = upper_tri_indices(C)
-    r_i = r[:, i1, :]
-    r_j = r[:, i2, :]
-    a_i = a[:, i1, :]
-    a_j = a[:, i2, :]
+    c1 = [(c + 1) % 7 for c in range(7)]
 
     s_vp = vp.sum(axis=-1)
     s_vn = vn.sum(axis=-1)
-    s_r = s_vp - s_vn
-    s_a = s_vp + s_vn
+    sp = ((vp * vp) >> 7).sum(axis=-1)
+    sn = ((vn * vn) >> 7).sum(axis=-1)
+    cr = ((r * r[:, c1, :]) >> 7).sum(axis=-1)
 
-    s_rr = ((r_i * r_j) >> 7).sum(axis=-1)
-    s_aa = ((a_i * a_j) >> 7).sum(axis=-1)
-    s_ra = ((r_i * a_j) >> 7).sum(axis=-1)
+    # Extract parity vectors directly from accumulator lane a7!
+    cnt_vec = a7 & 31
+    odd_vec = a7 & 1
+    cemp_vec = a7 >> 5
+    open_odd_vec = cemp_vec & odd_vec
+    open_even_vec = cemp_vec & (1 - odd_vec)
+    eq1_vec = (cnt_vec == 1).astype(np.int32)
+    eq2_vec = (cnt_vec == 2).astype(np.int32)
 
-    g_rr = (s_r[:, i1] * s_r[:, i2]) >> 10
-    g_aa = (s_a[:, i1] * s_a[:, i2]) >> 10
+    f0 = np.concatenate([s_vp, (open_odd_vec.sum(axis=-1, keepdims=True) << 6)], axis=-1)
+    f1 = np.concatenate([s_vn, (open_even_vec.sum(axis=-1, keepdims=True) << 6)], axis=-1)
+    f2 = np.concatenate([sp, (odd_vec.sum(axis=-1, keepdims=True) << 5)], axis=-1)
+    f3 = np.concatenate([sn, (eq1_vec.sum(axis=-1, keepdims=True) << 5)], axis=-1)
+    f4 = np.concatenate([cr, (eq2_vec.sum(axis=-1, keepdims=True) << 5)], axis=-1)
 
-    pf_flat = pf_np.reshape(B * M, 16)
-    tf_flat = tf_np.reshape(B * M, 8)
+    sr_s = (f0 - f1) >> 3
+    sa_s = (f0 + f1) >> 3
+    rot1 = [(k + 1) % 8 for k in range(8)]
+    sr_rot1 = sr_s[:, rot1]
 
-    ts_flat = np.stack(
+    f5 = (sr_s * sr_s) >> 4
+    f6 = (sa_s * sa_s) >> 4
+    f7 = (sr_s * sr_rot1) >> 4
+
+    f10 = f10_np.reshape(N, 8)
+    f8 = (sr_s * f10[:, 0:1]) >> 6
+
+    f9 = np.stack(
         [
-            (tf_flat[:, 0] * tf_flat[:, 0]) >> 7,
-            (tf_flat[:, 0] * tf_flat[:, 4]) >> 7,
-            (tf_flat[:, 0] * pf_flat[:, 1]) >> 7,
-            (tf_flat[:, 4] * pf_flat[:, 1]) >> 7,
-            (pf_flat[:, 9] * pf_flat[:, 1]) >> 7,
-            (pf_flat[:, 10] * pf_flat[:, 1]) >> 7,
-            (tf_flat[:, 5] * tf_flat[:, 5]) >> 7,
-            (pf_flat[:, 13] * pf_flat[:, 13]) >> 7,
+            odd_vec[:, :4].sum(axis=-1) << 5,
+            odd_vec[:, 4:].sum(axis=-1) << 5,
+            eq1_vec[:, :4].sum(axis=-1) << 5,
+            eq1_vec[:, 4:].sum(axis=-1) << 5,
+            eq2_vec[:, :4].sum(axis=-1) << 5,
+            eq2_vec[:, 4:].sum(axis=-1) << 5,
+            cemp_vec[:, :4].sum(axis=-1) << 5,
+            (f10[:, 0] * f10[:, 4]) >> 7,
         ],
         axis=-1,
     )
 
-    keys_flat = np.stack(
-        [
-            tf_flat[:, 0],
-            tf_flat[:, 4],
-            pf_flat[:, 1],
-            pf_flat[:, 9] - pf_flat[:, 10],
-        ],
-        axis=-1,
-    )  # (B*M, 4)
-
-    cross_r = (s_r[:, :, None] * keys_flat[:, None, :]) >> 9
-    cross_a = (s_a[:, :, None] * keys_flat[:, None, :]) >> 9
-    cross_r = cross_r.reshape(B * M, C * 4)
-    cross_a = cross_a.reshape(B * M, C * 4)
-
     feats_q = np.concatenate(
-        [s_vp, s_vn, s_rr, s_aa, s_ra, g_rr, g_aa, pf_flat, tf_flat, ts_flat, cross_r, cross_a],
-        axis=-1,
-    ).reshape(B, M, model.feat_dim)
+        [f0, f1, f2, f3, f4, f5, f6, f7, f8, f9, f10], axis=-1
+    ).reshape(B, M, 88)
     assert np.all(feats_q >= -32768) and np.all(feats_q <= 32767), "feats_q int16 overflow!"
 
     b_idx = np.zeros(B, dtype=np.int64)
     b_idx = np.where(empties_np >= 11, 1, b_idx)
     b_idx = np.where(empties_np >= 14, 2, b_idx)
-    b_idx = np.where(empties_np >= 18, 3, b_idx)
-    b_idx = np.where(empties_np >= 22, 4, b_idx)
+    b_idx = np.where(empties_np >= 17, 3, b_idx)
 
     raw_ord = (feats_q * ow_q[b_idx][:, None, :]).sum(axis=-1) + ob_q[b_idx][:, None]
     raw_val = (feats_q * vw_q[b_idx][:, None, :]).sum(axis=-1) + vb_q[b_idx][:, None]
@@ -556,27 +556,29 @@ def simulate_int16_exact_c(
     )
 
 
-def export_nnue_header(path: str, quant_params: tuple, num_channels: int):
+def export_nnue_header(path: str, quant_params: tuple, num_spatial_channels: int = 7):
     w_my_q, w_opp_q, bias_q, ow_q, ob_q, vw_q, vb_q, ref_cases = quant_params
     w_flip_q = w_my_q - w_opp_q
-    H = num_channels * 8
+    assert np.all(w_flip_q[:, 56:64] == 0), "Expected w_flip == 0 on parity lanes 56..63!"
+    H = 64
     F_dim = ow_q.shape[1]
     num_buckets = ow_q.shape[0]
 
     lines = [
-        "/* Auto-generated by scripts/train_nnue.py (Othello NNUE Training & Export E-Unified) - DO NOT EDIT */",
+        "/* Auto-generated by scripts/train_nnue.py (Othello NNUE-002 Fast-Readout) - DO NOT EDIT */",
         "#ifndef NNUE_DATA_H",
         "#define NNUE_DATA_H",
         "",
         "#include <stdint.h>",
         "",
-        f"#define NNUE_CHANNELS {num_channels}",
+        f"#define NNUE_SPATIAL_CHANNELS {num_spatial_channels}",
+        f"#define NNUE_CHANNELS 8",
         f"#define NNUE_ACC_DIM {H}",
         f"#define NNUE_FEAT_DIM {F_dim}",
         f"#define NNUE_STAGE_BUCKETS {num_buckets}",
         "",
         "/* Initial accumulator bias (NNUE_ACC_DIM int16_t lanes, 16-byte aligned) */",
-        f"static const int16_t nnue_bias[NNUE_ACC_DIM] __attribute__((aligned(16))) = {{",
+        "static const int16_t nnue_bias[NNUE_ACC_DIM] __attribute__((aligned(16))) = {",
     ]
     b_flat = bias_q.reshape(-1)
     lines.append("  " + ", ".join(str(int(x)) for x in b_flat))
@@ -597,21 +599,21 @@ def export_nnue_header(path: str, quant_params: tuple, num_channels: int):
         fmt_table_2d(
             "nnue_w_my",
             w_my_q,
-            "Square weight for child_my_bits (parent mover discs after move, 192-bit empty folded)",
+            "Square weight for child_my_bits (lanes 0..55: 7 D4 channels, lanes 56..63: corner/quad parity)",
         )
     )
     lines.append(
         fmt_table_2d(
             "nnue_w_opp",
             w_opp_q,
-            "Square weight for new_opp_bits (parent opponent discs after move, 192-bit empty folded)",
+            "Square weight for new_opp_bits (lanes 0..55: 7 D4 channels, lanes 56..63: corner/quad parity)",
         )
     )
     lines.append(
         fmt_table_2d(
             "nnue_w_flip",
             w_flip_q,
-            "Incremental delta w_my[f] - w_opp[f] when square f is flipped from p_opp to child_my_bits",
+            "Incremental delta w_my[f] - w_opp[f] (lanes 56..63 are identically 0 for all 64 squares)",
         )
     )
 
@@ -683,15 +685,14 @@ def export_nnue_header(path: str, quant_params: tuple, num_channels: int):
     )
 
 
-def train_nnue_variant(
-    num_channels: int,
+def train_fast_nnue(
     train_data: Dict[str, torch.Tensor],
     val_data: Dict[str, torch.Tensor],
     test_data: Dict[str, torch.Tensor],
     device: torch.device,
-    epochs: int = 50,
+    epochs: int = 55,
 ):
-    model = D4OthelloNNUE(num_channels=num_channels).to(device)
+    model = FastD4OthelloNNUE(num_spatial_channels=7).to(device)
     opt = torch.optim.AdamW(model.parameters(), lr=4e-3, weight_decay=2e-4)
     sched = torch.optim.lr_scheduler.CosineAnnealingLR(opt, T_max=epochs, eta_min=1e-4)
 
@@ -720,9 +721,13 @@ def train_nnue_variant(
             loss = ce_loss + 0.50 * val_loss
             loss.backward()
             opt.step()
+            with torch.no_grad():
+                model.order_weight[:, 80].clamp_(max=0.0)
+                model.order_weight[:, 81].clamp_(max=0.0)
+                model.order_weight[:, 87].clamp_(max=0.0)
 
         sched.step()
-        if use_qat and (ep % 3 == 0 or ep == epochs):
+        if use_qat and (ep % 2 == 0 or ep == epochs):
             model.eval()
             with torch.no_grad():
                 v_ord, _ = model(val_data, qat=True)
@@ -741,22 +746,43 @@ def train_nnue_variant(
     if best_state is not None:
         model.load_state_dict({k: v.to(device) for k, v in best_state.items()})
 
+    # Fine-tune value_weight and value_bias on frozen QAT features (leaves order_weight & Top-1 untouched)
+    for name, p in model.named_parameters():
+        p.requires_grad = "value_" in name
+    v_opt = torch.optim.AdamW([model.value_weight, model.value_bias], lr=5e-3, weight_decay=5e-4)
+    with torch.no_grad():
+        tr_feats = model.forward_features(train_data, qat=True)
+        N = tr_feats.shape[0]
+        best_tr_feats = tr_feats[torch.arange(N, device=device), train_data["best_idx"]]
+        tr_buckets = model.stage_bucket_index(train_data["empties"])
+        tr_target = train_data["exact_score"]
+
+    for _ in range(300):
+        v_opt.zero_grad()
+        Q2 = 64.0
+        vw = model.value_weight + (torch.round(model.value_weight * Q2) / Q2 - model.value_weight).detach()
+        vb = model.value_bias + (torch.round(model.value_bias * Q2) / Q2 - model.value_bias).detach()
+        preds = (best_tr_feats * vw[tr_buckets]).sum(dim=-1) + vb[tr_buckets]
+        loss = F.l1_loss(preds, tr_target)
+        loss.backward()
+        v_opt.step()
+
     elapsed = time.time() - t0
     model.eval()
     print(
-        f"\n--- E-Unified NNUE-{8*num_channels} ({num_channels} D4 channels = {8*num_channels} int16 lanes, FeatDim={model.feat_dim}, trained in {elapsed:.1f}s) ---"
+        f"\n--- Fast-Readout NNUE-64 (7 D4 spatial channels + a7 parity channel = 64 int16 lanes, FeatDim={model.feat_dim}, trained in {elapsed:.1f}s) ---"
     )
     with torch.no_grad():
         val_ord_fp, val_val_fp = model(val_data, qat=True)
         test_ord_fp, test_val_fp = model(test_data, qat=True)
         eval_dual_heads(
-            val_ord_fp, val_val_fp, val_data, f"[VAL]  E-Unified NNUE-{8*num_channels} (PyTorch QAT)"
+            val_ord_fp, val_val_fp, val_data, "[VAL]  Fast-Readout NNUE-64 (PyTorch QAT)"
         )
         eval_dual_heads(
             test_ord_fp,
             test_val_fp,
             test_data,
-            f"[TEST] E-Unified NNUE-{8*num_channels} (PyTorch QAT)",
+            "[TEST] Fast-Readout NNUE-64 (PyTorch QAT)",
         )
 
     val_ord_q, val_val_q, quant_params = simulate_int16_exact_c(model, val_data)
@@ -771,13 +797,13 @@ def train_nnue_variant(
         val_ord_q,
         val_val_q,
         val_data,
-        f"[VAL]  E-Unified NNUE-{8*num_channels} (Exact int16 C/NEON)",
+        "[VAL]  Fast-Readout NNUE-64 (Exact int16 C/NEON)",
     )
     eval_dual_heads(
         test_ord_q,
         test_val_q,
         test_data,
-        f"[TEST] E-Unified NNUE-{8*num_channels} (Exact int16 C/NEON)",
+        "[TEST] Fast-Readout NNUE-64 (Exact int16 C/NEON)",
     )
     return model, quant_params
 
@@ -815,19 +841,11 @@ def main():
     )
 
     print("\n" + "=" * 120)
-    print("TRAINING E-UNIFIED OTHELLO NNUE (192-BIT EMPTY FOLDED + CORNER PARITY + BITBOARD TACTICAL)")
+    print("TRAINING FAST-READOUT E-UNIFIED OTHELLO NNUE (NNUE-002)")
     print("=" * 120)
 
-    # 1. E-Unified NNUE-32 (4 D4 channels = 32 int16 lanes = 4 NEON registers)
-    train_nnue_variant(4, train_data, val_data, test_data, device, epochs=50)
-
-    # 2. E-Unified NNUE-64 (8 D4 channels = 64 int16 lanes = 8 NEON registers)
-    _, q64 = train_nnue_variant(8, train_data, val_data, test_data, device, epochs=50)
-
-    # 3. E-Unified NNUE-128 (16 D4 channels = 128 int16 lanes = 16 NEON registers)
-    train_nnue_variant(16, train_data, val_data, test_data, device, epochs=50)
-
-    export_nnue_header("src/nnue_data.h", q64, num_channels=8)
+    _, q64 = train_fast_nnue(train_data, val_data, test_data, device, epochs=55)
+    export_nnue_header("src/nnue_data.h", q64, num_spatial_channels=7)
 
 
 if __name__ == "__main__":

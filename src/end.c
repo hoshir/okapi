@@ -39,6 +39,7 @@
 #include "macros.h"
 #include "midgame.h"
 #include "moves.h"
+#include "nnue.h"
 #include "osfbook.h"
 #include "search.h"
 #include "patterns.h"
@@ -1298,7 +1299,7 @@ end_order_moves_presearch( ThreadState *ts,
       ev_stage[m0] = top_fast;
     }
 
-    /* Selective shallow tree_search deepening on top-K candidates (SRCH-005)
+    /* Selective shallow tree_search deepening on top-K candidates (SRCH-005 / NNUE-003 / NNUE-004)
        Evaluates shallow lookahead for the top surviving candidates at deep endgame
        nodes (empties >= ORDER_TS_MIN_DEPTH), providing tactical lookahead to avoid
        combinatorial tree explosion during both selective passes and exact solve. */
@@ -1324,68 +1325,151 @@ end_order_moves_presearch( ThreadState *ts,
         }
       }
 
-      int d = (empties < 18) ? 2 : (empties < 24) ? 3 : (empties < 28) ? 4 : 6;
-      if ( best_list_length == 0 &&
-           ((empties >= 20 && empties <= 22) ||
-            (empties == 23 && level >= 2)) )
-        d += 1;
-      int upper = (-curr_alpha + 8) * 128;
-      int ff_thr = 128 * curr_alpha + (int) ceil( (end_mean[stage][d] + 0.45 * end_sigma[stage][d]) * 128.0 );
-      int k_limit = (ORDER_TS_TOPK < surv_count) ? ORDER_TS_TOPK : surv_count;
-      int any_promoted = 0;
-      int v0 = 0;
-      BitBoard b_parent = (side_to_move == BLACKSQ) ? my_bits : opp_bits;
-      BitBoard w_parent = (side_to_move == BLACKSQ) ? opp_bits : my_bits;
-      int parent_b_cnt = non_iterative_popcount( b_parent );
-      int parent_w_cnt = non_iterative_popcount( w_parent );
-      unsigned short saved_parent_pi[48] __attribute__((aligned(16)));
-      determine_pattern_indices_bitboard_ts( ts, b_parent, w_parent );
-      memcpy( saved_parent_pi, ts->ts_eval_pattern_index, sizeof( saved_parent_pi ) );
-      for ( i = 0; i < k_limit; i++ ) {
-        int m = surv[i].sq;
-        unsigned int saved_parity = ts->ts_region_parity;
-        ts->ts_region_parity ^= quadrant_mask[m];
-        unsigned int diff1, diff2;
-        end_hash_diff( surv[i].child_my_bits, my_bits, side_to_move, m, &diff1, &diff2 );
-        ts->ts_hash1 ^= diff1;
-        ts->ts_hash2 ^= diff2;
-        prefetch_hash_midgame_key( ts->ts_hash2 );
-        {
-          int flipped_cnt = (int) surv[i].flipped;
-          BitBoard b_child = (side_to_move == BLACKSQ) ? surv[i].child_my_bits : surv[i].new_opp_bits;
-          BitBoard w_child = (side_to_move == BLACKSQ) ? surv[i].new_opp_bits : surv[i].child_my_bits;
-          int child_dp = 60 - (empties - 1);
-          ts->ts_board_bits[BLACKSQ] = b_child;
-          ts->ts_board_bits[WHITESQ] = w_child;
-          ts->ts_board_bits[EMPTY] = ~(b_child | w_child);
-          ts->ts_disks_played = child_dp;
-          ts->ts_piece_count[BLACKSQ][child_dp] = (side_to_move == BLACKSQ) ? (parent_b_cnt + flipped_cnt + 1) : (parent_b_cnt - flipped_cnt);
-          ts->ts_piece_count[WHITESQ][child_dp] = (side_to_move == WHITESQ) ? (parent_w_cnt + flipped_cnt + 1) : (parent_w_cnt - flipped_cnt);
-          memcpy( ts->ts_eval_pattern_index, saved_parent_pi, sizeof( saved_parent_pi ) );
-          update_pattern_indices_ts( ts, side_to_move, m, (surv[i].child_my_bits ^ my_bits) & ~square_mask[m], 1 );
+      /* At shallow lookahead depths (empties <= 17, d == 2):
+         1. Break near-ties (<= 64 units = 0.5 discs) at empties <= 16 between top-2 candidates
+            using FastD4OthelloNNUE ordering head (NNUE-004).
+         2. Skip 46-pattern reconstruction + 2-ply tree_search_ts at empties <= 16 when surv[0]
+            already leads surv[1] by >= 384 units (3.0 discs) (NNUE-003).
+         3. Leverage FastD4OthelloNNUE score prediction head (value_weight, MAE = 9.22d) against
+            curr_alpha at empties <= 17 to skip 2-ply tree_search_ts when:
+            - surv[0] already has low opponent mobility (mob0 <= mob1), leads by >= 128 units,
+              and v0_nnue > 128 * curr_alpha + 1536 (high-confidence Fail-High CUT node), OR
+            - surv[0] leads by >= 192 units and v0_nnue < 128 * curr_alpha - 2560 (deep ALL node). */
+      int skip_ts = 0;
+      if ( empties <= 17 && surv_count >= 2 ) {
+        int diff01 = ev_stage[surv[0].sq] - ev_stage[surv[1].sq];
+        int has_base_acc = 0;
+        NnueAcc parent_base_acc;
+        if ( empties <= 16 && diff01 <= 64 ) {
+          nnue_init_parent_base_acc( &parent_base_acc, my_bits, opp_bits );
+          has_base_acc = 1;
+          for ( i = 0; i < 2; i++ ) {
+            int m = surv[i].sq;
+            int bit_sq = bit_position[m];
+            BitBoard flips = (surv[i].child_my_bits ^ my_bits) & ~square_mask[m];
+            NnueTactical tact = {
+              non_iterative_popcount( surv[i].opp_moves ),
+              non_iterative_popcount( surv[i].opp_moves & 0x8100000000000081ull ),
+              ( (square_mask[m] & CORNER_MASK) != 0 ) ? 1 : 0,
+              0,
+              ( (quadrant_mask[m] & effective_parity) != 0 ) ? 1 : 0,
+              (int) surv[i].flipped
+            };
+            int nnue_sc = nnue_update_and_evaluate_order(
+              &parent_base_acc, bit_sq, flips, surv[i].child_my_bits, surv[i].new_opp_bits, &tact, empties );
+            ev_stage[m] += (nnue_sc >> 3);
+          }
+          if ( ev_stage[surv[1].sq] > ev_stage[surv[0].sq] ) {
+            CandidateMove tmp = surv[0];
+            surv[0] = surv[1];
+            surv[1] = tmp;
+          }
+          diff01 = ev_stage[surv[0].sq] - ev_stage[surv[1].sq];
         }
-        int raw_v = tree_search_ts( ts, level + 1, level + d, OPP( side_to_move ),
-                                    -INFINITE_EVAL, upper, TRUE, TRUE, TRUE );
-        int v = -raw_v;
-        ts->ts_hash1 ^= diff1;
-        ts->ts_hash2 ^= diff2;
-        ts->ts_disks_played = 60 - empties;
-        ts->ts_region_parity = saved_parity;
-        if ( raw_v == SEARCH_ABORT || is_panic_abort() || force_return )
-          break;
-        if ( i == 0 )
-          v0 = v;
+        if ( empties <= 16 && diff01 >= 384 )
+          skip_ts = 1;
+        else if ( diff01 >= 128 ) {
+          int m0 = surv[0].sq;
+          int mob0 = non_iterative_popcount( surv[0].opp_moves );
+          int mob1 = non_iterative_popcount( surv[1].opp_moves );
+          if ( mob0 <= mob1 || diff01 >= 192 ) {
+            NnueTactical tact0 = {
+              mob0,
+              non_iterative_popcount( surv[0].opp_moves & 0x8100000000000081ull ),
+              ( (square_mask[m0] & CORNER_MASK) != 0 ) ? 1 : 0,
+              0,
+              ( (quadrant_mask[m0] & effective_parity) != 0 ) ? 1 : 0,
+              (int) surv[0].flipped
+            };
+            int v0_nnue;
+            if ( has_base_acc ) {
+              BitBoard flips0 = (surv[0].child_my_bits ^ my_bits) & ~square_mask[m0];
+              v0_nnue = nnue_update_and_evaluate_value(
+                &parent_base_acc, bit_position[m0], flips0,
+                surv[0].child_my_bits, surv[0].new_opp_bits, &tact0, empties );
+            } else {
+              v0_nnue = nnue_evaluate_value_board(
+                surv[0].child_my_bits, surv[0].new_opp_bits, &tact0, empties );
+            }
+            if ( mob0 <= mob1 && v0_nnue > 128 * curr_alpha + 1536 )
+              skip_ts = 1;
+            else if ( diff01 >= 192 && v0_nnue < 128 * curr_alpha - 2560 )
+              skip_ts = 1;
+          }
+        }
+      }
 
-        if ( v > ff_thr ) {
-          int mob = non_iterative_popcount( surv[i].opp_moves );
-          ev_stage[m] = 1000000 + v - 460 * mob;
-          any_promoted = 1;
+      if ( !skip_ts ) {
+        int d = (empties < 18) ? 2 : (empties < 24) ? 3 : (empties < 28) ? 4 : 6;
+        if ( best_list_length == 0 &&
+             ((empties >= 20 && empties <= 22) ||
+              (empties == 23 && level >= 2)) )
+          d += 1;
+        int upper = (-curr_alpha + 8) * 128;
+        int ff_thr = 128 * curr_alpha + (int) ceil( (end_mean[stage][d] + 0.45 * end_sigma[stage][d]) * 128.0 );
+        int k_limit = (ORDER_TS_TOPK < surv_count) ? ORDER_TS_TOPK : surv_count;
+        int any_promoted = 0;
+        int v0 = 0;
+        BitBoard b_parent = (side_to_move == BLACKSQ) ? my_bits : opp_bits;
+        BitBoard w_parent = (side_to_move == BLACKSQ) ? opp_bits : my_bits;
+        int parent_b_cnt = non_iterative_popcount( b_parent );
+        int parent_w_cnt = non_iterative_popcount( w_parent );
+        unsigned short saved_parent_pi[48] __attribute__((aligned(16)));
+        determine_pattern_indices_bitboard_ts( ts, b_parent, w_parent );
+        memcpy( saved_parent_pi, ts->ts_eval_pattern_index, sizeof( saved_parent_pi ) );
+        for ( i = 0; i < k_limit; i++ ) {
+          int m = surv[i].sq;
+          unsigned int saved_parity = ts->ts_region_parity;
+          ts->ts_region_parity ^= quadrant_mask[m];
+          unsigned int diff1 = 0, diff2 = 0;
+          if ( d >= 3 ) {
+            end_hash_diff( surv[i].child_my_bits, my_bits, side_to_move, m, &diff1, &diff2 );
+            ts->ts_hash1 ^= diff1;
+            ts->ts_hash2 ^= diff2;
+            prefetch_hash_midgame_key( ts->ts_hash2 );
+          }
+          {
+            int flipped_cnt = (int) surv[i].flipped;
+            BitBoard b_child = (side_to_move == BLACKSQ) ? surv[i].child_my_bits : surv[i].new_opp_bits;
+            BitBoard w_child = (side_to_move == BLACKSQ) ? surv[i].new_opp_bits : surv[i].child_my_bits;
+            int child_dp = 60 - (empties - 1);
+            ts->ts_board_bits[BLACKSQ] = b_child;
+            ts->ts_board_bits[WHITESQ] = w_child;
+            ts->ts_board_bits[EMPTY] = ~(b_child | w_child);
+            ts->ts_disks_played = child_dp;
+            ts->ts_piece_count[BLACKSQ][child_dp] = (side_to_move == BLACKSQ) ? (parent_b_cnt + flipped_cnt + 1) : (parent_b_cnt - flipped_cnt);
+            ts->ts_piece_count[WHITESQ][child_dp] = (side_to_move == WHITESQ) ? (parent_w_cnt + flipped_cnt + 1) : (parent_w_cnt - flipped_cnt);
+            memcpy( ts->ts_eval_pattern_index, saved_parent_pi, sizeof( saved_parent_pi ) );
+            update_pattern_indices_ts( ts, side_to_move, m, (surv[i].child_my_bits ^ my_bits) & ~square_mask[m], 1 );
+          }
+          int raw_v = tree_search_ts( ts, level + 1, level + d, OPP( side_to_move ),
+                                      -INFINITE_EVAL, upper, TRUE, TRUE, TRUE );
+          int v = -raw_v;
+          if ( d >= 3 ) {
+            ts->ts_hash1 ^= diff1;
+            ts->ts_hash2 ^= diff2;
+          }
+          ts->ts_disks_played = 60 - empties;
+          ts->ts_region_parity = saved_parity;
+          if ( raw_v == SEARCH_ABORT || is_panic_abort() || force_return )
+            break;
+          if ( i == 0 )
+            v0 = v;
+
+          if ( v > ff_thr ) {
+            int mob = non_iterative_popcount( surv[i].opp_moves );
+            ev_stage[m] = 1000000 + v - 460 * mob;
+            any_promoted = 1;
+          }
+          else if ( i > 0 && !any_promoted && (empties < 20 || curr_alpha >= 18) && v > v0 + 256 ) {
+            ev_stage[m] = ev_stage[surv[0].sq] + (v - v0);
+          }
+          if ( i == 1 && !any_promoted && surv_count >= 3 && d <= 4 ) {
+            int best_v01 = (v0 > v) ? v0 : v;
+            if ( best_v01 >= ff_thr - 1792 )
+              k_limit = 3;
+          }
         }
-        else if ( i > 0 && !any_promoted && (empties < 20 || curr_alpha >= 18) && v > v0 + 256 ) {
-          ev_stage[m] = ev_stage[surv[0].sq] + (v - v0);
-        }
-        if ( i == 1 && !any_promoted && surv_count >= 3 && d <= 4 )
-          k_limit = 3;
       }
     }
   }

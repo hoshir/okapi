@@ -480,6 +480,19 @@ test_nnue_invariants( void ) {
 	   "trial %d: scalar (%d,%d) != NEON (%d,%d)",
 	   trial, (int)ord_s, (int)val_s, (int)ord_n, (int)val_n );
 
+    int ord_fused = nnue_update_and_evaluate_order( &base_acc, sq, flips, child_my_bits, new_opp_bits, &tact, empties );
+    int ord_sep = nnue_evaluate_order_acc( &acc_inc, child_my_bits, new_opp_bits, &tact, empties );
+    CHECK( ord_fused == ord_sep,
+	   "trial %d: fused order (%d) != separated order (%d)",
+	   trial, ord_fused, ord_sep );
+
+    int val_fused = nnue_update_and_evaluate_value( &base_acc, sq, flips, child_my_bits, new_opp_bits, &tact, empties );
+    int val_board = nnue_evaluate_value_board( child_my_bits, new_opp_bits, &tact, empties );
+    int val_sep = nnue_evaluate_value_acc( &acc_inc, child_my_bits, new_opp_bits, &tact, empties );
+    CHECK( val_fused == val_sep && val_board == val_sep,
+	   "trial %d: fused/board value (%d,%d) != separated value (%d)",
+	   trial, val_fused, val_board, val_sep );
+
     if ( trial < 200 ) {
       for ( int sym = 1; sym < 8; sym++ ) {
 	BitBoard sym_my = d4_transform_bb( child_my_bits, sym );
@@ -542,17 +555,48 @@ bench_nnue_throughput( void ) {
   t0 = monotonic_sec();
   for ( int i = 0; i < N; i++ ) {
     int k = i & 7;
+    BitBoard c_my = p_my | (1ULL << sqs[k]) | flips_arr[k];
+    BitBoard c_opp = p_opp ^ flips_arr[k];
+    sink += nnue_update_and_evaluate_order( &base_acc, sqs[k], flips_arr[k], c_my, c_opp, &tact, 16 );
+  }
+  double t_fused = monotonic_sec() - t0;
+
+  t0 = monotonic_sec();
+  for ( int i = 0; i < N; i++ ) {
+    int k = i & 7;
     sink += end_pattern_evaluate( p_my | (1ULL << sqs[k]) | flips_arr[k], p_opp ^ flips_arr[k] );
   }
   double t_endp = monotonic_sec() - t0;
+
+  t0 = monotonic_sec();
+  for ( int i = 0; i < N; i++ ) {
+    int k = i & 7;
+    determine_pattern_indices_bitboard_ts( &tls, p_my | (1ULL << sqs[k]), p_opp );
+    sink += tls.ts_eval_pattern_index[k];
+  }
+  double t_det46 = monotonic_sec() - t0;
+
+  t0 = monotonic_sec();
+  for ( int i = 0; i < N; i++ ) {
+    int k = i & 7;
+    nnue_init_parent_base_acc( &base_acc, p_my | (1ULL << sqs[k]), p_opp );
+    sink += base_acc.v[k];
+  }
+  double t_init_nnue = monotonic_sec() - t0;
 
   printf( "=== ARM64 NEON Microbenchmark (%d iterations, sink=%d) ===\n", N, (int)sink );
   printf( "  1. nnue_update_child_acc (incremental 64x int16):  %5.2f ns/call (%6.1f M/sec)\n",
 	  (t_upd * 1e9) / N, (N / 1e6) / t_upd );
   printf( "  2. nnue_update + nnue_evaluate_order_acc (NEON):   %5.2f ns/call (%6.1f M/sec)\n",
 	  (t_nnue * 1e9) / N, (N / 1e6) / t_nnue );
-  printf( "  3. end_pattern_evaluate (16-tuple SWAR lookup):    %5.2f ns/call (%6.1f M/sec)\n",
+  printf( "  3. nnue_update_and_evaluate_order (fused NEON):    %5.2f ns/call (%6.1f M/sec)\n",
+	  (t_fused * 1e9) / N, (N / 1e6) / t_fused );
+  printf( "  4. end_pattern_evaluate (16-tuple SWAR lookup):    %5.2f ns/call (%6.1f M/sec)\n",
 	  (t_endp * 1e9) / N, (N / 1e6) / t_endp );
+  printf( "  5. determine_pattern_indices_bitboard_ts (46-pat): %5.2f ns/call (%6.1f M/sec)\n",
+	  (t_det46 * 1e9) / N, (N / 1e6) / t_det46 );
+  printf( "  6. nnue_init_parent_base_acc (full board init):    %5.2f ns/call (%6.1f M/sec)\n",
+	  (t_init_nnue * 1e9) / N, (N / 1e6) / t_init_nnue );
 }
 
 
