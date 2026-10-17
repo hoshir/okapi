@@ -20,9 +20,12 @@
 #include "moves.h"
 #include "patterns.h"
 #include "end_patterns.h"
+#include "end_aspiration.h"
+#include "end_leaf.h"
 #include "nnue.h"
 #include "stable.h"
 #include "hash.h"
+#include "search.h"
 #include "timer.h"
 #include "tlstate.h"
 
@@ -553,6 +556,170 @@ bench_nnue_throughput( void ) {
 }
 
 
+/*
+  TEST_ENDGAME_ASPIRATION_INTEGRATION
+  Plays random games to 8 empty squares and couples the real endgame solver
+  (`solve_parity`) with `end_aspiration_next_bounds` across initial null windows
+  shifted by +-2 and +-6 discs from the true minimax score.
+  Verifies:
+  1. `solve_parity` always returns an EVEN score on fail-low/fail-high from an
+     odd-bounded `[c - 1, c + 1]` null window (i.e. `root_eval == *alpha - 1`
+     on a 1-disc fail-low, NOT `*alpha`).
+  2. Feeding that real `root_eval` into `end_aspiration_next_bounds` produces
+     a first re-search window `[alpha, beta]` center-anchored at `c +- 4`
+     containing at most ONE even score inside `(alpha, beta)` (regression guard
+     for the FFO #57 `[-14, -9]` vs `[-12, -9]` node blowup).
+  3. The full aspiration loop with `solve_parity` converges to the exact
+     minimax score on every board and window offset.
+*/
+static void
+init_solver_masks( BitBoard occupied ) {
+  BitBoard empty_bb = ~occupied;
+  BitBoard order_mask = 0;
+  unsigned int par = 0;
+
+  while ( empty_bb != 0 ) {
+    int sq = square_of_bit[FIRST_BIT( empty_bb )];
+    empty_bb &= empty_bb - 1;
+    BitBoard m = sq_to_order_mask[sq];
+    if ( m != 0 ) {
+      order_mask |= m;
+      par ^= quadrant_mask[sq];
+    }
+  }
+  empty_order_mask = order_mask;
+  region_parity = par;
+}
+
+static void
+test_endgame_aspiration_integration( void ) {
+  static const int offsets[4] = { 2, -2, 6, -6 };
+  int tested = 0;
+  int even_bound_returns = 0;
+
+  init_hash( 14 );
+  setup_hash( TRUE );
+
+  for ( int game = 0; game < 150 && tested < 80; game++ ) {
+    for ( int i = 0; i < 128; i++ )
+      board[i] = OUTSIDE;
+    for ( int i = 1; i <= 8; i++ )
+      for ( int j = 1; j <= 8; j++ )
+	board[10 * i + j] = EMPTY;
+
+    board[44] = WHITESQ;
+    board[55] = WHITESQ;
+    board[45] = BLACKSQ;
+    board[54] = BLACKSQ;
+
+    disks_played = 0;
+    piece_count[BLACKSQ][0] = 2;
+    piece_count[WHITESQ][0] = 2;
+    set_board_bits();
+    determine_pattern_indices();
+
+    int side = BLACKSQ;
+    int pass_cnt = 0;
+
+    while ( non_iterative_popcount( board_bits[EMPTY] ) > 8 && pass_cnt < 2 ) {
+      generate_all( side );
+      int cnt = move_count[disks_played];
+      if ( cnt == 0 ) {
+	pass_cnt++;
+	side = OPP( side );
+	continue;
+      }
+      pass_cnt = 0;
+      int mv = move_list[disks_played][rand() % cnt];
+      (void) make_move( side, mv, TRUE );
+      side = OPP( side );
+    }
+
+    int empties = non_iterative_popcount( board_bits[EMPTY] );
+    if ( empties != 8 )
+      continue;
+
+    BitBoard my_bits = board_bits[side];
+    BitBoard opp_bits = board_bits[OPP( side )];
+    int my_discs = non_iterative_popcount( my_bits );
+    int opp_discs = non_iterative_popcount( opp_bits );
+    int disc_diff = my_discs - opp_discs;
+
+    init_solver_masks( my_bits | opp_bits );
+    determine_hash_values( side, board );
+    setup_hash( TRUE );
+
+    int true_score = solve_parity( &tls, my_bits, opp_bits, -64, 64,
+				   side, empties, disc_diff, TRUE );
+    CHECK( (true_score & 1) == 0,
+	   "game %d: solve_parity true_score %d is odd", game, true_score );
+
+    for ( int oi = 0; oi < 4; oi++ ) {
+      int c = true_score + offsets[oi];
+      if ( c < -60 || c > 60 )
+	continue;
+
+      int alpha = c - 1;
+      int beta = c + 1;
+      int delta = 4;
+      int steps = 0;
+
+      init_solver_masks( my_bits | opp_bits );
+      setup_hash( TRUE );
+      int root_eval = solve_parity( &tls, my_bits, opp_bits, alpha, beta,
+				    side, empties, disc_diff, TRUE );
+
+      if ( (root_eval & 1) == 0 )
+	even_bound_returns++;
+
+      while ( root_eval <= alpha || root_eval >= beta ) {
+	int first_step = (delta == 4);
+	int prev_alpha = alpha, prev_beta = beta;
+	end_aspiration_next_bounds( root_eval, &alpha, &beta, &delta );
+	steps++;
+
+	if ( first_step && offsets[oi] == 2 && root_eval >= prev_alpha - 1 ) {
+	  int expected_alpha = (c - 4 < -64) ? -64 : (c - 4);
+	  int even_inside = 0;
+	  for ( int s = -64; s <= 64; s += 2 )
+	    if ( s > alpha && s < beta )
+	      even_inside++;
+	  CHECK( alpha == expected_alpha && beta == root_eval + 1 && even_inside <= 1,
+		 "game %d 1-disc fail-low from [%d,%d] (eval=%d): got [%d,%d] (even_inside=%d)",
+		 game, prev_alpha, prev_beta, root_eval, alpha, beta, even_inside );
+	}
+	if ( first_step && offsets[oi] == -2 && root_eval <= prev_beta + 1 ) {
+	  int expected_beta = (c + 4 > 64) ? 64 : (c + 4);
+	  int even_inside = 0;
+	  for ( int s = -64; s <= 64; s += 2 )
+	    if ( s > alpha && s < beta )
+	      even_inside++;
+	  CHECK( alpha == root_eval - 1 && beta == expected_beta && even_inside <= 1,
+		 "game %d 1-disc fail-high from [%d,%d] (eval=%d): got [%d,%d] (even_inside=%d)",
+		 game, prev_alpha, prev_beta, root_eval, alpha, beta, even_inside );
+	}
+
+	init_solver_masks( my_bits | opp_bits );
+	root_eval = solve_parity( &tls, my_bits, opp_bits, alpha, beta,
+				  side, empties, disc_diff, TRUE );
+	if ( (alpha <= -64 && beta >= 64) || root_eval >= 64 || root_eval <= -64 || steps > 6 )
+	  break;
+      }
+
+      CHECK( root_eval == true_score,
+	     "game %d offset=%d: aspiration converged to %d != true_score %d",
+	     game, offsets[oi], root_eval, true_score );
+    }
+    tested++;
+  }
+
+  free_hash();
+  CHECK( tested >= 50, "too few 8-empty games tested (%d)", tested );
+  CHECK( even_bound_returns >= 20,
+	 "too few even-score fail-low/fail-high returns tested (%d)", even_bound_returns );
+}
+
+
 int
 main( void ) {
   srand( 42 );
@@ -563,12 +730,14 @@ main( void ) {
   init_patterns();
   init_pattern_dependencies();
   init_stable();
+  setup_search();
 
   test_bitboard_and_pattern_invariants();
   test_stability_invariants();
   test_tt_isolation_invariants();
   test_end_pattern_invariants();
   test_nnue_invariants();
+  test_endgame_aspiration_integration();
 
   if ( getenv( "NNUE_BENCH" ) )
     bench_nnue_throughput();
@@ -577,6 +746,6 @@ main( void ) {
     fprintf( stderr, "search_invariants_test: %d failure(s)\n", failures );
     return 1;
   }
-  printf( "search_invariants_test: PASSED (500 random games, 2000 stability/end_pattern/NNUE boards, TT isolation checks)\n" );
+  printf( "search_invariants_test: PASSED (500 random games, 2000 stability/end_pattern/NNUE boards, TT & aspiration integration checks)\n" );
   return 0;
 }

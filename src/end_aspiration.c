@@ -39,36 +39,38 @@ end_aspiration_center( int eval, int limit ) {
 void
 end_aspiration_next_bounds( int root_eval, int *alpha, int *beta, int *delta ) {
   int d = *delta;
-  if ( d >= 64 ) {
-    *alpha = -64;
-    *beta = 64;
-    *delta = 64;
-    return;
-  }
 
   if ( root_eval <= *alpha ) {
     /* Fail low: score is proven <= root_eval, so tighten beta to root_eval + 1
        and widen alpha downward by delta (anchored at center on the first step
-       from the [c - 1, c + 1] null window). */
+       from the [c - 1, c + 1] null window; because exact endgame scores are
+       even, a 1-disc fail-low from odd *alpha = c - 1 returns c - 2 = *alpha - 1). */
     int new_beta = root_eval + 1;
-    int anchor = (d == 4 && root_eval == *alpha) ? (*alpha + 1) : root_eval;
-    int new_alpha = anchor - d;
+    int anchor = (d == 4 && root_eval >= *alpha - 1) ? (*alpha + 1) : root_eval;
+    int new_alpha = (d >= 64) ? -64 : (anchor - d);
     if ( new_alpha < -64 ) new_alpha = -64;
     if ( new_beta > 64 ) new_beta = 64;
+    if ( new_alpha >= new_beta ) new_alpha = -64;
     *alpha = new_alpha;
     *beta = new_beta;
   }
   else if ( root_eval >= *beta ) {
     /* Fail high: score is proven >= root_eval, so tighten alpha to root_eval - 1
        and widen beta upward by delta (anchored at center on the first step
-       from the [c - 1, c + 1] null window). */
+       from the [c - 1, c + 1] null window; a 1-disc fail-high from odd
+       *beta = c + 1 returns c + 2 = *beta + 1). */
     int new_alpha = root_eval - 1;
-    int anchor = (d == 4 && root_eval == *beta) ? (*beta - 1) : root_eval;
-    int new_beta = anchor + d;
+    int anchor = (d == 4 && root_eval <= *beta + 1) ? (*beta - 1) : root_eval;
+    int new_beta = (d >= 64) ? 64 : (anchor + d);
     if ( new_alpha < -64 ) new_alpha = -64;
     if ( new_beta > 64 ) new_beta = 64;
+    if ( new_beta <= new_alpha ) new_beta = 64;
     *alpha = new_alpha;
     *beta = new_beta;
+  }
+  else if ( d >= 64 ) {
+    *alpha = -64;
+    *beta = 64;
   }
 
   d *= 2;
