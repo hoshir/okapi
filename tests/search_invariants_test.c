@@ -480,18 +480,11 @@ test_nnue_invariants( void ) {
 	   "trial %d: scalar (%d,%d) != NEON (%d,%d)",
 	   trial, (int)ord_s, (int)val_s, (int)ord_n, (int)val_n );
 
-    int ord_fused = nnue_update_and_evaluate_order( &base_acc, sq, flips, child_my_bits, new_opp_bits, &tact, empties );
-    int ord_sep = nnue_evaluate_order_acc( &acc_inc, child_my_bits, new_opp_bits, &tact, empties );
-    CHECK( ord_fused == ord_sep,
-	   "trial %d: fused order (%d) != separated order (%d)",
-	   trial, ord_fused, ord_sep );
-
-    int val_fused = nnue_update_and_evaluate_value( &base_acc, sq, flips, child_my_bits, new_opp_bits, &tact, empties );
     int val_board = nnue_evaluate_value_board( child_my_bits, new_opp_bits, &tact, empties );
     int val_sep = nnue_evaluate_value_acc( &acc_inc, child_my_bits, new_opp_bits, &tact, empties );
-    CHECK( val_fused == val_sep && val_board == val_sep,
-	   "trial %d: fused/board value (%d,%d) != separated value (%d)",
-	   trial, val_fused, val_board, val_sep );
+    CHECK( val_board == val_sep,
+	   "trial %d: fused board value (%d) != separated value (%d)",
+	   trial, val_board, val_sep );
 
     if ( trial < 200 ) {
       for ( int sym = 1; sym < 8; sym++ ) {
@@ -557,7 +550,7 @@ bench_nnue_throughput( void ) {
     int k = i & 7;
     BitBoard c_my = p_my | (1ULL << sqs[k]) | flips_arr[k];
     BitBoard c_opp = p_opp ^ flips_arr[k];
-    sink += nnue_update_and_evaluate_order( &base_acc, sqs[k], flips_arr[k], c_my, c_opp, &tact, 16 );
+    sink += nnue_evaluate_value_board( c_my, c_opp, &tact, 16 );
   }
   double t_fused = monotonic_sec() - t0;
 

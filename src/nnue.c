@@ -491,91 +491,50 @@ nnue_evaluate_value_acc(
 }
 
 int
-nnue_update_and_evaluate_order(
-  const NnueAcc *base_acc,
-  int sq,
-  uint64_t flips,
+nnue_evaluate_value_board(
   uint64_t n_my,
   uint64_t n_opp,
   const NnueTactical *tact,
   int empties
 ) {
 #if USE_NNUE_NEON && ( NNUE_FEAT_DIM == 88 )
-  (void)n_my;
-  (void)n_opp;
-  const int16_t *w_sq = nnue_w_my[sq];
-  int16x8_t a0 = vaddq_s16( vld1q_s16( &base_acc->v[0] ), vld1q_s16( &w_sq[0] ) );
-  int16x8_t a1 = vaddq_s16( vld1q_s16( &base_acc->v[8] ), vld1q_s16( &w_sq[8] ) );
-  int16x8_t a2 = vaddq_s16( vld1q_s16( &base_acc->v[16] ), vld1q_s16( &w_sq[16] ) );
-  int16x8_t a3 = vaddq_s16( vld1q_s16( &base_acc->v[24] ), vld1q_s16( &w_sq[24] ) );
-  int16x8_t a4 = vaddq_s16( vld1q_s16( &base_acc->v[32] ), vld1q_s16( &w_sq[32] ) );
-  int16x8_t a5 = vaddq_s16( vld1q_s16( &base_acc->v[40] ), vld1q_s16( &w_sq[40] ) );
-  int16x8_t a6 = vaddq_s16( vld1q_s16( &base_acc->v[48] ), vld1q_s16( &w_sq[48] ) );
-  int16x8_t a7 = vaddq_s16( vld1q_s16( &base_acc->v[56] ), vld1q_s16( &w_sq[56] ) );
+  int16x8_t a0 = vld1q_s16( &nnue_bias[0] );
+  int16x8_t a1 = vld1q_s16( &nnue_bias[8] );
+  int16x8_t a2 = vld1q_s16( &nnue_bias[16] );
+  int16x8_t a3 = vld1q_s16( &nnue_bias[24] );
+  int16x8_t a4 = vld1q_s16( &nnue_bias[32] );
+  int16x8_t a5 = vld1q_s16( &nnue_bias[40] );
+  int16x8_t a6 = vld1q_s16( &nnue_bias[48] );
+  int16x8_t a7 = vld1q_s16( &nnue_bias[56] );
 
-  uint64_t f = flips;
-  while ( f ) {
-    int fsq = __builtin_ctzll( f );
-    f &= f - 1;
-    const int16_t *wf = nnue_w_flip[fsq];
-    a0 = vaddq_s16( a0, vld1q_s16( &wf[0] ) );
-    a1 = vaddq_s16( a1, vld1q_s16( &wf[8] ) );
-    a2 = vaddq_s16( a2, vld1q_s16( &wf[16] ) );
-    a3 = vaddq_s16( a3, vld1q_s16( &wf[24] ) );
-    a4 = vaddq_s16( a4, vld1q_s16( &wf[32] ) );
-    a5 = vaddq_s16( a5, vld1q_s16( &wf[40] ) );
-    a6 = vaddq_s16( a6, vld1q_s16( &wf[48] ) );
+  uint64_t m = n_my;
+  while ( m ) {
+    int sq = __builtin_ctzll( m );
+    m &= m - 1;
+    const int16_t *w = nnue_w_my[sq];
+    a0 = vaddq_s16( a0, vld1q_s16( &w[0] ) );
+    a1 = vaddq_s16( a1, vld1q_s16( &w[8] ) );
+    a2 = vaddq_s16( a2, vld1q_s16( &w[16] ) );
+    a3 = vaddq_s16( a3, vld1q_s16( &w[24] ) );
+    a4 = vaddq_s16( a4, vld1q_s16( &w[32] ) );
+    a5 = vaddq_s16( a5, vld1q_s16( &w[40] ) );
+    a6 = vaddq_s16( a6, vld1q_s16( &w[48] ) );
+    a7 = vaddq_s16( a7, vld1q_s16( &w[56] ) );
   }
 
-  NNUE_BUILD_FEATURE_VECTORS();
-
-  int b = nnue_stage_bucket( empties );
-  const int16_t *ow = nnue_order_weight[b];
-  int32_t dot_o = 0;
-  NNUE_DOT11( ow, dot_o );
-  return (int)( ( nnue_order_bias[b] + dot_o ) >> 6 );
-#else
-  NnueAcc child_acc;
-  nnue_update_child_acc( &child_acc, base_acc, sq, flips );
-  return nnue_evaluate_order_acc( &child_acc, n_my, n_opp, tact, empties );
-#endif
-}
-
-int
-nnue_update_and_evaluate_value(
-  const NnueAcc *base_acc,
-  int sq,
-  uint64_t flips,
-  uint64_t n_my,
-  uint64_t n_opp,
-  const NnueTactical *tact,
-  int empties
-) {
-#if USE_NNUE_NEON && ( NNUE_FEAT_DIM == 88 )
-  (void)n_my;
-  (void)n_opp;
-  const int16_t *w_sq = nnue_w_my[sq];
-  int16x8_t a0 = vaddq_s16( vld1q_s16( &base_acc->v[0] ), vld1q_s16( &w_sq[0] ) );
-  int16x8_t a1 = vaddq_s16( vld1q_s16( &base_acc->v[8] ), vld1q_s16( &w_sq[8] ) );
-  int16x8_t a2 = vaddq_s16( vld1q_s16( &base_acc->v[16] ), vld1q_s16( &w_sq[16] ) );
-  int16x8_t a3 = vaddq_s16( vld1q_s16( &base_acc->v[24] ), vld1q_s16( &w_sq[24] ) );
-  int16x8_t a4 = vaddq_s16( vld1q_s16( &base_acc->v[32] ), vld1q_s16( &w_sq[32] ) );
-  int16x8_t a5 = vaddq_s16( vld1q_s16( &base_acc->v[40] ), vld1q_s16( &w_sq[40] ) );
-  int16x8_t a6 = vaddq_s16( vld1q_s16( &base_acc->v[48] ), vld1q_s16( &w_sq[48] ) );
-  int16x8_t a7 = vaddq_s16( vld1q_s16( &base_acc->v[56] ), vld1q_s16( &w_sq[56] ) );
-
-  uint64_t f = flips;
-  while ( f ) {
-    int fsq = __builtin_ctzll( f );
-    f &= f - 1;
-    const int16_t *wf = nnue_w_flip[fsq];
-    a0 = vaddq_s16( a0, vld1q_s16( &wf[0] ) );
-    a1 = vaddq_s16( a1, vld1q_s16( &wf[8] ) );
-    a2 = vaddq_s16( a2, vld1q_s16( &wf[16] ) );
-    a3 = vaddq_s16( a3, vld1q_s16( &wf[24] ) );
-    a4 = vaddq_s16( a4, vld1q_s16( &wf[32] ) );
-    a5 = vaddq_s16( a5, vld1q_s16( &wf[40] ) );
-    a6 = vaddq_s16( a6, vld1q_s16( &wf[48] ) );
+  uint64_t o = n_opp;
+  while ( o ) {
+    int sq = __builtin_ctzll( o );
+    o &= o - 1;
+    const int16_t *w = nnue_w_opp[sq];
+    a0 = vaddq_s16( a0, vld1q_s16( &w[0] ) );
+    a1 = vaddq_s16( a1, vld1q_s16( &w[8] ) );
+    a2 = vaddq_s16( a2, vld1q_s16( &w[16] ) );
+    a3 = vaddq_s16( a3, vld1q_s16( &w[24] ) );
+    a4 = vaddq_s16( a4, vld1q_s16( &w[32] ) );
+    a5 = vaddq_s16( a5, vld1q_s16( &w[40] ) );
+    a6 = vaddq_s16( a6, vld1q_s16( &w[48] ) );
+    a7 = vaddq_s16( a7, vld1q_s16( &w[56] ) );
   }
 
   NNUE_BUILD_FEATURE_VECTORS();
@@ -586,29 +545,10 @@ nnue_update_and_evaluate_value(
   NNUE_DOT11( vw, dot_v );
   return (int)( ( nnue_value_bias[b] + dot_v ) >> 6 );
 #else
-  NnueAcc child_acc;
-  nnue_update_child_acc( &child_acc, base_acc, sq, flips );
-  return nnue_evaluate_value_acc( &child_acc, n_my, n_opp, tact, empties );
-#endif
-}
-
-int
-nnue_evaluate_value_board(
-  uint64_t n_my,
-  uint64_t n_opp,
-  const NnueTactical *tact,
-  int empties
-) {
   NnueAcc acc;
   nnue_init_acc( &acc, n_my, n_opp );
   return nnue_evaluate_value_acc( &acc, n_my, n_opp, tact, empties );
-}
-
-int
-nnue_evaluate_board_value( uint64_t my_bits, uint64_t opp_bits, int empties ) {
-  NnueAcc acc;
-  nnue_init_acc( &acc, my_bits, opp_bits );
-  return nnue_evaluate_value_acc( &acc, my_bits, opp_bits, 0, empties );
+#endif
 }
 
 int
